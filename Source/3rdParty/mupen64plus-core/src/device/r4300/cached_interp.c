@@ -251,7 +251,7 @@ void cached_interp_NOTCOMPILED(void)
 The preceeding update_debugger SHOULD be unnecessary since it should have been
 called before NOTCOMPILED would have been executed
 */
-    exec_cached_ops(r4300);
+    (*r4300_pc_struct(r4300))->ops();
 }
 
 void cached_interp_NOTCOMPILED2(void)
