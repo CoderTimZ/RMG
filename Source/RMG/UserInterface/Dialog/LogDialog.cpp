@@ -21,7 +21,8 @@ LogDialog::LogDialog(QWidget *parent) : QDialog(parent)
     this->setupUi(this);
     this->setWindowIcon(QIcon(":Resource/RMG.png"));
 
-    QFont font("monospace");
+    QFont font({ "Cascadia Mono", "Consolas", "monospace" });
+    font.setStyleHint(QFont::TypeWriter);
     this->plainTextEdit->setFont(font);
 }
 
