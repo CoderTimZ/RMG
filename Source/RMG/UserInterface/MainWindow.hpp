@@ -50,7 +50,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     ~MainWindow(void);
 
     bool Init(QApplication* app, bool showUI, bool launchROM);
-    void OpenROM(QString file, QString disk, bool fullscreen, bool quitAfterEmulation);
+    void OpenROM(QString file, QString disk, bool fullscreen, bool quitAfterEmulation, int stateSlot);
 
   private:
     Thread::EmulationThread *emulationThread = nullptr;
@@ -77,6 +77,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_LaunchInFullscreen   = false;
     bool ui_QuitAfterEmulation   = false;
     bool ui_RefreshRomListAfterEmulation = false;
+    int  ui_LoadSaveStateSlot    = -1;
 
     VidExtRenderMode ui_VidExtRenderMode = VidExtRenderMode::OpenGL;
 
@@ -113,6 +114,9 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     int ui_UpdateSaveStateSlotTimerId = 0;
     int ui_CheckVideoSizeTimerId = 0;
 
+    int ui_LoadSaveStateSlotCounter = 0;
+    int ui_LoadSaveStateSlotTimerId = -1;
+
     QString ui_WindowTitle;
 
     Dialog::LogDialog logDialog;
@@ -133,7 +137,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     void initializeEmulationThread(void);
     void connectEmulationThreadSignals(void);
-    void launchEmulationThread(QString cartRom, QString diskRom = "", bool refreshRomListAfterEmulation = false);
+    void launchEmulationThread(QString cartRom, QString diskRom = "", bool refreshRomListAfterEmulation = false, int slot = -1);
 
     QString getSaveStateSlotDateTimeText(QAction* action);
     QString getSaveStateSlotText(QAction* action, int slot);
@@ -215,6 +219,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     void on_RomBrowser_PlayGame(QString file);
     void on_RomBrowser_PlayGameWith(CoreRomType type, QString file);
+    void on_RomBrowser_PlayGameWithSlot(QString file, int slot);
     void on_RomBrowser_ChangeRomDirectory(void);
     void on_RomBrowser_RomInformation(QString file);
     void on_RomBrowser_EditGameSettings(QString file);

@@ -109,7 +109,7 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     return true;
 }
 
-void MainWindow::OpenROM(QString file, QString disk, bool fullscreen, bool quitAfterEmulation)
+void MainWindow::OpenROM(QString file, QString disk, bool fullscreen, bool quitAfterEmulation, int stateSlot)
 {
     this->ui_LaunchInFullscreen = fullscreen;
     this->ui_QuitAfterEmulation = quitAfterEmulation;
@@ -120,7 +120,7 @@ void MainWindow::OpenROM(QString file, QString disk, bool fullscreen, bool quitA
     // state, then the transition will be smoother
     this->updateUI(true, false);
 
-    this->launchEmulationThread(file, disk, true);
+    this->launchEmulationThread(file, disk, true, stateSlot);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -183,6 +183,8 @@ void MainWindow::initializeUI(bool launchROM)
             &MainWindow::on_RomBrowser_PlayGame);
     connect(this->ui_Widget_RomBrowser, &Widget::RomBrowserWidget::PlayGameWith, this,
             &MainWindow::on_RomBrowser_PlayGameWith);
+    connect(this->ui_Widget_RomBrowser, &Widget::RomBrowserWidget::PlayGameWithSlot, this,
+            &MainWindow::on_RomBrowser_PlayGameWithSlot);
     connect(this->ui_Widget_RomBrowser, &Widget::RomBrowserWidget::EditGameSettings, this,
             &MainWindow::on_RomBrowser_EditGameSettings);
     connect(this->ui_Widget_RomBrowser, &Widget::RomBrowserWidget::EditGameInputSettings, this,
@@ -560,7 +562,7 @@ void MainWindow::connectEmulationThreadSignals(void)
             Qt::BlockingQueuedConnection);
 }
 
-void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool refreshRomListAfterEmulation)
+void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool refreshRomListAfterEmulation, int slot)
 {
     CoreSettingsSave();
 
@@ -594,6 +596,13 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
     {
         this->ui_FullscreenTimerId = this->startTimer(100);
         this->ui_LaunchInFullscreen = false;
+    }
+
+    this->ui_LoadSaveStateSlotCounter = 0;
+    this->ui_LoadSaveStateSlot = slot;
+    if (slot != -1)
+    {
+        this->ui_LoadSaveStateSlotTimerId = this->startTimer(100);
     }
 
     this->ui_CheckVideoSizeTimerId = this->startTimer(2000);
@@ -967,8 +976,12 @@ void MainWindow::configureActions(void)
         {
             if (checked)
             {
-                int factor = speedAction->text().split("%").first().toInt();
-                this->on_Action_System_SpeedFactor(factor);
+                QString factorText = speedAction->text().split("%").first();
+                // sometimes the text can contain a '&'
+                // which will make the toInt() function return 0
+                // so strip it out
+                factorText.remove('&');
+                this->on_Action_System_SpeedFactor(factorText.toInt());
             }
         });
     }
@@ -989,8 +1002,12 @@ void MainWindow::configureActions(void)
         {
             if (checked)
             {
-                int slot = slotAction->text().split(" ").at(1).toInt();
-                this->on_Action_System_CurrentSaveState(slot);
+                QString slotText = slotAction->text().split(" ").at(1);
+                // sometimes the text can contain a '&'
+                // which will make the toInt() function return 0
+                // so strip it out
+                slotText.remove('&');
+                this->on_Action_System_CurrentSaveState(slotText.toInt());
             }
         });
     }
@@ -1186,6 +1203,29 @@ void MainWindow::timerEvent(QTimerEvent *event)
         {
             CoreSetVideoSize(expectedWidth, expectedHeight);
         }
+    }
+    else if (timerId == this->ui_LoadSaveStateSlotTimerId)
+    {
+        if (!CoreIsEmulationRunning())
+        {
+            return;
+        }
+
+        if (!CoreSetSaveStateSlot(this->ui_LoadSaveStateSlot) ||
+            !CoreLoadSaveState())
+        {
+            this->ui_LoadSaveStateSlotCounter++;
+            if (this->ui_LoadSaveStateSlotCounter >= 5)
+            { // give up after 5 attempts
+                this->killTimer(this->ui_LoadSaveStateSlotTimerId);
+                this->ui_LoadSaveStateSlotCounter = 0;
+                this->ui_LoadSaveStateSlotTimerId = -1;
+                this->ui_LoadSaveStateSlot        = -1;
+            }
+            return;
+        }
+
+        this->killTimer(this->ui_LoadSaveStateSlotTimerId);
     }
 }
 
@@ -1910,6 +1950,11 @@ void MainWindow::on_RomBrowser_PlayGameWith(CoreRomType type, QString file)
     this->launchEmulationThread(mainRom, otherRom);
 }
 
+void MainWindow::on_RomBrowser_PlayGameWithSlot(QString file, int slot)
+{
+    this->launchEmulationThread(file, "", false, slot);
+}
+
 void MainWindow::on_RomBrowser_ChangeRomDirectory(void)
 {
     QString dir;
@@ -2397,6 +2442,11 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
             QString dateTimeText = this->getSaveStateSlotDateTimeText(slotAction);
             std::string message  = "Selected save slot: " + std::to_string(value);
 
+            if (this->ui_LoadSaveStateSlotTimerId != -1)
+            {
+                return;
+            }
+
             // add date and time when available
             if (!dateTimeText.isEmpty())
             {
@@ -2436,7 +2486,28 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
         } break;
         case CoreStateCallbackType::SaveStateLoaded:
         {
-            if (value == 0)
+            if (this->ui_LoadSaveStateSlotTimerId != -1 && value == 0)
+            {
+                this->ui_LoadSaveStateSlotCounter++;
+                if (this->ui_LoadSaveStateSlotCounter >= 5)
+                { // give up after 5 attempts
+                    this->showErrorMessage("Failed to load save state");
+                    this->ui_LoadSaveStateSlotCounter = 0;
+                    this->ui_LoadSaveStateSlotTimerId = -1;
+                    this->ui_LoadSaveStateSlot        = -1;
+                }
+                else
+                {
+                    this->ui_LoadSaveStateSlotTimerId = this->startTimer(500);   
+                }
+            }
+            else if (this->ui_LoadSaveStateSlotTimerId != -1 && value != 0)
+            {
+                this->ui_LoadSaveStateSlotCounter = 0;
+                this->ui_LoadSaveStateSlotTimerId = -1;
+                this->ui_LoadSaveStateSlot        = -1;
+            }
+            else if (value == 0)
             {
                 OnScreenDisplaySetMessage("Failed to load save state.");
             }
