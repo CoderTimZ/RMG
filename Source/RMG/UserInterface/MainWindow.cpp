@@ -81,7 +81,7 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     this->initializeEmulationThread();
     this->connectEmulationThreadSignals();
 
-    if (!SetupVidExt(this->emulationThread, this, this->ui_Widget_OpenGL, this->ui_Widget_Vulkan))
+    if (!SetupVidExt(this->emulationThread, this, &this->ui_Widget_OpenGL, &this->ui_Widget_Vulkan))
     {
         this->showErrorMessage("SetupVidExt() Failed", QString::fromStdString(CoreGetError()));
         return false;
@@ -164,8 +164,8 @@ void MainWindow::initializeUI(bool launchROM)
 
     this->ui_Widgets = new QStackedWidget(this);
     this->ui_Widget_RomBrowser = new Widget::RomBrowserWidget(this);
-    this->ui_Widget_OpenGL = new Widget::OGLWidget(this);
-    this->ui_Widget_Vulkan = new Widget::VKWidget(this);
+    this->ui_Widget_Dummy = new Widget::DummyWidget(this);
+
     this->ui_EventFilter = new EventFilter(this);
     this->ui_StatusBar_Label = new QLabel(this);
     //this->ui_StatusBar_RenderModeLabel = new QLabel(this);
@@ -258,15 +258,12 @@ void MainWindow::configureUI(QApplication* app, bool showUI)
     this->ui_StatusBarTimerTimeout = CoreSettingsGetIntValue(SettingsID::GUI_StatusbarMessageDuration);
 
     this->ui_Widgets->addWidget(this->ui_Widget_RomBrowser);
-    this->ui_Widgets->addWidget(this->ui_Widget_OpenGL->GetWidget());
-    this->ui_Widgets->addWidget(this->ui_Widget_Vulkan->GetWidget());
-
+    this->ui_Widgets->addWidget(this->ui_Widget_Dummy);
     this->ui_Widgets->setCurrentWidget(this->ui_Widget_RomBrowser);
 
     this->setFocusPolicy(Qt::FocusPolicy::StrongFocus);
     this->installEventFilter(this->ui_EventFilter);
-    this->ui_Widget_OpenGL->installEventFilter(this->ui_EventFilter);
-    this->ui_Widget_Vulkan->installEventFilter(this->ui_EventFilter);
+    this->ui_Widget_Dummy->installEventFilter(this->ui_EventFilter);
 
     this->ui_WindowTitle = "Rosalie's Mupen GUI (";
     this->ui_WindowTitle += QString::fromStdString(CoreGetVersion());
@@ -444,10 +441,19 @@ void MainWindow::updateUI(bool inEmulation, bool isPaused)
             //this->ui_StatusBar_RenderModeLabel->setText("OpenGL");
             this->ui_Widgets->setCurrentWidget(this->ui_Widget_OpenGL->GetWidget());
         }
-        else
+        else if (this->ui_VidExtRenderMode == VidExtRenderMode::Vulkan)
         {
             //this->ui_StatusBar_RenderModeLabel->setText("Vulkan");
             this->ui_Widgets->setCurrentWidget(this->ui_Widget_Vulkan->GetWidget());
+        }
+        else
+        {
+            // when the video extension hasn't been initialized correctly
+            // yet, we'll show a dummy widget with a black color pallete
+            // to minimize the flicker that would occur when switching
+            // from the ROM browser to the render widget when you i.e
+            // launch RMG with a ROM on the commandline or drag & drop
+            this->ui_Widgets->setCurrentWidget(this->ui_Widget_Dummy);
         }
 
         this->storeGeometry();
@@ -560,6 +566,8 @@ void MainWindow::connectEmulationThreadSignals(void)
             &MainWindow::on_VidExt_ResizeWindow, Qt::BlockingQueuedConnection);
     connect(this->emulationThread, &Thread::EmulationThread::on_VidExt_ToggleFS, this, &MainWindow::on_VidExt_ToggleFS,
             Qt::BlockingQueuedConnection);
+    connect(this->emulationThread, &Thread::EmulationThread::on_VidExt_Quit, this, &MainWindow::on_VidExt_Quit,
+            Qt::BlockingQueuedConnection);
 }
 
 void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool refreshRomListAfterEmulation, int slot)
@@ -615,9 +623,6 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
         this->ui_ShowToolbar = CoreSettingsGetBoolValue(SettingsID::GUI_Toolbar);
         this->ui_ShowStatusbar = CoreSettingsGetBoolValue(SettingsID::GUI_StatusBar);
     }
-
-    this->ui_Widget_OpenGL->SetHideCursor(this->ui_HideCursorInEmulation);
-    this->ui_Widget_Vulkan->SetHideCursor(this->ui_HideCursorInEmulation);
 
     this->emulationThread->SetRomFile(cartRom);
     this->emulationThread->SetDiskFile(diskRom);
@@ -1189,7 +1194,7 @@ void MainWindow::timerEvent(QTimerEvent *event)
             expectedWidth  = this->ui_Widget_OpenGL->GetWidget()->width()  * this->devicePixelRatio();
             expectedHeight = this->ui_Widget_OpenGL->GetWidget()->height() * this->devicePixelRatio();
         }
-        else
+        else if (this->ui_VidExtRenderMode == VidExtRenderMode::Vulkan)
         {
             expectedWidth  = this->ui_Widget_Vulkan->GetWidget()->width()  * this->devicePixelRatio();
             expectedHeight = this->ui_Widget_Vulkan->GetWidget()->height() * this->devicePixelRatio();
@@ -1588,20 +1593,24 @@ void MainWindow::on_Action_System_SaveAs(void)
         this->on_Action_System_Pause();
     }
 
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Save State"), "", tr("Save State (*.state);;All Files (*)"));
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Save State"), "", tr("Save State (*.state);;Project64 Save State (*.pj);;All Files (*)"));
 
     if (!fileName.isEmpty())
     {
         this->ui_ManuallySavedState = true;
 
-        if (!CoreSaveState(fileName.toStdU32String()))
+        CoreSaveStateType type = fileName.endsWith(".pj") ? 
+                                    CoreSaveStateType::Project64 :
+                                    CoreSaveStateType::Mupen64Plus;
+
+        if (!CoreSaveState(fileName.toStdU32String(), type))
         {
             this->ui_ManuallySavedState = false;
             this->showErrorMessage("CoreSaveState() Failed", QString::fromStdString(CoreGetError()));
         }
         else
         {
-            OnScreenDisplaySetMessage("Saved state to: " + fileName.toStdString());
+            OnScreenDisplaySetMessage("Saved state to: " + QDir::toNativeSeparators(fileName).toStdString());
         }
     }
 
@@ -1650,7 +1659,7 @@ void MainWindow::on_Action_System_Load(void)
         }
         else
         {
-            OnScreenDisplaySetMessage("State loaded from: " + fileName.toStdString());
+            OnScreenDisplaySetMessage("State loaded from: " + QDir::toNativeSeparators(fileName).toStdString());
         }
     }
 
@@ -2110,6 +2119,24 @@ void MainWindow::on_VidExt_Init(VidExtRenderMode renderMode)
 {
     this->ui_VidExtRenderMode   = renderMode;
     this->ui_VidExtForceSetMode = true;
+
+    if (renderMode == VidExtRenderMode::OpenGL)
+    {
+        this->ui_Widget_OpenGL = new Widget::OGLWidget(this);
+        this->ui_Widget_OpenGL->installEventFilter(this->ui_EventFilter);
+        this->ui_Widget_OpenGL->SetHideCursor(this->ui_HideCursorInEmulation);
+
+        this->ui_Widgets->addWidget(this->ui_Widget_OpenGL->GetWidget());
+    }
+    else if (renderMode == VidExtRenderMode::Vulkan)
+    {
+        this->ui_Widget_Vulkan = new Widget::VKWidget(this);
+        this->ui_Widget_Vulkan->installEventFilter(this->ui_EventFilter);
+        this->ui_Widget_Vulkan->SetHideCursor(this->ui_HideCursorInEmulation);
+
+        this->ui_Widgets->addWidget(this->ui_Widget_Vulkan->GetWidget());
+    }
+
     this->updateUI(true, false);
 }
 
@@ -2159,7 +2186,7 @@ void MainWindow::on_VidExt_SetWindowedMode(int width, int height, int bps, int f
         {
             this->ui_Widget_OpenGL->SetHideCursor(false);
         }
-        else
+        else if (this->ui_VidExtRenderMode == VidExtRenderMode::Vulkan)
         {
             this->ui_Widget_Vulkan->SetHideCursor(false);
         }
@@ -2206,7 +2233,7 @@ void MainWindow::on_VidExt_SetFullscreenMode(int width, int height, int bps, int
         {
             this->ui_Widget_OpenGL->SetHideCursor(true);
         }
-        else
+        else if (this->ui_VidExtRenderMode == VidExtRenderMode::Vulkan)
         {
             this->ui_Widget_Vulkan->SetHideCursor(true);
         }
@@ -2309,7 +2336,7 @@ void MainWindow::on_VidExt_ToggleFS(bool fullscreen)
             {
                 this->ui_Widget_OpenGL->SetHideCursor(true);
             }
-            else
+            else if (this->ui_VidExtRenderMode == VidExtRenderMode::Vulkan)
             {
                 this->ui_Widget_Vulkan->SetHideCursor(true);
             }
@@ -2348,7 +2375,7 @@ void MainWindow::on_VidExt_ToggleFS(bool fullscreen)
             {
                 this->ui_Widget_OpenGL->SetHideCursor(false);
             }
-            else
+            else if (this->ui_VidExtRenderMode == VidExtRenderMode::Vulkan)
             {
                 this->ui_Widget_Vulkan->SetHideCursor(false);
             }
@@ -2372,22 +2399,21 @@ void MainWindow::on_Core_DebugCallback(QList<CoreCallbackMessage> messages)
         return;
     }
 
-    const CoreCallbackMessage& statusbarMessage = messages.last();
-
-    if (!statusbarMessage.Context.startsWith("[CORE]"))
+    // attempt to find last core message
+    CoreCallbackMessage statusbarMessage = {};
+    qsizetype i = messages.size() - 1;
+    for (; i >= 0; i--)
     {
-        return;
+        if (messages[i].Context.startsWith("[CORE]") &&
+            messages[i].Type != CoreDebugMessageType::Verbose &&
+            !messages[i].Message.startsWith("IS64:"))
+        {
+            statusbarMessage = messages[i];
+            break;
+        }
     }
-
-    // drop verbose messages
-    if (statusbarMessage.Type == CoreDebugMessageType::Verbose)
-    {
-        return;
-    }
-
-    // drop IS64 messages
-    if (statusbarMessage.Message.startsWith("IS64:"))
-    {
+    if (i < 0)
+    { // no wanted core message found
         return;
     }
 
@@ -2564,4 +2590,22 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
             }
         } break;
     }
+}
+
+void MainWindow::on_VidExt_Quit(void)
+{
+    if (this->ui_VidExtRenderMode == VidExtRenderMode::OpenGL)
+    {
+        this->ui_Widgets->removeWidget(this->ui_Widget_OpenGL->GetWidget());
+        this->ui_Widget_OpenGL->GetWidget()->deleteLater();
+        this->ui_Widget_OpenGL = nullptr;
+    }
+    else if (this->ui_VidExtRenderMode == VidExtRenderMode::Vulkan)
+    {
+        this->ui_Widgets->removeWidget(this->ui_Widget_Vulkan->GetWidget());
+        this->ui_Widget_Vulkan->GetWidget()->deleteLater();
+        this->ui_Widget_Vulkan = nullptr;
+    }
+
+    this->ui_VidExtRenderMode = VidExtRenderMode::Invalid;
 }
