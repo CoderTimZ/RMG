@@ -13,6 +13,7 @@
 #include "RMG-Core/Settings/Settings.hpp"
 #include "UserInterface/Widget/KeybindButton.hpp"
 
+#include <QCryptographicHash>
 #include <QFileDialog>
 #include <QColorDialog>
 #include <QMessageBox>
@@ -73,6 +74,17 @@ SettingsDialog::~SettingsDialog(void)
 void SettingsDialog::ShowGameTab(void)
 {
     this->tabWidget->setCurrentIndex(3);
+}
+
+void SettingsDialog::showErrorMessage(QString error, QString details)
+{
+    QMessageBox msgBox(this);
+    msgBox.setIcon(QMessageBox::Icon::Critical);
+    msgBox.setWindowTitle("Error");
+    msgBox.setText(error);
+    msgBox.setDetailedText(details);
+    msgBox.addButton(QMessageBox::Ok);
+    msgBox.exec();
 }
 
 int SettingsDialog::currentIndex(void)
@@ -205,6 +217,9 @@ void SettingsDialog::loadCoreSettings(void)
     int saveFilenameFormat = 0;
     int siDmaDuration = -1;
     bool randomizeInterrupt = true;
+    bool usePIFROM = false;
+    QString ntscPifROM;
+    QString palPifRom;
     bool overrideGameSettings = false;
 
     disableExtraMem = CoreSettingsGetBoolValue(SettingsID::CoreOverlay_DisableExtraMem);
@@ -213,11 +228,18 @@ void SettingsDialog::loadCoreSettings(void)
     saveFilenameFormat = CoreSettingsGetIntValue(SettingsID::CoreOverLay_SaveFileNameFormat);
     siDmaDuration = CoreSettingsGetIntValue(SettingsID::CoreOverlay_SiDmaDuration);
     randomizeInterrupt = CoreSettingsGetBoolValue(SettingsID::CoreOverlay_RandomizeInterrupt);
+    usePIFROM = CoreSettingsGetBoolValue(SettingsID::Core_PIF_Use);
+    ntscPifROM = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Core_PIF_NTSC));
+    palPifRom = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Core_PIF_PAL));;
     overrideGameSettings = CoreSettingsGetBoolValue(SettingsID::Core_OverrideGameSpecificSettings);
 
     this->coreCpuEmulatorComboBox->setCurrentIndex(cpuEmulator);
     this->coreSaveFilenameFormatComboBox->setCurrentIndex(saveFilenameFormat);
     this->coreRandomizeTimingCheckBox->setChecked(randomizeInterrupt);
+
+    this->usePifRomGroupBox->setChecked(usePIFROM);
+    this->ntscPifRomLineEdit->setText(ntscPifROM);
+    this->palPifRomLineEdit->setText(palPifRom);
 
     this->coreOverrideGameSettingsGroup->setChecked(overrideGameSettings);
 
@@ -239,6 +261,7 @@ void SettingsDialog::loadGameSettings(void)
     this->gameMemorySizeComboBox->setCurrentIndex(!this->currentGameSettings.DisableExtraMem);
     this->gameSaveTypeComboBox->setCurrentIndex(this->currentGameSettings.SaveType);
     this->gameCounterFactorComboBox->setCurrentIndex(this->currentGameSettings.CountPerOp - 1);
+    this->gameTransferPakComboBox->setCurrentIndex(this->currentGameSettings.TransferPak);
     this->gameSiDmaDurationSpinBox->setValue(this->currentGameSettings.SiDMADuration);
 }
 
@@ -443,6 +466,9 @@ void SettingsDialog::loadDefaultCoreSettings(void)
     int saveFilenameFormat = 0;
     int siDmaDuration = -1;
     bool randomizeInterrupt = true;
+    bool usePIFROM;
+    QString ntscPifROM;
+    QString palPifRom;
     bool overrideGameSettings;
 
     disableExtraMem = CoreSettingsGetDefaultBoolValue(SettingsID::CoreOverlay_DisableExtraMem);
@@ -451,11 +477,18 @@ void SettingsDialog::loadDefaultCoreSettings(void)
     siDmaDuration = CoreSettingsGetDefaultIntValue(SettingsID::CoreOverlay_SiDmaDuration);
     saveFilenameFormat = CoreSettingsGetDefaultIntValue(SettingsID::CoreOverLay_SaveFileNameFormat);
     randomizeInterrupt = CoreSettingsGetDefaultBoolValue(SettingsID::CoreOverlay_RandomizeInterrupt);
+    usePIFROM = CoreSettingsGetDefaultBoolValue(SettingsID::Core_PIF_Use);
+    ntscPifROM = QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_PIF_NTSC));
+    palPifRom = QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_PIF_PAL));;
     overrideGameSettings = CoreSettingsGetDefaultBoolValue(SettingsID::Core_OverrideGameSpecificSettings);
 
     this->coreCpuEmulatorComboBox->setCurrentIndex(cpuEmulator);
     this->coreSaveFilenameFormatComboBox->setCurrentIndex(saveFilenameFormat);
     this->coreRandomizeTimingCheckBox->setChecked(randomizeInterrupt);
+
+    this->usePifRomGroupBox->setChecked(usePIFROM);
+    this->ntscPifRomLineEdit->setText(ntscPifROM);
+    this->palPifRomLineEdit->setText(palPifRom);
 
     this->coreOverrideGameSettingsGroup->setChecked(overrideGameSettings);
 
@@ -477,6 +510,7 @@ void SettingsDialog::loadDefaultGameSettings(void)
     this->gameMemorySizeComboBox->setCurrentIndex(!this->defaultGameSettings.DisableExtraMem);
     this->gameSaveTypeComboBox->setCurrentIndex(this->defaultGameSettings.SaveType);
     this->gameCounterFactorComboBox->setCurrentIndex(this->defaultGameSettings.CountPerOp - 1);
+    this->gameTransferPakComboBox->setCurrentIndex(this->defaultGameSettings.TransferPak);
     this->gameSiDmaDurationSpinBox->setValue(this->defaultGameSettings.SiDMADuration);
 }
 
@@ -624,13 +658,17 @@ void SettingsDialog::saveCoreSettings(void)
     int saveFilenameFormat = this->coreSaveFilenameFormatComboBox->currentIndex();
     int siDmaDuration = this->coreSiDmaDurationSpinBox->value();
     bool randomizeInterrupt = this->coreRandomizeTimingCheckBox->isChecked();
-    //bool debugger = this->coreDebuggerCheckBox->isChecked();
+    bool usePIF = this->usePifRomGroupBox->isChecked();
+    QString ntscPifROM = this->ntscPifRomLineEdit->text();
+    QString palPifROM = this->palPifRomLineEdit->text();
     bool overrideGameSettings = this->coreOverrideGameSettingsGroup->isChecked();
 
     CoreSettingsSetValue(SettingsID::CoreOverlay_CPU_Emulator, cpuEmulator);
     CoreSettingsSetValue(SettingsID::CoreOverLay_SaveFileNameFormat, saveFilenameFormat);
     CoreSettingsSetValue(SettingsID::CoreOverlay_RandomizeInterrupt, randomizeInterrupt);
-    //CoreSettingsSetValue(SettingsID::CoreOverlay_EnableDebugger, debugger);
+    CoreSettingsSetValue(SettingsID::Core_PIF_Use, usePIF);
+    CoreSettingsSetValue(SettingsID::Core_PIF_NTSC, ntscPifROM.toStdString());
+    CoreSettingsSetValue(SettingsID::Core_PIF_PAL, palPifROM.toStdString());
     CoreSettingsSetValue(SettingsID::Core_OverrideGameSpecificSettings, overrideGameSettings);
 
     if (!overrideGameSettings)
@@ -650,14 +688,17 @@ void SettingsDialog::saveGameSettings(void)
     bool disableExtraMem = this->gameMemorySizeComboBox->currentIndex() == 0;
     int saveType = this->gameSaveTypeComboBox->currentIndex();
     int countPerOp = this->gameCounterFactorComboBox->currentIndex() + 1;
+    bool transferPak = this->gameTransferPakComboBox->currentIndex() != 0;
     int siDmaDuration = this->gameSiDmaDurationSpinBox->value();
 
     if ((this->defaultGameSettings.DisableExtraMem != disableExtraMem) ||
         (this->defaultGameSettings.SaveType != saveType) ||
         (this->defaultGameSettings.CountPerOp != countPerOp) ||
+        (this->defaultGameSettings.TransferPak != transferPak) ||
         (this->defaultGameSettings.SiDMADuration != siDmaDuration))
     {
         CoreSettingsSetValue(SettingsID::Game_OverrideSettings, this->gameSection, true);
+        CoreSettingsSetValue(SettingsID::Game_TransferPak, this->gameSection, transferPak);
         CoreSettingsSetValue(SettingsID::Game_DisableExtraMem, this->gameSection, disableExtraMem);
         CoreSettingsSetValue(SettingsID::Game_SaveType, this->gameSection, saveType);
         CoreSettingsSetValue(SettingsID::Game_CountPerOp, this->gameSection, countPerOp);
@@ -1010,12 +1051,13 @@ void SettingsDialog::commonPluginSettings(SettingsDialogAction action)
         index = ((int)p.Type - 1);
         comboBox = comboBoxArray[index];
         pluginFileName = pluginFileNames[index];
-        
-        comboBox->addItem(QString::fromStdString(p.Name), QString::fromStdString(p.File));
+        pluginName = QString::fromStdString(p.Name);
+
+        comboBox->addItem(pluginName, QString::fromStdString(p.File));
 
         if (pluginFileName == QString::fromStdString(p.File))
         {
-            comboBox->setCurrentText(QString::fromStdString(p.Name));
+            comboBox->setCurrentText(pluginName);
             pluginFound[index] = true;
         }
     }
@@ -1029,6 +1071,28 @@ void SettingsDialog::commonPluginSettings(SettingsDialogAction action)
 
             comboBox->addItem(pluginName, pluginFileNames[i]);
             comboBox->setCurrentText(pluginName);
+        }
+        else
+        { // find duplicates and append filename
+            for (int i = 0; i < comboBox->count(); i++)
+            {
+                pluginName = comboBox->itemText(i);
+                bool foundDuplicate = false;
+                for (int x = i + 1; x < comboBox->count(); x++)
+                {
+                    if (comboBox->itemText(x) == pluginName)
+                    {
+                        pluginFileName = QFileInfo(comboBox->itemData(x).toString()).fileName();
+                        comboBox->setItemText(x, pluginName + " (" + pluginFileName + ")");
+                        foundDuplicate = true;
+                    }
+                }
+                if (foundDuplicate)
+                {
+                    pluginFileName = QFileInfo(comboBox->itemData(i).toString()).fileName();
+                    comboBox->setItemText(i, pluginName + " (" + pluginFileName + ")");
+                }
+            }
         }
     }
 }
@@ -1080,14 +1144,35 @@ void SettingsDialog::chooseDirectory(QLineEdit *lineEdit)
     lineEdit->setText(QDir::toNativeSeparators(dir));
 }
 
-void SettingsDialog::chooseIPLRom(QLineEdit *lineEdit)
+void SettingsDialog::chooseFile(QLineEdit *lineEdit, QString filter, QString md5)
 {
     QString file;
 
-    file = QFileDialog::getOpenFileName(this, "", "", "IPL ROMs (*.n64 *.v64 *.z64)");
+    file = QFileDialog::getOpenFileName(this, "", "", filter);
     if (file.isEmpty())
     {
         return;
+    }
+
+    if (!md5.isEmpty())
+    {
+        QFile qFile(file);
+        if (!qFile.open(QFile::ReadOnly))
+        {
+            this->showErrorMessage("Failed to open file", "QFile::open() Failed");
+            return;
+        }
+
+        QCryptographicHash hash(QCryptographicHash::Algorithm::Md5);
+        if (hash.addData(&qFile))
+        {
+            QString md5Hash = QString(hash.result().toHex());
+            if (md5Hash != md5)
+            {
+                this->showErrorMessage("MD5 mismatch", "Expected file with MD5: \"" + md5 + "\"");
+                return;
+            }
+        }
     }
 
     lineEdit->setText(QDir::toNativeSeparators(file));
@@ -1124,13 +1209,7 @@ bool SettingsDialog::applyPluginSettings(void)
     {
         if (!CoreApplyPluginSettings())
         {
-            QMessageBox msgBox(this);
-            msgBox.setIcon(QMessageBox::Icon::Critical);
-            msgBox.setWindowTitle("Error");
-            msgBox.setText("CoreApplyPluginSettings() Failed");
-            msgBox.setDetailedText(QString::fromStdString(CoreGetError()));
-            msgBox.addButton(QMessageBox::Ok);
-            msgBox.exec();
+            this->showErrorMessage("CoreApplyPluginSettings() Failed", QString::fromStdString(CoreGetError()));
             return false;
         }
     }
@@ -1231,17 +1310,17 @@ void SettingsDialog::on_changeUserCacheDirButton_clicked(void)
 
 void SettingsDialog::on_changeJapaneseIPLRomPathButton_clicked(void)
 {
-    this->chooseIPLRom(this->japaneseIPLRomLineEdit);
+    this->chooseFile(this->japaneseIPLRomLineEdit, "IPL ROMs (*.n64 *.v64 *.z64)");
 }
 
 void SettingsDialog::on_changeAmericanIPLRomPathButton_clicked(void)
 {
-    this->chooseIPLRom(this->americanIPLRomLineEdit);
+    this->chooseFile(this->americanIPLRomLineEdit, "IPL ROMs (*.n64 *.v64 *.z64)");
 }
 
 void SettingsDialog::on_changeDevelopmentIPLRomPathButton_clicked(void)
 {
-    this->chooseIPLRom(this->developmentIPLRomLineEdit);
+    this->chooseFile(this->developmentIPLRomLineEdit, "IPL ROMs (*.n64 *.v64 *.z64)");
 }
 
 void SettingsDialog::on_changeBackgroundColorButton_clicked(void)
@@ -1391,4 +1470,21 @@ void SettingsDialog::on_KeybindButton_Clicked(KeybindButton* button)
 
     // notify button
     this->currentKeybindButton->SetSecondsLeft(5);
+}
+
+void SettingsDialog::on_coreCpuEmulatorComboBox_currentIndexChanged(int index)
+{
+    // hide PIF ROM options when using dynamic recompiler
+    // because the dynarec crashes when using a PIF ROM
+    this->usePifRomGroupBox->setVisible(index != 2);
+}
+
+void SettingsDialog::on_changeNTSCPifRomButton_clicked(void)
+{
+    this->chooseFile(this->ntscPifRomLineEdit, "PIF ROMs (*.rom)", "5c124e7948ada85da603a522782940d0");
+}
+
+void SettingsDialog::on_changePALPifRomButton_clicked(void)
+{
+    this->chooseFile(this->palPifRomLineEdit, "PIF ROMs (*.rom)", "d4232dc935cad0650ac2664d52281f3a");
 }

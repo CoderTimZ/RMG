@@ -58,6 +58,7 @@ static std::vector<std::string> l_keyList;
 #define SETTING_SECTION_ROMBROWSER  SETTING_SECTION_GUI  " RomBrowser"
 #define SETTING_SECTION_SETTINGS    SETTING_SECTION_CORE " Settings"
 #define SETTING_SECTION_64DD        SETTING_SECTION_CORE " 64DD"
+#define SETTING_SECTION_PIF         SETTING_SECTION_CORE " PIF"
 #define SETTING_SECTION_GB          SETTING_SECTION_CORE " Gameboy"
 #define SETTING_SECTION_M64P        "Core"
 #define SETTING_SECTION_AUDIO       SETTING_SECTION_GUI  " - Audio Plugin"
@@ -275,6 +276,16 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_M64P, "SaveDiskFormat", 1};
         break;
 
+    case SettingsID::Core_PIF_Use:
+        setting = {SETTING_SECTION_PIF, "PIF_Use", false};
+        break;
+    case SettingsID::Core_PIF_NTSC:
+        setting = {SETTING_SECTION_PIF, "PIF_NTSC", std::string("")};
+        break;
+    case SettingsID::Core_PIF_PAL:
+        setting = {SETTING_SECTION_PIF, "PIF_PAL", std::string("")};
+        break;
+
     case SettingsID::Core_Gameboy_P1_Rom:
         setting = {SETTING_SECTION_GB, "Gameboy_P1_Rom", std::string("")};
         break;
@@ -305,6 +316,9 @@ static l_Setting get_setting(SettingsID settingId)
         break;
     case SettingsID::Game_DisableExtraMem:
         setting = {"", "DisableExtraMem", false};
+        break;
+    case SettingsID::Game_TransferPak:
+        setting = {"", "TransferPak", false};
         break;
     case SettingsID::Game_SaveType:
         setting = {"", "SaveType", 0};
@@ -484,13 +498,13 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_KEYBIND, "Settings", std::string("Ctrl+T")};
         break;
     case SettingsID::KeyBinding_IncreaseVolume:
-        setting = {SETTING_SECTION_KEYBIND, "IncreaseVolume", std::string("")};
+        setting = {SETTING_SECTION_KEYBIND, "IncreaseVolume", std::string("PgUp")};
         break;
     case SettingsID::KeyBinding_DecreaseVolume:
-        setting = {SETTING_SECTION_KEYBIND, "DecreaseVolume", std::string("")};
+        setting = {SETTING_SECTION_KEYBIND, "DecreaseVolume", std::string("PgDown")};
         break;
     case SettingsID::KeyBinding_ToggleMuteVolume:
-        setting = {SETTING_SECTION_KEYBIND, "ToggleMuteVolume", std::string("")};
+        setting = {SETTING_SECTION_KEYBIND, "ToggleMuteVolume", std::string("Pause")};
         break;
 
     case SettingsID::RomBrowser_Directory:
@@ -559,7 +573,7 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_AUDIO, "SecondaryBufferSize", 1024};
         break;
     case SettingsID::Audio_Resampler:
-        setting = {SETTING_SECTION_AUDIO, "Resampler", std::string("trivial")};
+        setting = {SETTING_SECTION_AUDIO, "Resampler", std::string("src-linear")};
         break;
     case SettingsID::Audio_Volume:
         setting = {SETTING_SECTION_AUDIO, "Volume", 100};
