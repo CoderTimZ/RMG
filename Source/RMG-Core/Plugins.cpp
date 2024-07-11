@@ -213,6 +213,10 @@ bool apply_plugin_settings(std::string pluginSettings[5])
     {
         pluginType = (CorePluginType)(i + 1);
         settingValue = get_plugin_path(pluginType, pluginSettings[i]);
+        if (settingValue.empty())
+        { // skip invalid setting value
+            continue;
+        }
 
         // copy context string to a c string using strcpy
         std::strcpy(l_PluginContext[i], get_plugin_context_name(pluginType).c_str());
@@ -220,12 +224,6 @@ bool apply_plugin_settings(std::string pluginSettings[5])
         if (settingValue != l_PluginFiles[i])
         {
             plugin = &l_Plugins[i];
-
-            if (settingValue != "(None)" && (settingValue.empty() ||
-                !std::filesystem::is_regular_file(settingValue)))
-            { // skip invalid setting value
-                continue;
-            }
 
             // shutdown plugin when hooked
             if (plugin->IsHooked())
@@ -248,6 +246,16 @@ bool apply_plugin_settings(std::string pluginSettings[5])
             if (settingValue == "(None)")
             {
                 l_PluginFiles[i] = settingValue;
+                continue;
+            }
+
+            // ensure library file exists
+            if (!std::filesystem::is_regular_file(settingValue))
+            {
+                // force a re-load next time,
+                // because we've unhooked
+                // the existing one
+                l_PluginFiles[i].clear();
                 continue;
             }
 
