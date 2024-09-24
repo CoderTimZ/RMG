@@ -38,7 +38,7 @@ static char l_PluginContext[(int)CorePluginType::Execution][20];
 // Local Functions
 //
 
-m64p::PluginApi* get_plugin(CorePluginType type)
+static m64p::PluginApi* get_plugin(CorePluginType type)
 {
     if (type == CorePluginType::Invalid ||
         (int)type < 0 || (int)type > 5)
@@ -49,7 +49,7 @@ m64p::PluginApi* get_plugin(CorePluginType type)
     return &l_Plugins[(int)type - 1];
 }
 
-CorePluginType get_plugin_type(m64p::PluginApi* plugin)
+static CorePluginType get_plugin_type(m64p::PluginApi* plugin)
 {
     m64p_error ret;
     m64p_plugin_type m64p_type = M64PLUGIN_NULL;
@@ -68,7 +68,7 @@ CorePluginType get_plugin_type(m64p::PluginApi* plugin)
     return (CorePluginType)m64p_type;
 }
 
-std::string get_plugin_name(m64p::PluginApi* plugin, std::string filename)
+static std::string get_plugin_name(m64p::PluginApi* plugin, std::string filename)
 {
     m64p_error ret;
     const char* name = nullptr;
@@ -83,7 +83,7 @@ std::string get_plugin_name(m64p::PluginApi* plugin, std::string filename)
     return std::string(name);
 }
 
-std::string get_plugin_type_name(CorePluginType type)
+static std::string get_plugin_type_name(CorePluginType type)
 {
     std::string name;
 
@@ -115,7 +115,7 @@ std::string get_plugin_type_name(CorePluginType type)
     return name + " Plugin";
 }
 
-std::string get_plugin_context_name(CorePluginType type)
+static std::string get_plugin_context_name(CorePluginType type)
 {
     std::string name;
 
@@ -144,7 +144,7 @@ std::string get_plugin_context_name(CorePluginType type)
     return name;
 }
 
-std::string get_plugin_path(CorePluginType type, std::string settingsValue)
+static std::string get_plugin_path(CorePluginType type, std::string settingsValue)
 {
     std::string pluginPath;
     std::string path;
@@ -200,7 +200,7 @@ std::string get_plugin_path(CorePluginType type, std::string settingsValue)
     return path;
 }
 
-bool apply_plugin_settings(std::string pluginSettings[5])
+static bool apply_plugin_settings(std::string pluginSettings[5])
 {
     std::string            error;
     std::string            settingValue;
@@ -323,7 +323,7 @@ bool apply_plugin_settings(std::string pluginSettings[5])
     return true;
 }
 
-bool open_plugin_config(CorePluginType type, bool romConfig)
+static bool open_plugin_config(CorePluginType type, bool romConfig)
 {
     std::string error;
     m64p_error ret;
