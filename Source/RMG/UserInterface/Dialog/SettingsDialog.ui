@@ -2628,6 +2628,9 @@
              <property name="checkable">
               <bool>false</bool>
              </property>
+             <property name="visible">
+              <bool>false</bool>
+             </property>
              <layout class="QHBoxLayout" name="horizontalLayout_71">
               <item>
                <widget class="QComboBox" name="executionPluginsComboBox">
