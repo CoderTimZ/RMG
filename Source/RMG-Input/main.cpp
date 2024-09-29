@@ -229,7 +229,12 @@ static void load_settings(void)
     // try to retrieve current ROM settings
     if (CoreGetCurrentRomSettings(romSettings))
     {
-        gameId = romSettings.MD5;
+        int format = CoreSettingsGetIntValue(SettingsID::Core_SaveFileNameFormat);
+        if (format == 0) {
+            gameId = romSettings.InternalName;
+        } else {
+            gameId = romSettings.MD5;
+        }
     }
 
     // retrieve all user profiles

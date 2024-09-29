@@ -478,13 +478,21 @@ bool CoreApplyRomPluginSettings(void)
         return false;
     }
 
+    std::string section;
+    int format = CoreSettingsGetIntValue(SettingsID::Core_SaveFileNameFormat);
+    if (format == 0) {
+        section = romSettings.InternalName;
+    } else {
+        section = romSettings.MD5;
+    }
+
     std::string settings[] =
     {
-        CoreSettingsGetStringValue(SettingsID::Game_RSP_Plugin, romSettings.MD5),
-        CoreSettingsGetStringValue(SettingsID::Game_GFX_Plugin, romSettings.MD5),
-        CoreSettingsGetStringValue(SettingsID::Game_AUDIO_Plugin, romSettings.MD5),
-        CoreSettingsGetStringValue(SettingsID::Game_INPUT_Plugin, romSettings.MD5),
-        CoreSettingsGetStringValue(SettingsID::Game_EXECUTION_Plugin, romSettings.MD5),
+        CoreSettingsGetStringValue(SettingsID::Game_RSP_Plugin, section),
+        CoreSettingsGetStringValue(SettingsID::Game_GFX_Plugin, section),
+        CoreSettingsGetStringValue(SettingsID::Game_AUDIO_Plugin, section),
+        CoreSettingsGetStringValue(SettingsID::Game_INPUT_Plugin, section),
+        CoreSettingsGetStringValue(SettingsID::Game_EXECUTION_Plugin, section),
     };
 
     return apply_plugin_settings(settings);

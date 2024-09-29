@@ -1473,7 +1473,12 @@ void ControllerWidget::LoadSettings()
     if (CoreGetCurrentRomSettings(romSettings) &&
         CoreGetCurrentRomHeader(romHeader))
     {
-        this->gameSection = section + " Game " + QString::fromStdString(romSettings.MD5);
+        int format = CoreSettingsGetIntValue(SettingsID::Core_SaveFileNameFormat);
+        if (format == 0) {
+            this->gameSection = section + " Game " + QString::fromStdString(romSettings.InternalName);
+        } else {
+            this->gameSection = section + " Game " + QString::fromStdString(romSettings.MD5);
+        }
 
         // use internal rom name
         QString internalName = QString::fromStdString(romHeader.Name);
