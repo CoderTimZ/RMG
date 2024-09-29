@@ -840,7 +840,7 @@ QString MainWindow::getSaveStateSlotDateTimeText(QAction* action)
     QFileInfo saveStateFileInfo(filePath);
     if (!filePath.isEmpty() && saveStateFileInfo.exists())
     {
-        saveStateSlotText = saveStateFileInfo.lastModified().toString("dd/MM/yyyy hh:mm");
+        saveStateSlotText = saveStateFileInfo.lastModified().toString("yyyy-MM-dd hh:mm:ss");
     }
 
     return saveStateSlotText;
