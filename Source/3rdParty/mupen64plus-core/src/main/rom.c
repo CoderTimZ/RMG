@@ -59,7 +59,7 @@ enum { DEFAULT_AI_DMA_MODIFIER = 100 };
 
 static romdatabase_entry* ini_search_by_md5(md5_byte_t* md5);
 
-static romdatabase_entry* ini_search_by_internal_name(char* name);
+static romdatabase_entry* ini_search_by_internal_name_and_country(char* name, unsigned char country);
 
 static _romdatabase g_romdatabase;
 
@@ -199,7 +199,7 @@ m64p_error open_rom(const unsigned char* romimage, unsigned int size)
         ROM_SETTINGS.aidmamodifier = entry->aidmamodifier;
         ROM_PARAMS.cheats = entry->cheats;
     }
-    else if ((entry=ini_search_by_internal_name(ROM_PARAMS.headername)) != NULL)
+    else if ((entry=ini_search_by_internal_name_and_country(ROM_PARAMS.headername, ROM_HEADER.Country_code)) != NULL)
     {
         strcpy(ROM_SETTINGS.goodname, ROM_PARAMS.headername);
         strcat(ROM_SETTINGS.goodname, " (unknown rom)");
@@ -353,7 +353,7 @@ m64p_error open_disk(void)
         ROM_SETTINGS.aidmamodifier = entry->aidmamodifier;
         ROM_PARAMS.cheats = entry->cheats;
     }
-    else if ((entry=ini_search_by_internal_name(ROM_PARAMS.headername)) != NULL)
+    else if ((entry=ini_search_by_internal_name_and_country(ROM_PARAMS.headername, ROM_HEADER.Country_code)) != NULL)
     {
         strcpy(ROM_SETTINGS.goodname, ROM_PARAMS.headername);
         strcat(ROM_SETTINGS.goodname, " (unknown disk)");
@@ -523,6 +523,12 @@ static size_t romdatabase_resolve_round(void)
             entry->entry.set_flags |= ROMDATABASE_ENTRY_CRC;
         }
 
+        if (!isset_bitmask(entry->entry.set_flags, ROMDATABASE_ENTRY_COUNTRYCODE) &&
+            isset_bitmask(ref->set_flags, ROMDATABASE_ENTRY_COUNTRYCODE)) {
+            entry->entry.countrycode = ref->countrycode;
+            entry->entry.set_flags |= ROMDATABASE_ENTRY_COUNTRYCODE;
+        }
+
         if (!isset_bitmask(entry->entry.set_flags, ROMDATABASE_ENTRY_STATUS) &&
             isset_bitmask(ref->set_flags, ROMDATABASE_ENTRY_STATUS)) {
             entry->entry.status = ref->status;
@@ -682,6 +688,7 @@ void romdatabase_open(void)
             search->entry.refmd5 = NULL;
             search->entry.crc1 = 0;
             search->entry.crc2 = 0;
+            search->entry.countrycode = 0;
             search->entry.status = 0; /* Set default to 0 stars. */
             search->entry.savetype = SAVETYPE_EEPROM_4K;
             search->entry.players = 4;
@@ -722,6 +729,17 @@ void romdatabase_open(void)
             {
                 search->entry.internalname = strdup(l.value);
                 search->entry.set_flags |= ROMDATABASE_ENTRY_INTERNALNAME;
+            }
+            else if(!strcmp(l.name, "CountryCode"))
+            {
+                unsigned char countrycode;
+                if (parse_hex(l.value, &countrycode, 1))
+                {
+                    search->entry.countrycode = countrycode;
+                    search->entry.set_flags |= ROMDATABASE_ENTRY_COUNTRYCODE;
+                }
+                else
+                    DebugMessage(M64MSG_WARNING, "ROM Database: Invalid CountryCode on line %i", lineno);
             }
             else if(!strcmp(l.name, "CRC"))
             {
@@ -985,19 +1003,19 @@ romdatabase_entry* ini_search_by_crc(unsigned int crc1, unsigned int crc2)
     return found_entry;
 }
 
-romdatabase_entry* ini_search_by_internal_name(char* name)
+romdatabase_entry* ini_search_by_internal_name_and_country(char* name, unsigned char country)
 {
     romdatabase_search* search;
 
-    if(!g_romdatabase.have_database)
+    if (!g_romdatabase.have_database)
         return NULL;
 
-    search = g_romdatabase.list;
+    for (search = g_romdatabase.list; search != NULL; search = search->next_entry) {
+        if (search->entry.internalname == NULL) continue;
+        if (strcmp(search->entry.internalname, name) == 0 && search->entry.countrycode == country) break;
+    }
 
-    while (search != NULL && (search->entry.internalname == NULL || strcmp(search->entry.internalname, name) != 0))
-        search = search->next_entry;
-
-    if(search==NULL)
+    if (search == NULL)
         return NULL;
 
     return &(search->entry);
