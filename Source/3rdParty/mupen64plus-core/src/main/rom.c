@@ -59,6 +59,8 @@ enum { DEFAULT_AI_DMA_MODIFIER = 100 };
 
 static romdatabase_entry* ini_search_by_md5(md5_byte_t* md5);
 
+static romdatabase_entry* ini_search_by_internal_name(char* name);
+
 static _romdatabase g_romdatabase;
 
 /* Global loaded rom size. */
@@ -197,6 +199,23 @@ m64p_error open_rom(const unsigned char* romimage, unsigned int size)
         ROM_SETTINGS.aidmamodifier = entry->aidmamodifier;
         ROM_PARAMS.cheats = entry->cheats;
     }
+    else if ((entry=ini_search_by_internal_name(ROM_PARAMS.headername)) != NULL)
+    {
+        strcpy(ROM_SETTINGS.goodname, ROM_PARAMS.headername);
+        strcat(ROM_SETTINGS.goodname, " (unknown rom)");
+        ROM_SETTINGS.savetype = entry->savetype;
+        ROM_SETTINGS.status = entry->status;
+        ROM_SETTINGS.players = entry->players;
+        ROM_SETTINGS.rumble = entry->rumble;
+        ROM_SETTINGS.transferpak = entry->transferpak;
+        ROM_SETTINGS.mempak = entry->mempak;
+        ROM_SETTINGS.biopak = entry->biopak;
+        ROM_SETTINGS.countperop = entry->countperop;
+        ROM_SETTINGS.disableextramem = entry->disableextramem;
+        ROM_SETTINGS.sidmaduration = entry->sidmaduration;
+        ROM_SETTINGS.aidmamodifier = entry->aidmamodifier;
+        ROM_PARAMS.cheats = NULL;
+    }
     else
     {
         strcpy(ROM_SETTINGS.goodname, ROM_PARAMS.headername);
@@ -333,6 +352,23 @@ m64p_error open_disk(void)
         ROM_SETTINGS.sidmaduration = entry->sidmaduration;
         ROM_SETTINGS.aidmamodifier = entry->aidmamodifier;
         ROM_PARAMS.cheats = entry->cheats;
+    }
+    else if ((entry=ini_search_by_internal_name(ROM_PARAMS.headername)) != NULL)
+    {
+        strcpy(ROM_SETTINGS.goodname, ROM_PARAMS.headername);
+        strcat(ROM_SETTINGS.goodname, " (unknown disk)");
+        ROM_SETTINGS.savetype = entry->savetype;
+        ROM_SETTINGS.status = entry->status;
+        ROM_SETTINGS.players = entry->players;
+        ROM_SETTINGS.rumble = entry->rumble;
+        ROM_SETTINGS.transferpak = entry->transferpak;
+        ROM_SETTINGS.mempak = entry->mempak;
+        ROM_SETTINGS.biopak = entry->biopak;
+        ROM_SETTINGS.countperop = entry->countperop;
+        ROM_SETTINGS.disableextramem = entry->disableextramem;
+        ROM_SETTINGS.sidmaduration = entry->sidmaduration;
+        ROM_SETTINGS.aidmamodifier = entry->aidmamodifier;
+        ROM_PARAMS.cheats = NULL;
     }
     else
     {
@@ -471,6 +507,13 @@ static size_t romdatabase_resolve_round(void)
             entry->entry.goodname = strdup(ref->goodname);
             if (entry->entry.goodname)
                 entry->entry.set_flags |= ROMDATABASE_ENTRY_GOODNAME;
+        }
+
+        if (!isset_bitmask(entry->entry.set_flags, ROMDATABASE_ENTRY_INTERNALNAME) &&
+            isset_bitmask(ref->set_flags, ROMDATABASE_ENTRY_INTERNALNAME)) {
+            entry->entry.internalname = strdup(ref->internalname);
+            if (entry->entry.internalname)
+                entry->entry.set_flags |= ROMDATABASE_ENTRY_INTERNALNAME;
         }
 
         if (!isset_bitmask(entry->entry.set_flags, ROMDATABASE_ENTRY_CRC) &&
@@ -634,6 +677,7 @@ void romdatabase_open(void)
             memset(search, 0, sizeof(romdatabase_search));
 
             search->entry.goodname = NULL;
+            search->entry.internalname = NULL;
             memcpy(search->entry.md5, md5, 16);
             search->entry.refmd5 = NULL;
             search->entry.crc1 = 0;
@@ -673,6 +717,11 @@ void romdatabase_open(void)
             {
                 search->entry.goodname = strdup(l.value);
                 search->entry.set_flags |= ROMDATABASE_ENTRY_GOODNAME;
+            }
+            else if(!strcmp(l.name, "InternalName"))
+            {
+                search->entry.internalname = strdup(l.value);
+                search->entry.set_flags |= ROMDATABASE_ENTRY_INTERNALNAME;
             }
             else if(!strcmp(l.name, "CRC"))
             {
@@ -879,6 +928,8 @@ void romdatabase_close(void)
         romdatabase_search* search = g_romdatabase.list->next_entry;
         if(g_romdatabase.list->entry.goodname)
             free(g_romdatabase.list->entry.goodname);
+        if(g_romdatabase.list->entry.internalname)
+            free(g_romdatabase.list->entry.internalname);
         if(g_romdatabase.list->entry.refmd5)
             free(g_romdatabase.list->entry.refmd5);
         free(g_romdatabase.list->entry.cheats);
@@ -934,4 +985,20 @@ romdatabase_entry* ini_search_by_crc(unsigned int crc1, unsigned int crc2)
     return found_entry;
 }
 
+romdatabase_entry* ini_search_by_internal_name(char* name)
+{
+    romdatabase_search* search;
 
+    if(!g_romdatabase.have_database)
+        return NULL;
+
+    search = g_romdatabase.list;
+
+    while (search != NULL && (search->entry.internalname == NULL || strcmp(search->entry.internalname, name) != 0))
+        search = search->next_entry;
+
+    if(search==NULL)
+        return NULL;
+
+    return &(search->entry);
+}

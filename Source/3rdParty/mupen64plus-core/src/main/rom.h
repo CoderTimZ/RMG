@@ -101,6 +101,7 @@ enum
 typedef struct
 {
    char* goodname;
+   char* internalname;
    md5_byte_t md5[16];
    md5_byte_t* refmd5;
    char *cheats;
@@ -135,6 +136,7 @@ typedef struct
 #define ROMDATABASE_ENTRY_BIOPAK        BIT(11)
 #define ROMDATABASE_ENTRY_SIDMADURATION BIT(12)
 #define ROMDATABASE_ENTRY_AIDMAMODIFIER BIT(13)
+#define ROMDATABASE_ENTRY_INTERNALNAME  BIT(14)
 
 typedef struct _romdatabase_search
 {
