@@ -11,6 +11,7 @@
 #include "OnScreenDisplay.hpp"
 #include "UserInterface/Widget/KeybindButton.hpp"
 #include "UserInterface/Dialog/Netplay/NetplayCommon.hpp"
+#include "Utilities/QtMessageBox.hpp"
 
 #include <QRegularExpressionValidator>
 #include <QRegularExpression>
@@ -24,6 +25,7 @@
 #include <RMG-Core/Core.hpp>
 
 using namespace UserInterface::Dialog;
+using namespace Utilities;
 
 //
 // Local Enums
@@ -110,17 +112,6 @@ SettingsDialog::~SettingsDialog(void)
 void SettingsDialog::ShowGameTab(void)
 {
     this->tabWidget->setCurrentIndex(3);
-}
-
-void SettingsDialog::showErrorMessage(QString error, QString details)
-{
-    QMessageBox msgBox(this);
-    msgBox.setIcon(QMessageBox::Icon::Critical);
-    msgBox.setWindowTitle("Error");
-    msgBox.setText(error);
-    msgBox.setDetailedText(details);
-    msgBox.addButton(QMessageBox::Ok);
-    msgBox.exec();
 }
 
 int SettingsDialog::currentIndex(void)
@@ -1261,7 +1252,7 @@ void SettingsDialog::chooseFile(QLineEdit *lineEdit, QString filter, QString md5
         QFile qFile(file);
         if (!qFile.open(QFile::ReadOnly))
         {
-            this->showErrorMessage("Failed to open file", "QFile::open() Failed");
+            QtMessageBox::Error(this, "Failed to open file", "QFile::open() Failed");
             return;
         }
 
@@ -1271,7 +1262,7 @@ void SettingsDialog::chooseFile(QLineEdit *lineEdit, QString filter, QString md5
             QString md5Hash = QString(hash.result().toHex());
             if (md5Hash != md5)
             {
-                this->showErrorMessage("MD5 mismatch", "Expected file with MD5: \"" + md5 + "\"");
+                QtMessageBox::Error(this, "MD5 mismatch", "Expected file with MD5: \"" + md5 + "\"");
                 return;
             }
         }
@@ -1311,7 +1302,7 @@ bool SettingsDialog::applyPluginSettings(void)
     {
         if (!CoreApplyPluginSettings())
         {
-            this->showErrorMessage("CoreApplyPluginSettings() Failed", QString::fromStdString(CoreGetError()));
+            QtMessageBox::Error(this, "CoreApplyPluginSettings() Failed", QString::fromStdString(CoreGetError()));
             return false;
         }
     }
