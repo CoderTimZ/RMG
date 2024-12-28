@@ -16,7 +16,6 @@
 #include <QNetworkDatagram>
 #include <QJsonDocument>
 #include <QPushButton>
-#include <QMessageBox>
 #include <QJsonObject>
 #include <QFileInfo>
 
@@ -25,18 +24,6 @@
 using namespace UserInterface::Dialog;
 using namespace Utilities;
 
-//
-// Local Structs
-//
-
-struct NetplayRomData_t
-{
-    QString GoodName;
-    QString MD5;
-    QString File;
-};
-
-Q_DECLARE_METATYPE(NetplayRomData_t);
 
 //
 // Exported Functions
@@ -45,8 +32,6 @@ Q_DECLARE_METATYPE(NetplayRomData_t);
 
 CreateNetplaySessionDialog::CreateNetplaySessionDialog(QWidget *parent, QWebSocket* webSocket, QMap<QString, CoreRomSettings> modelData) : QDialog(parent)
 {
-    qRegisterMetaType<NetplayRomData_t>();
-
     this->setupUi(this);
 
     // prepare web socket
@@ -78,27 +63,14 @@ CreateNetplaySessionDialog::CreateNetplaySessionDialog(QWidget *parent, QWebSock
     QRegularExpression passwordRe(NETPLAYCOMMON_PASSWORD_REGEX);
     this->passwordLineEdit->setValidator(new QRegularExpressionValidator(passwordRe, this));
 
-    // transform model data to data we can use
-    QList<NetplayRomData_t> romData;
-    romData.reserve(modelData.size());
+    // add data to widget
     for (auto it = modelData.begin(); it != modelData.end(); it++)
     {
-        romData.append(
-        {
-            QString::fromStdString(it.value().GoodName), 
-            QString::fromStdString(it.value().MD5), 
-            it.key()
-        });
+        this->romListWidget->AddRomData(this->getGameName(QString::fromStdString(it.value().GoodName), it.key()),
+                                        QString::fromStdString(it.value().MD5),
+                                        it.key());
     }
-    // add data to list widget
-    for (const NetplayRomData_t& data : romData)
-    {
-        QListWidgetItem* item = new QListWidgetItem();
-        item->setData(Qt::UserRole, QVariant::fromValue(data));
-        item->setText(this->getGameName(data.GoodName, data.File));
-        this->listWidget->addItem(item);
-    }
-    this->listWidget->sortItems();
+    this->romListWidget->RefreshDone();
 
     this->validateCreateButton();
 
@@ -158,13 +130,8 @@ bool CreateNetplaySessionDialog::validate(void)
         return false;
     }
 
-    if (this->listWidget->count() == 0 ||
+    if (!this->romListWidget->IsCurrentRomValid() ||
         this->serverComboBox->count() == 0)
-    {
-        return false;
-    }
-
-    if (this->listWidget->currentItem() == nullptr)
     {
         return false;
     }
@@ -219,7 +186,7 @@ void CreateNetplaySessionDialog::on_networkAccessManager_Finished(QNetworkReply*
 {
     if (reply->error())
     {
-        QtMessageBox::Error(this, "Server Error", "Failed to retrieve server json list: " + reply->errorString());
+        QtMessageBox::Error(this, "Server Error", "Failed to retrieve server list json: " + reply->errorString());
         reply->deleteLater();
         return;
     }
@@ -233,8 +200,6 @@ void CreateNetplaySessionDialog::on_networkAccessManager_Finished(QNetworkReply*
         this->serverComboBox->addItem(jsonServers.at(i), jsonObject.value(jsonServers.at(i)).toString());
     }
 
-    // TODO: custom server support
-    //this->serverComboBox->addItem(QString("Custom"), QString("Custom"));
     reply->deleteLater();
 }
 
@@ -264,7 +229,7 @@ void CreateNetplaySessionDialog::on_passwordLineEdit_textChanged(void)
     this->validateCreateButton();
 }
 
-void CreateNetplaySessionDialog::on_listWidget_currentRowChanged(int index)
+void CreateNetplaySessionDialog::on_romListWidget_OnRomChanged(bool valid)
 {
     this->validateCreateButton();
 }
@@ -277,13 +242,11 @@ void CreateNetplaySessionDialog::accept()
         return;
     }
 
-    QListWidgetItem* item = this->listWidget->currentItem();
-    if (item == nullptr)
+    NetplayRomData romData;
+    if (!this->romListWidget->GetCurrentRom(romData))
     {
         return;
     }
-
-    NetplayRomData_t romData = item->data(Qt::UserRole).value<NetplayRomData_t>();
 
     // disable create button while we're processing the request
     QPushButton* createButton = this->buttonBox->button(QDialogButtonBox::Ok);
@@ -298,13 +261,15 @@ void CreateNetplaySessionDialog::accept()
     jsonFeatures.insert("gfx_plugin", plugins[1]);
 
     QJsonObject json;
+    QJsonObject session;
+    session.insert("room_name", this->sessionNameLineEdit->text());
+    session.insert("password", this->passwordLineEdit->text());
+    session.insert("MD5", romData.MD5);
+    session.insert("game_name", this->getGameName(romData.GoodName, romData.File));
+    session.insert("features",  jsonFeatures);
     json.insert("type", "request_create_room");
-    json.insert("room_name", this->sessionNameLineEdit->text());
     json.insert("player_name", this->nickNameLineEdit->text());
-    json.insert("password", this->passwordLineEdit->text());
-    json.insert("MD5", romData.MD5);
-    json.insert("game_name", this->getGameName(romData.GoodName, romData.File));
-    json.insert("features",  jsonFeatures);
+    json.insert("room", session);
     NetplayCommon::AddCommonJson(json);
 
     this->webSocket->sendTextMessage(QJsonDocument(json).toJson());

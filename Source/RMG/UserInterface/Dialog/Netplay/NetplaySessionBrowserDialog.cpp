@@ -8,7 +8,6 @@
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "NetplaySessionBrowserDialog.hpp"
-#include "UserInterface/NoFocusDelegate.hpp"
 #include "NetplaySessionPasswordDialog.hpp"
 #include "NetplayCommon.hpp"
 #include "Utilities/QtMessageBox.hpp"
@@ -20,8 +19,8 @@
 #include <QInputDialog>
 #include <QPushButton>
 #include <QFileDialog>
-#include <QMessageBox>
 #include <QJsonObject>
+#include <QJsonArray>
 
 #include <RMG-Core/Core.hpp>
 
@@ -29,36 +28,17 @@ using namespace UserInterface::Dialog;
 using namespace Utilities;
 
 //
-// Local Structs
-//
-
-struct NetplaySessionData_t
-{
-    QString SessionName;
-    QString GameName;
-    QString MD5;
-    bool PasswordProtected = false;
-    int  Port = 0;
-    QString CpuEmulator;
-    QString RspPlugin;
-    QString GfxPlugin;
-};
-
-Q_DECLARE_METATYPE(NetplaySessionData_t);
-
-//
 // Exported Functions
 //
 
 NetplaySessionBrowserDialog::NetplaySessionBrowserDialog(QWidget *parent, QWebSocket* webSocket, QMap<QString, CoreRomSettings> modelData) : QDialog(parent)
 {
-    qRegisterMetaType<NetplaySessionData_t>();
-
     this->setupUi(this);
 
     // prepare web socket
     this->webSocket = webSocket;
     connect(this->webSocket, &QWebSocket::connected, this, &NetplaySessionBrowserDialog::on_webSocket_connected);
+    connect(this->webSocket, &QWebSocket::disconnected, this, &NetplaySessionBrowserDialog::on_webSocket_disconnected);
     connect(this->webSocket, &QWebSocket::textMessageReceived, this, &NetplaySessionBrowserDialog::on_webSocket_textMessageReceived);
 
     // copy rom data for later
@@ -86,25 +66,6 @@ NetplaySessionBrowserDialog::NetplaySessionBrowserDialog(QWidget *parent, QWebSo
     QRegularExpression re(NETPLAYCOMMON_NICKNAME_REGEX);
     this->nickNameLineEdit->setValidator(new QRegularExpressionValidator(re, this));
     this->nickNameLineEdit->setText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Netplay_Nickname)));
-
-    // prepare session browser
-    this->tableWidget->setFrameStyle(QFrame::NoFrame);
-    this->tableWidget->setItemDelegate(new NoFocusDelegate(this));
-    this->tableWidget->setWordWrap(false);
-    this->tableWidget->setShowGrid(false);
-    this->tableWidget->setSortingEnabled(true);
-    this->tableWidget->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    this->tableWidget->setSelectionBehavior(QTableView::SelectRows);
-    this->tableWidget->setSelectionMode(QAbstractItemView::SingleSelection);
-    this->tableWidget->setVerticalScrollMode(QAbstractItemView::ScrollMode::ScrollPerPixel);
-    this->tableWidget->verticalHeader()->hide();
-    this->tableWidget->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    this->tableWidget->horizontalHeader()->setSectionsMovable(true);
-    this->tableWidget->horizontalHeader()->setFirstSectionMovable(true);
-    this->tableWidget->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    this->tableWidget->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft);
-    this->tableWidget->horizontalHeader()->setSortIndicatorShown(false);
-    this->tableWidget->horizontalHeader()->setHighlightSections(false);
 
     // request server list
     QString serverUrl = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Netplay_ServerJsonUrl));
@@ -175,7 +136,7 @@ bool NetplaySessionBrowserDialog::validate(void)
         return false;
     }
 
-    if (this->tableWidget->currentItem() == nullptr ||
+    if (!this->sessionBrowserWidget->IsCurrentSessionValid() ||
         this->serverComboBox->count() == 0)
     {
         return false;
@@ -190,51 +151,24 @@ void NetplaySessionBrowserDialog::validateJoinButton(void)
     joinButton->setEnabled(this->validate());
 }
 
-void NetplaySessionBrowserDialog::addSessionData(QString name, QString game, QString md5, bool password, int port,
-                                                 QString cpuEmulator, QString rspPlugin, QString gfxPlugin)
-{
-    const NetplaySessionData_t sessionData =
-    {
-        name,
-        game,
-        md5,
-        password,
-        port,
-        cpuEmulator,
-        rspPlugin,
-        gfxPlugin
-    };
-
-    int row = this->tableWidget->rowCount();
-    this->tableWidget->insertRow(row);
-
-    // Session name
-    QTableWidgetItem* tableWidgetItem1 = new QTableWidgetItem(name);
-    tableWidgetItem1->setData(Qt::UserRole, QVariant::fromValue<NetplaySessionData_t>(sessionData));
-    this->tableWidget->setItem(row, 0, tableWidgetItem1);
-
-    // Game
-    QTableWidgetItem* tableWidgetItem2 = new QTableWidgetItem(game);
-    this->tableWidget->setItem(row, 1, tableWidgetItem2);
-
-    // MD5
-    QTableWidgetItem* tableWidgetItem3 = new QTableWidgetItem(md5);
-    this->tableWidget->setItem(row, 2, tableWidgetItem3);
-
-    // Password
-    QTableWidgetItem* tableWidgetItem4 = new QTableWidgetItem(password ? "Yes" : "No");
-    this->tableWidget->setItem(row, 3, tableWidgetItem4);
-}
-
 void NetplaySessionBrowserDialog::on_webSocket_connected(void)
 {
     if (!this->webSocket->isValid())
     {
+        QtMessageBox::Error(this, "Server Error", "Connection Failed");
         return;
     }
 
-    // clear sessions from the table
-    this->tableWidget->model()->removeRows(0, this->tableWidget->rowCount());
+    // disable refresh button while refreshing
+    QPushButton* refreshButton = this->buttonBox->button(QDialogButtonBox::RestoreDefaults);
+    refreshButton->setEnabled(false);
+
+    // disable join button while refreshing
+    QPushButton* joinButton = this->buttonBox->button(QDialogButtonBox::Ok);
+    joinButton->setEnabled(false);
+
+    // clear sessions
+    this->sessionBrowserWidget->StartRefresh();
 
     // request session list from server
     QJsonObject json;
@@ -255,17 +189,33 @@ void NetplaySessionBrowserDialog::on_webSocket_textMessageReceived(QString messa
     {
         if (json.value("accept").toInt() == 0)
         {
-            this->addSessionData(json.value("room_name").toString(), 
-                                    json.value("game_name").toString(), 
-                                    json.value("MD5").toString(), 
-                                    json.value("protected").toBool(),
-                                    json.value("port").toInt(),
-                                    json.value("features").toObject().value("cpu_emulator").toString(),
-                                    json.value("features").toObject().value("rsp_plugin").toString(),
-                                    json.value("features").toObject().value("gfx_plugin").toString());
+            QJsonArray  sessions = json.value("rooms").toArray();
+            QJsonObject session;
+            for (int i = 0; i < sessions.size(); i++)
+            {
+                session = sessions.at(i).toObject();
+
+                this->sessionBrowserWidget->AddSessionData(session.value("room_name").toString(), 
+                                                            session.value("game_name").toString(), 
+                                                            session.value("MD5").toString(), 
+                                                            session.value("protected").toBool(),
+                                                            session.value("port").toInt(),
+                                                            session.value("features").toObject().value("cpu_emulator").toString(),
+                                                            session.value("features").toObject().value("rsp_plugin").toString(),
+                                                            session.value("features").toObject().value("gfx_plugin").toString());
+            }
+
+            // we're done refreshing the sessions
+            this->sessionBrowserWidget->RefreshDone();
+            // enable refresh button when refreshing is done
+            QPushButton* refreshButton = this->buttonBox->button(QDialogButtonBox::RestoreDefaults);
+            refreshButton->setEnabled(true);
+            // re-validate join button after refresh
+            this->validateJoinButton();
         }
         else
         {
+            this->sessionBrowserWidget->Reset();
             QtMessageBox::Error(this, "Server Error", json.value("message").toString());
         }
     }
@@ -282,6 +232,11 @@ void NetplaySessionBrowserDialog::on_webSocket_textMessageReceived(QString messa
             this->validateJoinButton();
         }
     }
+}
+
+void NetplaySessionBrowserDialog::on_webSocket_disconnected()
+{
+    this->sessionBrowserWidget->Reset();
 }
 
 void NetplaySessionBrowserDialog::on_broadcastSocket_readyRead(void)
@@ -305,6 +260,8 @@ void NetplaySessionBrowserDialog::on_networkAccessManager_Finished(QNetworkReply
 {
     if (reply->error())
     {
+        this->sessionBrowserWidget->Reset();
+        QtMessageBox::Error(this, "Server Error", "Failed to retrieve server list json: " + reply->errorString());
         reply->deleteLater();
         return;
     }
@@ -331,14 +288,13 @@ void NetplaySessionBrowserDialog::on_serverComboBox_currentIndexChanged(int inde
         return;
     }
 
-    // clear sessions from the table
-    this->tableWidget->model()->removeRows(0, this->tableWidget->rowCount());
+    this->sessionBrowserWidget->StartRefresh();
 
     QString address = this->serverComboBox->itemData(index).toString();
     this->webSocket->open(QUrl(address));
 }
 
-void NetplaySessionBrowserDialog::on_tableWidget_currentItemChanged(QTableWidgetItem* current, QTableWidgetItem* previous)
+void NetplaySessionBrowserDialog::on_sessionBrowserWidget_OnSessionChanged(bool valid)
 {
     this->validateJoinButton();
 }
@@ -365,13 +321,16 @@ void NetplaySessionBrowserDialog::accept()
         return;
     }
 
+    // retrieve session data
+    NetplaySessionData sessionData;
+    if (!this->sessionBrowserWidget->GetCurrentSession(sessionData))
+    {
+        return;
+    }
+
     // disable join button while we're processing the request
     QPushButton* joinButton = this->buttonBox->button(QDialogButtonBox::Ok);
     joinButton->setEnabled(false);
-
-    // retrieve information from row
-    QTableWidgetItem* item = this->tableWidget->item(this->tableWidget->currentRow(), 0);
-    NetplaySessionData_t sessionData = item->data(Qt::UserRole).value<NetplaySessionData_t>();
 
     // request password when needed
     QString password;
@@ -433,11 +392,14 @@ void NetplaySessionBrowserDialog::accept()
     }
 
     QJsonObject json;
+    QJsonObject session;
+    session.insert("port", sessionData.Port);
+    session.insert("password", password);
+    session.insert("MD5", QString::fromStdString(md5));
+
     json.insert("type", "request_join_room");
-    json.insert("port", sessionData.Port);
     json.insert("player_name", this->nickNameLineEdit->text());
-    json.insert("password", password);
-    json.insert("MD5", QString::fromStdString(md5));
+    json.insert("room", session);
     NetplayCommon::AddCommonJson(json);
 
     this->webSocket->sendTextMessage(QJsonDocument(json).toJson());

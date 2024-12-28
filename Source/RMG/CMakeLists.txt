@@ -99,6 +99,13 @@ if (NETPLAY)
         UserInterface/Dialog/Netplay/NetplaySessionDialog.ui
         UserInterface/Dialog/Netplay/NetplaySessionPasswordDialog.cpp
         UserInterface/Dialog/Netplay/NetplaySessionPasswordDialog.ui
+        UserInterface/Widget/Netplay/NetplaySessionBrowserWidget.cpp
+        UserInterface/Widget/Netplay/NetplaySessionBrowserLoadingWidget.cpp
+        UserInterface/Widget/Netplay/NetplaySessionBrowserEmptyWidget.cpp
+        UserInterface/Widget/Netplay/NetplaySessionBrowserEmptyWidget.ui
+        UserInterface/Widget/Netplay/CreateNetplaySessionWidget.cpp
+        UserInterface/Widget/Netplay/CreateNetplaySessionEmptyWidget.cpp
+        UserInterface/Widget/Netplay/CreateNetplaySessionEmptyWidget.ui
     )
 endif(NETPLAY)
 
