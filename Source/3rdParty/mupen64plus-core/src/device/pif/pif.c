@@ -383,6 +383,14 @@ void update_pif_ram(struct pif* pif)
 
     netplay_update_input(pif);
 
+    for (int i = 0; i < 4; i++) {
+        if (!Controls[i].Present) continue;
+        if (!pif->channels[i].tx) continue;
+        if (pif->channels[i].tx_buf[0] != JCMD_CONTROLLER_READ) continue;
+        
+        execution.input(i, (BUTTONS*)pif->channels[i].rx_buf);
+    }
+
 #ifdef DEBUG_PIF
     DebugMessage(M64MSG_INFO, "PIF post read");
     print_pif(pif);
