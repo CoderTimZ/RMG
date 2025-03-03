@@ -63,6 +63,7 @@ public:
 	void DllConfig(HWND _hParent);
 	void GetDllInfo (PLUGIN_INFO * PluginInfo);
 	void ReadScreen(void **_dest, long *_width, long *_height);
+	void GetVideoSize(int32_t* width, int32_t* height);
 
 	void DllAbout(/*HWND _hParent*/);
 
@@ -78,7 +79,7 @@ public:
 
 	m64p_error PluginStartup(m64p_dynlib_handle _CoreLibHandle, void * Context, void (*DebugCallback)(void *, int, const char *));
 #ifdef M64P_GLIDENUI
-	m64p_error PluginConfig();
+	m64p_error PluginConfig(void* parent);
 #endif // M64P_GLIDENUI
 	m64p_error PluginShutdown();
 	m64p_error PluginGetVersion(

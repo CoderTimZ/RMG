@@ -33,8 +33,11 @@
 #include "Resamplers/resamplers.hpp"
 
 #define M64P_PLUGIN_PROTOTYPES 1
-#define CORE_PLUGIN
-#include <RMG-Core/Core.hpp>
+#include <RMG-Core/m64p/api/m64p_common.h>
+#include <RMG-Core/m64p/api/m64p_plugin.h>
+#include <RMG-Core/m64p/api/m64p_custom.h>
+
+#include <RMG-Core/Settings.hpp>
 
 #include "UserInterface//MainDialog.hpp"
 
@@ -120,12 +123,6 @@ EXPORT m64p_error CALL PluginStartup(m64p_dynlib_handle CoreLibHandle, void *Con
     l_DebugCallback = DebugCallback;
     l_DebugCallContext = Context;
 
-    /* Init RMG-Core */
-    if (!CoreInit(CoreLibHandle))
-    {
-        return M64ERR_SYSTEM_FAIL;
-    }
-
     // apply volume settings
     LoadVolumeSettings();
 
@@ -178,14 +175,14 @@ EXPORT m64p_error CALL PluginGetVersion(m64p_plugin_type *PluginType, int *Plugi
 
 /* ----------- Custom Functions ------------ */
 
-EXPORT m64p_error CALL PluginConfig(void)
+EXPORT m64p_error CALL PluginConfig(void* parent)
 {
     if (!l_PluginInit)
     {
         return M64ERR_NOT_INIT;
     }
 
-    UserInterface::MainDialog dialog(nullptr);
+    UserInterface::MainDialog dialog((QWidget*)parent);
     dialog.exec();
 
     // apply volume settings

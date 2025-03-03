@@ -9,18 +9,21 @@
  */
 #include "RomBrowserWidget.hpp"
 
-#include <RMG-Core/Core.hpp>
-
-#include <QDir>
-#include <QBoxLayout>
-#include <QGridLayout>
+#include <QDesktopServices>
 #include <QFileDialog>
-#include <QLabel>
+#include <QGridLayout>
+#include <QBoxLayout>
+#include <QScrollBar>
 #include <QPixmap>
+#include <QLabel>
 #include <vector>
 #include <QList>
-#include <QScrollBar>
-#include <QDesktopServices>
+#include <QDir>
+
+#include <RMG-Core/Directories.hpp>
+#include <RMG-Core/SaveState.hpp>
+#include <RMG-Core/Settings.hpp>
+#include <RMG-Core/Plugins.hpp>
 
 using namespace UserInterface::Widget;
 
@@ -174,8 +177,8 @@ RomBrowserWidget::RomBrowserWidget(QWidget *parent) : QStackedWidget(parent)
     this->contextMenu = new QMenu(this);
     this->action_PlayGame = new QAction(this);
     this->action_PlayGameWith = new QAction(this);
-    this->menu_PlayGameWithDisk = new QMenu(this);
-    this->menu_PlayGameWithSlot = new QMenu(this);
+    this->menu_PlayGameWithDisk = new QMenu(this->contextMenu);
+    this->menu_PlayGameWithSlot = new QMenu(this->contextMenu);
     this->action_RefreshRomList = new QAction(this);
     this->action_OpenRomDirectory = new QAction(this);
     this->action_ChangeRomDirectory = new QAction(this);
@@ -188,7 +191,7 @@ RomBrowserWidget::RomBrowserWidget(QWidget *parent) : QStackedWidget(parent)
     this->action_RemoveCoverImage = new QAction(this);
 
     // define columns menu and its contents
-    this->menu_Columns = new QMenu(this);
+    this->menu_Columns = new QMenu(this->contextMenu);
     this->action_ColumnsMenuEntry = new QAction(this);
 
     // configure context menu contents
@@ -267,9 +270,9 @@ void RomBrowserWidget::RefreshRomList(void)
     this->menu_PlayGameWithDisk->clear();
 
     this->coversDirectory = QString::fromStdString(CoreGetUserDataDirectory().string());
-    this->coversDirectory += "/Covers";
+    this->coversDirectory += CORE_DIR_SEPERATOR_STR;
+    this->coversDirectory += "Covers";
 
-    this->sortRomResults      = CoreSettingsGetBoolValue(SettingsID::RomBrowser_SortAfterSearch);
     this->listViewSortSection = CoreSettingsGetIntValue(SettingsID::RomBrowser_ListViewSortSection);
     this->listViewSortOrder   = CoreSettingsGetIntValue(SettingsID::RomBrowser_ListViewSortOrder);
 
@@ -581,7 +584,7 @@ QIcon RomBrowserWidget::getCurrentCover(QString file, CoreRomHeader header, Core
         for (QString ext : { ".png", ".jpg", ".jpeg" })
         {
             QString coverPath = this->coversDirectory;
-            coverPath += "/";
+            coverPath += CORE_DIR_SEPERATOR_STR;
             coverPath += fixedName;
             coverPath += ext;
 
@@ -900,11 +903,8 @@ void RomBrowserWidget::on_RomBrowserThread_RomsFound(QList<RomSearcherThreadData
 void RomBrowserWidget::on_RomBrowserThread_Finished(bool canceled)
 {
     // sort data
-    if (this->sortRomResults)
-    {
-        this->listViewModel->sort(this->listViewSortSection, (Qt::SortOrder)this->listViewSortOrder);
-        this->gridViewModel->sort(0, Qt::SortOrder::AscendingOrder);
-    }
+    this->listViewModel->sort(this->listViewSortSection, (Qt::SortOrder)this->listViewSortOrder);
+    this->gridViewModel->sort(0, Qt::SortOrder::AscendingOrder);
 
     // retrieve column settings
     std::vector<int> columnSizes = CoreSettingsGetIntListValue(SettingsID::RomBrowser_ColumnSizes);
@@ -1160,7 +1160,7 @@ void RomBrowserWidget::on_Action_SetCoverImage(void)
 
     // construct new file name (for the cover)
     QString newFileName = this->coversDirectory;
-    newFileName += "/";
+    newFileName += CORE_DIR_SEPERATOR_STR;
     newFileName += QString::fromStdString(data.settings.MD5);
     newFileName += ".";
     newFileName += sourceFileInfo.suffix();

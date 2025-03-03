@@ -24,7 +24,7 @@ unsigned vk_vertical_stretch;
 unsigned vk_downscaling_steps;
 bool vk_native_texture_lod;
 bool vk_native_tex_rect;
-bool vk_synchronous, vk_divot_filter, vk_gamma_dither;
+bool vk_divot_filter, vk_gamma_dither;
 bool vk_vi_aa, vk_vi_scale, vk_dither_filter;
 bool vk_interlacing;
 
@@ -291,7 +291,8 @@ void vk_read_screen(unsigned char* dest)
 		image_buffer -= window_width * 4;
 		for (int j = 0; j < window_width; ++j)
 		{
-			switch (image->get_format()) {
+			auto image_format = image->get_format();
+			switch (image_format) {
 				case VK_FORMAT_B8G8R8A8_UNORM:
 					dest[0] = image_buffer[2];
 					dest[1] = image_buffer[1];
@@ -307,7 +308,24 @@ void vk_read_screen(unsigned char* dest)
 					dest[1] = image_buffer[2];
 					dest[2] = image_buffer[1];
 					break;
+				case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+				{
+					uint32_t pixel = *(uint32_t*) image_buffer;
+					dest[0] = pixel >> 2;
+					dest[1] = pixel >> 12;
+					dest[2] = pixel >> 22;
+					break;
+				}
+				case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+				{
+					uint32_t pixel = *(uint32_t*) image_buffer;
+					dest[0] = pixel >> 22;
+					dest[1] = pixel >> 12;
+					dest[2] = pixel >> 2;
+					break;
+				}
 				default:
+					LOGE("Encountered unknown image format in vk_read_screen: %d\n", image_format);
 					wsi->get_device().unmap_host_buffer(*buffer, Vulkan::MEMORY_ACCESS_READ_BIT);
 					return;
 			}
@@ -424,9 +442,7 @@ void vk_process_commands()
 			uint32_t height = viCalculateVerticalHeight(*GET_GFX_INFO(VI_V_START_REG), *GET_GFX_INFO(VI_Y_SCALE_REG));
 			*GET_GFX_INFO(DPC_CLOCK_REG) = width * height * 2;
 
-			// For synchronous RDP:
-			if (vk_synchronous)
-				processor->signal_timeline();
+			processor->wait_for_timeline(processor->signal_timeline());
 
 			*gfx.MI_INTR_REG |= DP_INTERRUPT;
 			*GET_GFX_INFO(DPC_STATUS_REG) &= ~(DP_STATUS_PIPE_BUSY | DP_STATUS_START_GCLK);
@@ -450,7 +466,8 @@ void vk_resize()
 
 void vk_destroy()
 {
-	wsi->end_frame();
+	if (wsi)
+		wsi->end_frame();
 
 	processor.reset();
 	wsi.reset();
@@ -479,9 +496,12 @@ bool vk_init()
 	wsi_platform.reset(new MupenWSIPlatform);
 	wsi->set_platform(wsi_platform.get());
 	wsi->set_present_mode(window_vsync ? Vulkan::PresentMode::SyncToVBlank : Vulkan::PresentMode::UnlockedMaybeTear);
-	wsi->set_backbuffer_srgb(false);
+	wsi->set_backbuffer_format(Vulkan::BackbufferFormat::UNORM);
 	if (!wsi->init_simple(1, handles))
+	{
+		vk_destroy();
 		return false;
+	}
 
 	uintptr_t aligned_rdram = reinterpret_cast<uintptr_t>(gfx.RDRAM);
 	uintptr_t offset = 0;
@@ -493,6 +513,7 @@ bool vk_init()
 
 		if (offset)
 		{
+			vk_destroy();
 			return false;
 		}
 		aligned_rdram -= offset;
@@ -525,7 +546,7 @@ bool vk_init()
 											 offset, rdram_size, rdram_size / 2, flags));
 	if (!processor->device_is_supported())
 	{
-		processor.reset();
+		vk_destroy();
 		return false;
 	}
 

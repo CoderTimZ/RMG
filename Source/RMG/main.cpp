@@ -9,71 +9,116 @@
  */
 #include <UserInterface/MainWindow.hpp>
 
-#include <QApplication>
 #include <QCommandLineParser>
+#include <QApplication>
 #include <QFile>
 #include <QDir>
 
-#include <RMG-Core/Core.hpp>
 #include <iostream>
 #include <cstdlib>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <Windows.h>
+#include <Dbghelp.h>
+#include <wchar.h>
+#else
 #include <signal.h>
 #endif
+
+#include <RMG-Core/Directories.hpp>
+#include <RMG-Core/Version.hpp>
 
 //
 // Local Functions
 //
 
-void message_handler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
+static void message_handler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
 {
-    QByteArray localMsg = msg.toLocal8Bit();
-    bool showDebugQtMessages = false;
-
-    const char* env = std::getenv("RMG_SHOW_DEBUG_QT_MESSAGES");
-    showDebugQtMessages = env != nullptr && std::string(env) == "1";
-
-    std::string typeString;
-
-    switch (type)
+    // personally I think that there should be a better
+    // way to silence these warnings because I'd rather
+    // not change the names of all custom signal/slot implementations,
+    // it'd cause the code to be very inconsistent naming-wise
+    if (type == QtWarningMsg && msg.startsWith("QMetaObject::connectSlotsByName:"))
     {
-    case QtDebugMsg:
-        if (!showDebugQtMessages)
-        {
-            return;
-        }
-        typeString = "[QT DEBUG] ";
-        break;
-    case QtWarningMsg:
-        if (!showDebugQtMessages)
-        {
-            return;
-        }
-        typeString = "[QT WARNING] ";
-        break;
-    case QtInfoMsg:
-        if (!showDebugQtMessages)
-        {
-            return;
-        }
-        typeString = "[QT INFO] ";
-        break;
-    case QtCriticalMsg:
-        typeString = "[QT CRITICAL] ";
-        break;
-    case QtFatalMsg:
-        typeString = "[QT FATAL] ";
-        break;
+        return;
     }
 
-    std::cerr << typeString << localMsg.constData() << std::endl;
+    std::cerr << msg.toStdString() << std::endl;
 }
 
-void signal_handler(int sig)
+#ifdef _WIN32
+typedef BOOL (WINAPI* ptr_MiniDumpWriteDump)(HANDLE, DWORD, HANDLE, MINIDUMP_TYPE,
+                                             PMINIDUMP_EXCEPTION_INFORMATION,
+                                             PMINIDUMP_USER_STREAM_INFORMATION,
+                                             PMINIDUMP_CALLBACK_INFORMATION);
+static void show_error(const char* error)
+{
+    MessageBoxA(nullptr, error, "RMG Crash Handler", MB_OK | MB_ICONERROR);
+}
+
+static LONG WINAPI exception_handler(_EXCEPTION_POINTERS* ExceptionInfo)
+{
+    HMODULE dbgHelpModule = LoadLibraryA("Dbghelp.dll");
+    if (dbgHelpModule == nullptr)
+    {
+        show_error("Failed to find Dbghelp.dll!");
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    ptr_MiniDumpWriteDump miniDumpWriteDump = 
+        (ptr_MiniDumpWriteDump)GetProcAddress(dbgHelpModule, "MiniDumpWriteDump");
+    if (miniDumpWriteDump == nullptr)
+    {
+        show_error("Failed to retrieve MiniDumpWriteDump from Dbghelp.dll!");
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    wchar_t dump_filename[MAX_PATH+1] = {0};
+    DWORD filename_len = GetModuleFileNameW(nullptr, dump_filename, MAX_PATH);
+    if (filename_len <= 0)
+    {
+        show_error("Failed to retrieve path of current process!");
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    
+    if (filename_len >= MAX_PATH)
+    { // replace .exe with .dmp
+        wcscpy((dump_filename + (filename_len - 4)), L".dmp");
+    }
+    else
+    { // append .dmp to .exe
+        wcscpy((dump_filename + filename_len), L".dmp");
+    }
+
+    HANDLE hDumpFile = CreateFileW(dump_filename, GENERIC_WRITE, FILE_SHARE_WRITE, 
+                                   nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+
+    if (hDumpFile != INVALID_HANDLE_VALUE)
+    {
+        _MINIDUMP_EXCEPTION_INFORMATION exceptionInfo;
+        exceptionInfo.ThreadId = GetCurrentThreadId();
+        exceptionInfo.ExceptionPointers = ExceptionInfo;
+        exceptionInfo.ClientPointers = FALSE;
+
+        BOOL ret = miniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), 
+                                     hDumpFile, MiniDumpNormal, &exceptionInfo, 
+                                     nullptr, nullptr);
+        if (!ret)
+        {
+            show_error("Failed to save minidump file!");
+        }
+    }
+
+    // we've saved the minidump,
+    // now we can crash safely
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+#else
+static void signal_handler(int sig)
 {
     QGuiApplication::quit();
 }
+#endif // _WIN32
 
 //
 // Exported Functions
@@ -84,7 +129,12 @@ int main(int argc, char **argv)
     // install message handler
     qInstallMessageHandler(message_handler);
 
-#ifndef _WIN32
+#ifdef _WIN32
+    // on Windows, to aid with crash debugging
+    // we'll install a crash handler and
+    // write out a minidump there
+    SetUnhandledExceptionFilter(exception_handler);
+#else
     // on Linux we need to install signal handlers,
     // so we can exit cleanly when the user presses
     // i.e control+c
@@ -95,16 +145,12 @@ int main(int argc, char **argv)
     // it works on KDE plasma and sway (on 2023-07-26),
     // but i.e doesn't work on GNOME wayland or labwc, 
     // so to compromise the situation, we'll force xwayland
-    // unless RMG_WAYLAND is set to 1, which'll force wayland
+    // unless RMG_ALLOW_WAYLAND is set to 1, which'll allow wayland
     // as qt platform, so users can experiment with the
     // wayland support themselves
-    const char* wayland = std::getenv("RMG_WAYLAND");
-    if (wayland != nullptr &&
-        std::string(wayland) == "1")
-    {
-        setenv("QT_QPA_PLATFORM", "wayland", 1);
-    }
-    else
+    const char* allow_wayland = std::getenv("RMG_ALLOW_WAYLAND");
+    if (allow_wayland == nullptr ||
+        std::string(allow_wayland) != "1")
     {
         setenv("QT_QPA_PLATFORM", "xcb", 1);
     }

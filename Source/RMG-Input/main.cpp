@@ -11,17 +11,32 @@
 #define M64P_PLUGIN_PROTOTYPES 1
 #define INPUT_PLUGIN_API_VERSION 0x020100
 
-#include <UserInterface/MainDialog.hpp>
-#include "Thread/SDLThread.hpp"
-#include "Thread/HotkeysThread.hpp"
+#include "UserInterface/MainDialog.hpp"
 #include "Utilities/InputDevice.hpp"
+#include "Thread/HotkeysThread.hpp"
+#include "Thread/SDLThread.hpp"
 #include "common.hpp"
 #include "main.hpp"
 #ifdef VRU
 #include "VRU.hpp"
 #endif // VRU
 
-#include <RMG-Core/Core.hpp>
+#define M64P_PLUGIN_PROTOTYPES 1
+#include <RMG-Core/m64p/api/m64p_common.h>
+#include <RMG-Core/m64p/api/m64p_plugin.h>
+#include <RMG-Core/m64p/api/m64p_custom.h>
+#include <RMG-Core/m64p/api/m64p_types.h>
+
+#include <RMG-Core/SpeedLimiter.hpp>
+#include <RMG-Core/Directories.hpp>
+#include <RMG-Core/SpeedFactor.hpp>
+#include <RMG-Core/Screenshot.hpp>
+#include <RMG-Core/Emulation.hpp>
+#include <RMG-Core/SaveState.hpp>
+#include <RMG-Core/Settings.hpp>
+#include <RMG-Core/Netplay.hpp>
+#include <RMG-Core/Cheats.hpp>
+#include <RMG-Core/Video.hpp>
 
 #include <QGuiApplication>
 #include <QApplication>
@@ -72,6 +87,8 @@ struct InputProfile
 
     // input device information
     std::string DeviceName;
+    std::string DevicePath;
+    std::string DeviceSerial;
     int DeviceNum = -1;
     std::chrono::time_point<std::chrono::high_resolution_clock> LastDeviceCheckTime = std::chrono::high_resolution_clock::now();
 
@@ -94,8 +111,8 @@ struct InputProfile
     InputMapping Button_CButtonDown;
     InputMapping Button_CButtonLeft;
     InputMapping Button_CButtonRight;
-    InputMapping Button_LeftTrigger;
-    InputMapping Button_RightTrigger;
+    InputMapping Button_LeftShoulder;
+    InputMapping Button_RightShoulder;
     InputMapping Button_ZTrigger;
 
     // analog stick
@@ -299,6 +316,8 @@ static void load_settings(void)
         profile->DeadzoneValue = CoreSettingsGetIntValue(SettingsID::Input_Deadzone, section);
         profile->ControllerPak = (N64ControllerPak)CoreSettingsGetIntValue(SettingsID::Input_Pak, section);
         profile->DeviceName = CoreSettingsGetStringValue(SettingsID::Input_DeviceName, section);
+        profile->DevicePath = CoreSettingsGetStringValue(SettingsID::Input_DevicePath, section);
+        profile->DeviceSerial = CoreSettingsGetStringValue(SettingsID::Input_DeviceSerial, section);
         profile->DeviceNum = CoreSettingsGetIntValue(SettingsID::Input_DeviceNum, section);
         profile->GameboyRom = CoreSettingsGetStringValue(SettingsID::Input_GameboyRom, section);
         profile->GameboySave = CoreSettingsGetStringValue(SettingsID::Input_GameboySave, section);
@@ -328,8 +347,8 @@ static void load_settings(void)
         LOAD_INPUT_MAPPING(Button_CButtonDown,  Input_CButtonDown);
         LOAD_INPUT_MAPPING(Button_CButtonLeft,  Input_CButtonLeft);
         LOAD_INPUT_MAPPING(Button_CButtonRight, Input_CButtonRight);
-        LOAD_INPUT_MAPPING(Button_LeftTrigger,  Input_LeftTrigger);
-        LOAD_INPUT_MAPPING(Button_RightTrigger, Input_RightTrigger);
+        LOAD_INPUT_MAPPING(Button_LeftShoulder,  Input_LeftShoulder);
+        LOAD_INPUT_MAPPING(Button_RightShoulder, Input_RightShoulder);
         LOAD_INPUT_MAPPING(Button_ZTrigger,     Input_ZTrigger);
         LOAD_INPUT_MAPPING(AnalogStick_Up,      Input_AnalogStickUp);
         LOAD_INPUT_MAPPING(AnalogStick_Down,    Input_AnalogStickDown);
@@ -569,7 +588,7 @@ static void open_controllers(void)
 
         if (profile->DeviceNum != (int)InputDeviceType::Keyboard)
         {
-            profile->InputDevice.OpenDevice(profile->DeviceName, profile->DeviceNum);
+            profile->InputDevice.OpenDevice(profile->DeviceName, profile->DevicePath, profile->DeviceSerial, profile->DeviceNum);
         }
     }
 }
@@ -692,7 +711,7 @@ static double get_axis_state(InputProfile* profile, const InputMapping* inputMap
         {
             case InputType::GamepadButton:
             {
-                button_state |= SDL_GameControllerGetButton(profile->InputDevice.GetGameControllerHandle(), (SDL_GameControllerButton)data);;
+                button_state |= SDL_GameControllerGetButton(profile->InputDevice.GetGameControllerHandle(), (SDL_GameControllerButton)data);
             } break;
             case InputType::GamepadAxis:
             {
@@ -707,7 +726,7 @@ static double get_axis_state(InputProfile* profile, const InputMapping* inputMap
             } break;
             case InputType::JoystickButton:
             {
-                button_state |= SDL_JoystickGetButton(profile->InputDevice.GetJoystickHandle(), data);;
+                button_state |= SDL_JoystickGetButton(profile->InputDevice.GetJoystickHandle(), data);
             } break;
             case InputType::JoystickHat:
             {
@@ -922,8 +941,6 @@ static void sdl_init()
     std::string debugMessage;
     int ret = -1;
 
-    SDL_SetHint(SDL_HINT_JOYSTICK_RAWINPUT, "0");
-
     for (const int subsystem : {SDL_INIT_GAMECONTROLLER, SDL_INIT_AUDIO, SDL_INIT_VIDEO, SDL_INIT_HAPTIC})
     {
         if (!SDL_WasInit(subsystem))
@@ -975,11 +992,6 @@ EXPORT m64p_error CALL PluginStartup(m64p_dynlib_handle CoreLibHandle, void *Con
     if (l_SDLThread != nullptr)
     {
         return M64ERR_ALREADY_INIT;
-    }
-
-    if (!CoreInit(CoreLibHandle))
-    {
-        return M64ERR_SYSTEM_FAIL;
     }
 
     // setup debug callback
@@ -1079,7 +1091,7 @@ void PluginDebugMessage(int level, std::string message)
 // Custom Plugin Functions
 //
 
-EXPORT m64p_error CALL PluginConfig2(int romConfig)
+EXPORT m64p_error CALL PluginConfig2(void* parent, int romConfig, CoreRomHeader* romHeader, CoreRomSettings* romSettings)
 {
     if (l_SDLThread == nullptr)
     {
@@ -1093,7 +1105,7 @@ EXPORT m64p_error CALL PluginConfig2(int romConfig)
 
     l_SDLThread->SetAction(SDLThreadAction::SDLPumpEvents);
 
-    UserInterface::MainDialog dialog(nullptr, l_SDLThread, romConfig);
+    UserInterface::MainDialog dialog((QWidget*)parent, l_SDLThread, romConfig, *romHeader, *romSettings);
     dialog.exec();
 
     // when PluginShutdown() is called during PluginConfig2(),
@@ -1130,11 +1142,6 @@ EXPORT m64p_error CALL PluginConfig2(int romConfig)
     l_IsConfigGuiOpen = false;
     
     return M64ERR_SUCCESS;
-}
-
-EXPORT int CALL PluginConfig2HasRomConfig(void)
-{
-    return 1;
 }
 
 //
@@ -1225,6 +1232,7 @@ EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
     }
 #endif // VRU
 
+#if 0 // TODO: fix hotplug support
     // check if device has been disconnected,
     // if it has, try to open it again,
     // only do this every 2 seconds to prevent lag
@@ -1243,10 +1251,11 @@ EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
 
             if (!profile->InputDevice.HasOpenDevice() || !profile->InputDevice.IsAttached())
             {
-                profile->InputDevice.OpenDevice(profile->DeviceName, profile->DeviceNum);
+                profile->InputDevice.OpenDevice(profile->DeviceName, profile->DevicePath, profile->DeviceSerial, profile->DeviceNum);
             }
         }
     }
+#endif
 
     // when we've matched a hotkey,
     // we don't need to check anything
@@ -1267,8 +1276,8 @@ EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
     Keys->D_CBUTTON    = get_button_state(profile, &profile->Button_CButtonDown);
     Keys->L_CBUTTON    = get_button_state(profile, &profile->Button_CButtonLeft);
     Keys->R_CBUTTON    = get_button_state(profile, &profile->Button_CButtonRight);
-    Keys->L_TRIG       = get_button_state(profile, &profile->Button_LeftTrigger);
-    Keys->R_TRIG       = get_button_state(profile, &profile->Button_RightTrigger);
+    Keys->L_TRIG       = get_button_state(profile, &profile->Button_LeftShoulder);
+    Keys->R_TRIG       = get_button_state(profile, &profile->Button_RightShoulder);
     Keys->Z_TRIG       = get_button_state(profile, &profile->Button_ZTrigger);
 
     double inputX = 0, inputY = 0;

@@ -9,22 +9,32 @@
  */
 #include "String.hpp"
 
+#include "Library.hpp"
+
 #include <algorithm>
 
 //
 // Exported Function
 //
 
-std::string CoreLowerString(std::string str)
+CORE_EXPORT std::string CoreLowerString(std::string str)
 {
 	std::string resultString = str;
 
     std::transform(resultString.begin(), resultString.end(), resultString.begin(), 
         [](unsigned char c)
         { 
-            return std::tolower(c); 
+            return (c >= 'A' && c <= 'Z') ? (c + 'a' - 'A') : c;
         }
     );
 
     return resultString;
 }
+
+CORE_EXPORT bool CoreStringToInt(std::string str, int& num)
+{
+    char* endptr;
+    num = (int)std::strtol(str.c_str(), &endptr, 10);
+    return errno != ERANGE && endptr == (str.c_str() + str.size());
+}
+

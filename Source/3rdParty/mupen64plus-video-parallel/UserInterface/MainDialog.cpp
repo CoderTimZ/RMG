@@ -85,7 +85,6 @@ MainDialog::MainDialog(QWidget* parent) : QDialog(parent)
     this->viGammaDitherCheckBox->setChecked(ConfigGetParamBool(configVideoParallel, KEY_GAMMADITHER));
     this->nativeTextRectsCheckBox->setChecked(ConfigGetParamBool(configVideoParallel, KEY_NATIVETEXTRECT));
     this->verticalSyncCheckBox->setChecked(ConfigGetParamBool(configVideoParallel, KEY_VSYNC));
-    this->synchronizeCheckBox->setChecked(ConfigGetParamBool(configVideoParallel, KEY_SYNCHRONOUS));
 }
 
 MainDialog::~MainDialog()
@@ -101,9 +100,8 @@ void MainDialog::on_buttonBox_clicked(QAbstractButton* button)
     if (pushButton == okButton)
     {
         // screen size
-        QStringList trimmedScreenSize = this->screenSizeComboBox->currentText().remove(' ').split("x");
-        int width  = trimmedScreenSize.at(0).toInt();
-        int height = trimmedScreenSize.at(1).toInt();
+        int width  = this->screenSizeComboBox->currentText().split(" x ").at(0).toInt();
+        int height = this->screenSizeComboBox->currentText().split(" x ").at(1).toInt();
         ConfigSetParameter(configVideoParallel, KEY_SCREEN_WIDTH, M64TYPE_INT, &width);
         ConfigSetParameter(configVideoParallel, KEY_SCREEN_HEIGHT, M64TYPE_INT, &height);
 
@@ -148,7 +146,6 @@ void MainDialog::on_buttonBox_clicked(QAbstractButton* button)
         int viGammaDitherValue = this->viGammaDitherCheckBox->isChecked() ? 1 : 0;
         int nativeTextRectsValue = this->nativeTextRectsCheckBox->isChecked() ? 1 : 0;
         int verticalSyncValue = this->verticalSyncCheckBox->isChecked() ? 1 : 0;
-        int synchronizeValue = this->synchronizeCheckBox->isChecked() ? 1 : 0;
 
         ConfigSetParameter(configVideoParallel, KEY_SSDITHER, M64TYPE_BOOL, &superSampledDitherValue);
         ConfigSetParameter(configVideoParallel, KEY_AA, M64TYPE_BOOL, &viAaValue);
@@ -161,7 +158,6 @@ void MainDialog::on_buttonBox_clicked(QAbstractButton* button)
         ConfigSetParameter(configVideoParallel, KEY_GAMMADITHER, M64TYPE_BOOL, &viGammaDitherValue);
         ConfigSetParameter(configVideoParallel, KEY_NATIVETEXTRECT, M64TYPE_BOOL, &nativeTextRectsValue);
         ConfigSetParameter(configVideoParallel, KEY_VSYNC, M64TYPE_BOOL, &verticalSyncValue);
-        ConfigSetParameter(configVideoParallel, KEY_SYNCHRONOUS, M64TYPE_BOOL, &synchronizeValue);
 
         ConfigSaveSection("Video-Parallel");
     }
@@ -185,6 +181,5 @@ void MainDialog::on_buttonBox_clicked(QAbstractButton* button)
         this->viGammaDitherCheckBox->setChecked(true);
         this->nativeTextRectsCheckBox->setChecked(true);
         this->verticalSyncCheckBox->setChecked(false);
-        this->synchronizeCheckBox->setChecked(true);
     }
 }

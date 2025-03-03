@@ -9,8 +9,6 @@
  */
 #include "MainWindow.hpp"
 
-#include <RMG-Core/Core.hpp>
-
 #include "UserInterface/Dialog/AboutDialog.hpp"
 #include "Dialog/Cheats/CheatsDialog.hpp"
 #include "Dialog/SettingsDialog.hpp"
@@ -27,6 +25,7 @@
 #endif // NETPLAY
 #include "UserInterface/EventFilter.hpp"
 #include "Utilities/QtKeyToSdl2Key.hpp"
+#include "Utilities/QtMessageBox.hpp"
 #include "OnScreenDisplay.hpp"
 #include "Callbacks.hpp"
 #include "VidExt.hpp"
@@ -55,7 +54,25 @@
 #include <cmath>
 #include <QUrl>
 
+#include <RMG-Core/CachedRomHeaderAndSettings.hpp>
+#include <RMG-Core/SpeedLimiter.hpp>
+#include <RMG-Core/Directories.hpp>
+#include <RMG-Core/SpeedFactor.hpp>
+#include <RMG-Core/Screenshot.hpp>
+#include <RMG-Core/Emulation.hpp>
+#include <RMG-Core/SaveState.hpp>
+#include <RMG-Core/Settings.hpp>
+#include <RMG-Core/Netplay.hpp>
+#include <RMG-Core/Version.hpp>
+#include <RMG-Core/Cheats.hpp>
+#include <RMG-Core/Volume.hpp>
+#include <RMG-Core/Error.hpp>
+#include <RMG-Core/Video.hpp>
+#include <RMG-Core/Core.hpp>
+#include <RMG-Core/Key.hpp>
+
 using namespace UserInterface;
+using namespace Utilities;
 
 MainWindow::MainWindow() : QMainWindow(nullptr)
 {
@@ -67,15 +84,21 @@ MainWindow::~MainWindow()
 
 bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
 {
+    // we use QtMessageBox::Error() instead of this->showErrorMessage()
+    // in this function, because our custom function uses
+    // ->show() instead of ->exec(), causing the user
+    // to not see the error message because ->show() is non-blocking
+    // and we return early here for critical errors
+
     if (!CoreInit())
     {
-        this->showErrorMessage("CoreInit() Failed", QString::fromStdString(CoreGetError()));
+        QtMessageBox::Error(this, "CoreInit() Failed", QString::fromStdString(CoreGetError()));
         return false;
     }
 
     if (!CoreApplyPluginSettings())
     {
-        this->showErrorMessage("CoreApplyPluginSettings() Failed", QString::fromStdString(CoreGetError()));
+        QtMessageBox::Error(this, "CoreApplyPluginSettings() Failed", QString::fromStdString(CoreGetError()));
     }
 
     this->configureTheme(app);
@@ -103,7 +126,7 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
 
     if (!SetupVidExt(this->emulationThread, this, &this->ui_Widget_OpenGL, &this->ui_Widget_Vulkan))
     {
-        this->showErrorMessage("SetupVidExt() Failed", QString::fromStdString(CoreGetError()));
+        QtMessageBox::Error(this, "SetupVidExt() Failed", QString::fromStdString(CoreGetError()));
         return false;
     }
 
@@ -116,7 +139,7 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
 
     if (!this->coreCallBacks->Init())
     {
-        this->showErrorMessage("CoreCallbacks::Init() Failed", QString::fromStdString(CoreGetError()));
+        QtMessageBox::Error(this, "CoreCallbacks::Init() Failed", QString::fromStdString(CoreGetError()));
         return false;
     }
 
@@ -239,11 +262,8 @@ void MainWindow::configureUI(QApplication* app, bool showUI)
 {
     this->setCentralWidget(this->ui_Widgets);
 
-    QString geometry;
-    bool maximized;
-
-    geometry = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::RomBrowser_Geometry));
-    maximized = CoreSettingsGetBoolValue(SettingsID::RomBrowser_Maximized);
+    QString geometry = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::RomBrowser_Geometry));
+    bool maximized = CoreSettingsGetBoolValue(SettingsID::RomBrowser_Maximized);
     if (maximized)
     {
         this->showMaximized();
@@ -364,7 +384,9 @@ void MainWindow::configureTheme(QApplication* app)
     {
         QString themePath;
         themePath = QString::fromStdString(CoreGetSharedDataDirectory().string());
-        themePath += "/Styles/";
+        themePath += CORE_DIR_SEPERATOR_STR;
+        themePath += "Styles";
+        themePath += CORE_DIR_SEPERATOR_STR;
         themePath += theme;
 
         // use Fusion as a base for the stylesheet
@@ -433,6 +455,20 @@ void MainWindow::showErrorMessage(QString text, QString details, bool force)
     msgBox->setText(text);
     msgBox->setDetailedText(details);
     msgBox->addButton(QMessageBox::Ok);
+
+    // expand details by default
+    if (!details.isEmpty())
+    {
+        for (const auto& button : msgBox->buttons())
+        {
+            if (msgBox->buttonRole(button) == QMessageBox::ActionRole)
+            {
+                button->click();
+                break;
+            }
+        }
+    }
+
     msgBox->show();
 
     this->ui_MessageBoxList.append(msgBox);
@@ -817,7 +853,8 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
 
 #ifdef NETPLAY
     this->action_Netplay_CreateSession->setEnabled(!inEmulation && this->netplaySessionDialog == nullptr);
-    this->action_Netplay_JoinSession->setEnabled(!inEmulation && this->netplaySessionDialog == nullptr);
+    this->action_Netplay_BrowseSessions->setEnabled(!inEmulation && this->netplaySessionDialog == nullptr);
+    this->action_Netplay_ViewSession->setEnabled(inEmulation && this->netplaySessionDialog != nullptr);
 #endif // NETPLAY
 
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_IncreaseVolume));
@@ -1148,7 +1185,8 @@ void MainWindow::connectActionSignals(void)
     connect(this->action_View_Log, &QAction::triggered, this, &MainWindow::on_Action_View_Log);
 
     connect(this->action_Netplay_CreateSession, &QAction::triggered, this, &MainWindow::on_Action_Netplay_CreateSession);
-    connect(this->action_Netplay_JoinSession, &QAction::triggered, this, &MainWindow::on_Action_Netplay_JoinSession);
+    connect(this->action_Netplay_BrowseSessions, &QAction::triggered, this, &MainWindow::on_Action_Netplay_BrowseSessions);
+    connect(this->action_Netplay_ViewSession, &QAction::triggered, this, &MainWindow::on_Action_Netplay_ViewSession);
 
     connect(this->action_Help_Github, &QAction::triggered, this, &MainWindow::on_Action_Help_Github);
     connect(this->action_Help_About, &QAction::triggered, this, &MainWindow::on_Action_Help_About);
@@ -1366,7 +1404,7 @@ void MainWindow::on_EventFilter_FileDropped(QDropEvent *event)
 
     bool inEmulation     = (this->ui_Widgets->currentIndex() != 0);
     bool confirmDragDrop = CoreSettingsGetBoolValue(SettingsID::GUI_ConfirmDragDrop);
-    bool refreshRomList = false;
+    bool refreshRomList  = false;
     QString file;
 
     if (inEmulation && confirmDragDrop)
@@ -1456,7 +1494,7 @@ void MainWindow::on_networkAccessManager_Finished(QNetworkReply* reply)
     {
         if (!this->ui_SilentUpdateCheck)
         {
-            this->showErrorMessage("You're already on the latest version");
+            Utilities::QtMessageBox::Info(this, "You're already on the latest version");
         }
         return;
     }
@@ -1500,10 +1538,7 @@ void MainWindow::on_Action_System_OpenRom(void)
         this->on_Action_System_Pause();
     }
 
-    QString romFile;
-
-    romFile = QFileDialog::getOpenFileName(this, "", "", "N64 ROMs & Disks (*.n64 *.z64 *.v64 *.ndd *.d64 *.zip *.7z)");
-
+    QString romFile = QFileDialog::getOpenFileName(this, tr("Open N64 ROM or 64DD Disk"), "", "N64 ROMs & Disks (*.n64 *.z64 *.v64 *.ndd *.d64 *.zip *.7z)");
     if (romFile.isEmpty())
     {
         if (isRunning && !isPaused)
@@ -1531,10 +1566,7 @@ void MainWindow::on_Action_System_OpenCombo(void)
         this->on_Action_System_Pause();
     }
 
-    QString cartRom, diskRom;
-
-    cartRom = QFileDialog::getOpenFileName(this, "", "", "N64 ROMs (*.n64 *.z64 *.v64 *.zip *.7z)");
-    
+    QString cartRom = QFileDialog::getOpenFileName(this, tr("Open N64 ROM"), "", "N64 ROMs (*.n64 *.z64 *.v64 *.zip *.7z)");
     if (cartRom.isEmpty())
     {
         if (isRunning && !isPaused)
@@ -1545,8 +1577,7 @@ void MainWindow::on_Action_System_OpenCombo(void)
     }
 
 
-    diskRom = QFileDialog::getOpenFileName(this, "", "", "N64DD Disk Image (*.ndd *.d64)");
-
+    QString diskRom = QFileDialog::getOpenFileName(this, tr("Open 64DD Disk"), "", "N64DD Disk Image (*.ndd *.d64 *.zip *.7z)");
     if (diskRom.isEmpty())
     {
         if (isRunning && !isPaused)
@@ -1644,13 +1675,9 @@ void MainWindow::on_Action_System_Screenshot(void)
 
 void MainWindow::on_Action_System_LimitFPS(void)
 {
-    bool enabled, ret;
+    bool enabled = this->action_System_LimitFPS->isChecked();
 
-    enabled = this->action_System_LimitFPS->isChecked();
-
-    ret = CoreSetSpeedLimiterState(enabled);
-
-    if (!ret)
+    if (!CoreSetSpeedLimiterState(enabled))
     {
         this->showErrorMessage("CoreSetSpeedLimiterState() Failed", QString::fromStdString(CoreGetError()));
     }
@@ -1690,7 +1717,6 @@ void MainWindow::on_Action_System_SaveAs(void)
     }
 
     QString fileName = QFileDialog::getSaveFileName(this, tr("Save State"), "", tr("Save State (*.state);;Project64 Save State (*.pj);;All Files (*)"));
-
     if (!fileName.isEmpty())
     {
         this->ui_ManuallySavedState = true;
@@ -1810,22 +1836,22 @@ void MainWindow::on_Action_System_GSButton(void)
 
 void MainWindow::on_Action_Settings_Graphics(void)
 {
-    CorePluginsOpenConfig(CorePluginType::Gfx);
+    CorePluginsOpenConfig(CorePluginType::Gfx, (void*)this);
 }
 
 void MainWindow::on_Action_Settings_Audio(void)
 {
-    CorePluginsOpenConfig(CorePluginType::Audio);
+    CorePluginsOpenConfig(CorePluginType::Audio, (void*)this);
 }
 
 void MainWindow::on_Action_Settings_Rsp(void)
 {
-    CorePluginsOpenConfig(CorePluginType::Rsp);
+    CorePluginsOpenConfig(CorePluginType::Rsp, (void*)this);
 }
 
 void MainWindow::on_Action_Settings_Input(void)
 {
-    CorePluginsOpenConfig(CorePluginType::Input);
+    CorePluginsOpenConfig(CorePluginType::Input, (void*)this);
 }
 
 void MainWindow::on_Action_Settings_Settings(void)
@@ -1946,7 +1972,7 @@ void MainWindow::on_Action_Netplay_CreateSession(void)
 #endif // NETPLAY
 }
 
-void MainWindow::on_Action_Netplay_JoinSession(void)
+void MainWindow::on_Action_Netplay_BrowseSessions(void)
 {
 #ifdef NETPLAY
     static QWebSocket webSocket;
@@ -1958,6 +1984,17 @@ void MainWindow::on_Action_Netplay_JoinSession(void)
         this->showNetplaySessionDialog(&webSocket, dialog.GetSessionJson(), dialog.GetSessionFile());
     }
 #endif // NETPLAY
+}
+
+void MainWindow::on_Action_Netplay_ViewSession(void)
+{
+#ifdef NETPLAY
+    if (this->netplaySessionDialog != nullptr &&
+        this->netplaySessionDialog->isHidden())
+    {
+        this->netplaySessionDialog->show();
+    }
+#endif
 }
 
 void MainWindow::on_Action_Help_Github(void)
@@ -2008,7 +2045,7 @@ void MainWindow::on_Emulation_Started(void)
     this->ui_DebugCallbackErrors.clear();
 }
 
-void MainWindow::on_Emulation_Finished(bool ret)
+void MainWindow::on_Emulation_Finished(bool ret, QString error)
 {
     if (!ret)
     {
@@ -2058,7 +2095,7 @@ void MainWindow::on_Emulation_Finished(bool ret)
     // after switching back to the ROM browser
     if (!ret)
     {
-        this->showErrorMessage("EmulationThread::run Failed", this->emulationThread->GetLastError());
+        this->showErrorMessage("EmulationThread::run Failed", error);
     }
 }
 
@@ -2075,11 +2112,11 @@ void MainWindow::on_RomBrowser_PlayGameWith(CoreRomType type, QString file)
     if (type == CoreRomType::Cartridge)
     { // cartridge
         mainRom = file;
-        otherRom = QFileDialog::getOpenFileName(this, "", "", "N64DD Disk Image (*.ndd *.d64 *.zip *.7z)");
+        otherRom = QFileDialog::getOpenFileName(this, tr("Open 64DD Disk"), "", "N64DD Disk Image (*.ndd *.d64 *.zip *.7z)");
     }
     else
     { // disk
-        mainRom = QFileDialog::getOpenFileName(this, "", "", "N64 ROMs (*.n64 *.z64 *.v64 *.zip *.7z)");
+        mainRom = QFileDialog::getOpenFileName(this, tr("Open N64 ROM"), "", "N64 ROMs (*.n64 *.z64 *.v64 *.zip *.7z)");
         otherRom = file;
     }
 
@@ -2103,10 +2140,7 @@ void MainWindow::on_RomBrowser_PlayGameWithSlot(QString file, int slot)
 
 void MainWindow::on_RomBrowser_ChangeRomDirectory(void)
 {
-    QString dir;
-
-    dir = QFileDialog::getExistingDirectory(this);
-
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select ROM Directory"));
     if (!dir.isEmpty())
     {
         CoreSettingsSetValue(SettingsID::RomBrowser_Directory, dir.toStdString());
@@ -2117,7 +2151,6 @@ void MainWindow::on_RomBrowser_ChangeRomDirectory(void)
 void MainWindow::on_RomBrowser_RomInformation(QString file)
 {
     bool isRefreshingRomList = this->ui_Widget_RomBrowser->IsRefreshingRomList();
-
     if (isRefreshingRomList)
     {
         this->ui_Widget_RomBrowser->StopRefreshRomList();
@@ -2126,27 +2159,9 @@ void MainWindow::on_RomBrowser_RomInformation(QString file)
     CoreRomHeader romHeader;
     CoreRomSettings romSettings;
 
-    if (!CoreOpenRom(file.toStdU32String()))
+    if (!CoreGetCachedRomHeaderAndSettings(file.toStdU32String(), nullptr, &romHeader, nullptr, &romSettings))
     {
-        this->showErrorMessage("CoreOpenRom() Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    if (!CoreGetCurrentRomHeader(romHeader))
-    {
-        this->showErrorMessage("CoreGetCurrentRomHeader() Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    if (!CoreGetCurrentRomSettings(romSettings))
-    {
-        this->showErrorMessage("CoreGetCurrentRomSettings() Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    if (!CoreCloseRom())
-    {
-        this->showErrorMessage("CoreCloseRom() Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage("CoreGetCachedRomHeaderAndSettings() Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
@@ -2167,24 +2182,12 @@ void MainWindow::on_RomBrowser_EditGameSettings(QString file)
         this->ui_Widget_RomBrowser->StopRefreshRomList();
     }
 
-    if (!CoreOpenRom(file.toStdU32String()))
-    {
-        this->showErrorMessage("CoreOpenRom() Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    Dialog::SettingsDialog dialog(this);
+    Dialog::SettingsDialog dialog(this, file);
     dialog.ShowGameTab();
     dialog.exec();
 
     this->updateActions(false, false);
     this->coreCallBacks->LoadSettings();
-
-    if (!CoreCloseRom())
-    {
-        this->showErrorMessage("CoreCloseRom() Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
 
     if (isRefreshingRomList)
     {
@@ -2200,17 +2203,9 @@ void MainWindow::on_RomBrowser_EditGameInputSettings(QString file)
         this->ui_Widget_RomBrowser->StopRefreshRomList();
     }
 
-    if (!CoreOpenRom(file.toStdU32String()))
+    if (!CorePluginsOpenROMConfig(CorePluginType::Input, (void*)this, file.toStdU32String()))
     {
-        this->showErrorMessage("CoreOpenRom() Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    CorePluginsOpenROMConfig(CorePluginType::Input);
-
-    if (!CoreCloseRom())
-    {
-        this->showErrorMessage("CoreCloseRom() Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage("CorePluginsOpenROMConfig() Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
@@ -2228,22 +2223,10 @@ void MainWindow::on_RomBrowser_Cheats(QString file)
         this->ui_Widget_RomBrowser->StopRefreshRomList();
     }
 
-    if (!CoreOpenRom(file.toStdU32String()))
-    {
-        this->showErrorMessage("CoreOpenRom() Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    Dialog::CheatsDialog dialog(this);
+    Dialog::CheatsDialog dialog(this, file);
     if (!dialog.HasFailed())
     {
         dialog.exec();
-    }
-
-    if (!CoreCloseRom())
-    {
-        this->showErrorMessage("CoreCloseRom() Failed", QString::fromStdString(CoreGetError()));
-        return;
     }
 
     if (isRefreshingRomList)

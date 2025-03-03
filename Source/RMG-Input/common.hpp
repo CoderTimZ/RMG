@@ -10,6 +10,8 @@
 #ifndef COMMON_HPP
 #define COMMON_HPP
 
+#include <string>
+
 #define SDL_AXIS_PEAK 32767
 
 enum class N64ControllerButton
@@ -25,8 +27,8 @@ enum class N64ControllerButton
     CButtonDown,
     CButtonLeft,
     CButtonRight,
-    LeftTrigger,
-    RightTrigger,
+    LeftShoulder,
+    RightShoulder,
     ZTrigger,
     Invalid
 };
@@ -64,6 +66,22 @@ enum class N64ControllerPak
     RumblePak,
     TransferPak,
     None,
+};
+
+struct SDLDevice
+{
+    std::string name;
+    std::string path;
+    std::string serial;
+    int number;
+
+    bool operator== (const SDLDevice& other) const
+    {
+        return other.name == name &&
+                other.path == path &&
+                other.serial == serial &&
+                other.number == number;
+    }
 };
 
 #endif // COMMON_HPP

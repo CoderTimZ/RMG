@@ -7,8 +7,12 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
+#define CORE_INTERNAL
 #include "Key.hpp"
+
+#include "Library.hpp"
 #include "Error.hpp"
+
 #include "m64p/Api.hpp"
 
 #include <string>
@@ -17,7 +21,7 @@
 // Exported Functions
 //
 
-bool CoreSetKeyUp(int key, int mod)
+CORE_EXPORT bool CoreSetKeyUp(int key, int mod)
 {
     std::string error;
     m64p_error ret;
@@ -38,7 +42,7 @@ bool CoreSetKeyUp(int key, int mod)
     return ret == M64ERR_SUCCESS;
 }
 
-bool CoreSetKeyDown(int key, int mod)
+CORE_EXPORT bool CoreSetKeyDown(int key, int mod)
 {
     std::string error;
     m64p_error ret;

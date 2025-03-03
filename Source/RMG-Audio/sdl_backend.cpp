@@ -24,13 +24,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "circular_buffer.hpp"
 #include "Resamplers/resamplers.hpp"
+#include "circular_buffer.hpp"
 #include "main.hpp"
 
-#define M64P_PLUGIN_PROTOTYPES 1
-#define CORE_PLUGIN
-#include <RMG-Core/Core.hpp>
+#include <RMG-Core/m64p/api/m64p_types.h>
+
+#include <RMG-Core/Settings.hpp>
+#include <RMG-Core/Netplay.hpp>
 
 /* number of bytes per sample */
 #define N64_SAMPLE_BYTES 4
@@ -333,7 +334,7 @@ void sdl_push_samples(struct sdl_backend* sdl_backend, const void* src, size_t s
 
     /* truncate to full samples */
     if (size & 0x3) {
-        DebugMessage(M64MSG_WARNING, "sdl_push_samples: pushing non full samples: %zu bytes !", size);
+        DebugMessage(M64MSG_VERBOSE, "sdl_push_samples: pushing non full samples: %zu bytes !", size);
     }
     size = (size / 4) * 4;
 

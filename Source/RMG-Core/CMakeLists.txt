@@ -5,12 +5,6 @@ project(RMG-Core)
 
 set(CMAKE_CXX_STANDARD 20)
 
-# RMG-Core needs LTO disabled for windows
-# else linking fails
-if (WIN32)
-    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
-endif(WIN32)
-
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL2 REQUIRED sdl2)
 pkg_check_modules(MINIZIP REQUIRED minizip)
@@ -43,6 +37,7 @@ set(RMG_CORE_SOURCES
     Callback.cpp
     Settings.cpp
     Archive.cpp
+    Library.cpp
     Netplay.cpp
     Plugins.cpp
     Version.cpp
@@ -57,18 +52,6 @@ set(RMG_CORE_SOURCES
     Key.cpp
     Rom.cpp
 )
-
-if (WIN32)
-    list(APPEND RMG_CORE_SOURCES 
-        osal/osal_dynlib_win32.cpp
-        osal/osal_files_win32.cpp
-    )
-else(WIN32)
-    list(APPEND RMG_CORE_SOURCES 
-		osal/osal_dynlib_unix.cpp
-        osal/osal_files_unix.cpp
-    )
-endif(WIN32)
 
 if (DISCORD_RPC)
     list(APPEND RMG_CORE_SOURCES 
@@ -114,6 +97,9 @@ endif(DISCORD_RPC)
 target_include_directories(RMG-Core PRIVATE 
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../
     ${CMAKE_CURRENT_SOURCE_DIR}/../3rdParty/fmt/include/
     ${MINIZIP_INCLUDE_DIRS}
 )
+
+set_target_properties(RMG-Core PROPERTIES CXX_VISIBILITY_PRESET hidden)

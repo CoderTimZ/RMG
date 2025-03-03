@@ -7,18 +7,20 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
+#define CORE_INTERNAL
 #include "Directories.hpp"
 #include "MediaLoader.hpp"
 #include "Settings.hpp"
 #include "Archive.hpp"
+#include "Library.hpp"
 #include "String.hpp"
 #include "Error.hpp"
 #include "File.hpp"
 
 #include "m64p/Api.hpp"
 
-#include <cstdint>
 #include <string.h>
+#include <cstdint>
 
 //
 // Local Variables
@@ -73,33 +75,13 @@ static char* medialoader_get_dd_rom(void*)
 
 static char* medialoader_get_gb_cart_ram(void*, int index)
 {
-    std::filesystem::path gameBoyRom;
-    SettingsID settingIds[] =
+    std::filesystem::path gameBoySave;
+    const SettingsID settingIds[] =
     {
         SettingsID::Core_Gameboy_P1_Save,
         SettingsID::Core_Gameboy_P2_Save,
         SettingsID::Core_Gameboy_P3_Save,
         SettingsID::Core_Gameboy_P4_Save,
-    };
-
-    gameBoyRom = CoreSettingsGetStringValue(settingIds[index]);
-    if (gameBoyRom.empty())
-    {
-        return nullptr;
-    }
-
-    return strdup(gameBoyRom.string().c_str());
-}
-
-static char* mediaLoader_get_gb_cart_rom(void*, int index)
-{
-    std::filesystem::path gameBoySave;
-    SettingsID settingIds[] =
-    {
-        SettingsID::Core_Gameboy_P1_Rom,
-        SettingsID::Core_Gameboy_P2_Rom,
-        SettingsID::Core_Gameboy_P3_Rom,
-        SettingsID::Core_Gameboy_P4_Rom,
     };
 
     gameBoySave = CoreSettingsGetStringValue(settingIds[index]);
@@ -111,11 +93,31 @@ static char* mediaLoader_get_gb_cart_rom(void*, int index)
     return strdup(gameBoySave.string().c_str());
 }
 
+static char* mediaLoader_get_gb_cart_rom(void*, int index)
+{
+    std::filesystem::path gameBoyRom;
+    const SettingsID settingIds[] =
+    {
+        SettingsID::Core_Gameboy_P1_Rom,
+        SettingsID::Core_Gameboy_P2_Rom,
+        SettingsID::Core_Gameboy_P3_Rom,
+        SettingsID::Core_Gameboy_P4_Rom,
+    };
+
+    gameBoyRom = CoreSettingsGetStringValue(settingIds[index]);
+    if (gameBoyRom.empty())
+    {
+        return nullptr;
+    }
+
+    return strdup(gameBoyRom.string().c_str());
+}
+
 //
 // Exported Functions
 //
 
-bool CoreSetupMediaLoader(void)
+CORE_EXPORT bool CoreSetupMediaLoader(void)
 {
     std::string error;
     m64p_error  ret;
@@ -144,18 +146,14 @@ bool CoreSetupMediaLoader(void)
     return ret == M64ERR_SUCCESS;
 }
 
-void CoreResetMediaLoader(void)
+CORE_EXPORT void CoreResetMediaLoader(void)
 {
+    std::error_code errorCode;
+
     // attempt to remove extracted disk file
     if (l_HasExtractedDisk && !l_DdRomFile.empty())
     {
-        try
-        {
-            std::filesystem::remove(l_DdDiskFile);
-        }
-        catch (...)
-        {
-        }
+        std::filesystem::remove(l_DdDiskFile, errorCode);
     }
 
     l_HasExtractedDisk = false;
@@ -163,8 +161,9 @@ void CoreResetMediaLoader(void)
     l_DdDiskFile = "";
 }
 
-void CoreMediaLoaderSetDiskFile(std::filesystem::path disk)
+CORE_EXPORT void CoreMediaLoaderSetDiskFile(std::filesystem::path disk)
 {
+    std::error_code error_code;
     std::vector<char> buf;
     std::string file_extension;
 
@@ -190,19 +189,14 @@ void CoreMediaLoaderSetDiskFile(std::filesystem::path disk)
         }
 
         disk = CoreGetUserCacheDirectory();
-        disk += "/extracted_disks/";
+        disk += CORE_DIR_SEPERATOR_STR;
+        disk += "extracted_disks";
+        disk += CORE_DIR_SEPERATOR_STR;
         disk += extracted_file.filename();
 
         // attempt to create extraction directory
-        try
-        {
-            if (!std::filesystem::exists(disk.parent_path()) &&
-                !std::filesystem::create_directory(disk.parent_path()))
-            {
-                throw std::exception();
-            }
-        }
-        catch (...)
+        if (!std::filesystem::is_directory(disk.parent_path(), error_code) &&
+            !std::filesystem::create_directory(disk.parent_path(), error_code))
         {
             return;
         }

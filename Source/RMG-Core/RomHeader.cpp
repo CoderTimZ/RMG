@@ -14,12 +14,11 @@
 #endif // _WIN32
 
 #define CORE_INTERNAL
-#include "RomHeader.hpp"
 #include "ConvertStringEncoding.hpp"
-#include "Emulation.hpp"
+#include "RomHeader.hpp"
 #include "m64p/Api.hpp"
+#include "Library.hpp"
 #include "Error.hpp"
-#include "Rom.hpp"
 
 //
 // Local Functions
@@ -149,7 +148,7 @@ static CoreSystemType get_systemtype_from_countrycode(uint8_t countryCode)
 // Exported Functions
 //
 
-bool CoreGetCurrentRomHeader(CoreRomHeader& header)
+CORE_EXPORT bool CoreGetCurrentRomHeader(CoreRomHeader& header)
 {
     std::string error;
     m64p_error ret;

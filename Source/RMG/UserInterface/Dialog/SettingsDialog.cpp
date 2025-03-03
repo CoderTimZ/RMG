@@ -7,21 +7,26 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
-#include "SettingsDialog.hpp"
-#include "OnScreenDisplay.hpp"
-#include "UserInterface/Widget/KeybindButton.hpp"
 #include "UserInterface/Dialog/Netplay/NetplayCommon.hpp"
+#include "UserInterface/Widget/KeybindButton.hpp"
 #include "Utilities/QtMessageBox.hpp"
+#include "OnScreenDisplay.hpp"
+#include "SettingsDialog.hpp"
 
 #include <QRegularExpressionValidator>
-#include <QRegularExpression>
 #include <QCryptographicHash>
+#include <QRegularExpression>
 #include <QFileDialog>
 #include <QColorDialog>
 #include <QDirIterator>
 #include <QLabel>
 
-#include <RMG-Core/Core.hpp>
+#include <RMG-Core/CachedRomHeaderAndSettings.hpp>
+#include <RMG-Core/Directories.hpp>
+#include <RMG-Core/Emulation.hpp>
+#include <RMG-Core/Settings.hpp>
+#include <RMG-Core/Error.hpp>
+#include <RMG-Core/Rom.hpp>
 
 using namespace UserInterface::Dialog;
 using namespace Utilities;
@@ -54,17 +59,39 @@ enum class SettingsDialogTab
 // Exported Functions
 //
 
-SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
+SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 {
     this->setupUi(this);
 
     this->setIconsForEmulationInfoText();
 
-    this->romOpened = CoreHasRomOpen();
-    if (romOpened)
+    // if ROM is open, we should retrieve the current settings,
+    // if it's not opened but we got a filename, try to 
+    // retrieve cached entries
+    if (CoreHasRomOpen())
     {
-        CoreGetCurrentRomSettings(this->currentGameSettings);
-        CoreGetCurrentDefaultRomSettings(this->defaultGameSettings);
+        std::filesystem::path romPath;
+        // only show game tab once retrieving info succeeds
+        this->showGameSettings = CoreGetRomPath(romPath) && 
+                                    CoreGetRomType(this->currentGameType) &&
+                                    CoreGetCurrentRomHeader(this->currentGameHeader) &&
+                                    CoreGetCurrentRomSettings(this->currentGameSettings) && 
+                                    CoreGetCurrentDefaultRomSettings(this->defaultGameSettings);
+        this->currentGameFile = QString::fromStdU32String(romPath.u32string());
+    }
+    else if (!file.isEmpty())
+    {
+        // only show game tab once retrieving cached entry succeeds
+        this->showGameSettings = CoreGetCachedRomHeaderAndSettings(file.toStdU32String(), &this->currentGameType, 
+                                    &this->currentGameHeader, &this->defaultGameSettings, &this->currentGameSettings);
+        if (this->showGameSettings)
+        {
+            this->currentGameFile = file;
+        }
+    }
+
+    if (this->showGameSettings)
+    {
         int format = CoreSettingsGetIntValue(SettingsID::Core_SaveFileNameFormat);
         if (format == 0) {
             this->gameSection = this->currentGameSettings.InternalName;
@@ -278,7 +305,7 @@ void SettingsDialog::loadCoreSettings(void)
     randomizeInterrupt = CoreSettingsGetBoolValue(SettingsID::CoreOverlay_RandomizeInterrupt);
     usePIFROM = CoreSettingsGetBoolValue(SettingsID::Core_PIF_Use);
     ntscPifROM = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Core_PIF_NTSC));
-    palPifRom = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Core_PIF_PAL));;
+    palPifRom = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Core_PIF_PAL));
     overrideGameSettings = CoreSettingsGetBoolValue(SettingsID::Core_OverrideGameSpecificSettings);
 
     this->coreCpuEmulatorComboBox->setCurrentIndex(cpuEmulator);
@@ -455,7 +482,9 @@ void SettingsDialog::loadInterfaceGeneralSettings(void)
     // find stylesheets and add them to the UI
     QString directory;
     directory = QString::fromStdString(CoreGetSharedDataDirectory().string());
-    directory += "/Styles/";
+    directory += CORE_DIR_SEPERATOR_STR;
+    directory += "Styles";
+    directory += CORE_DIR_SEPERATOR_STR;
 
     QStringList filter;
     filter << "*.qss";
@@ -493,7 +522,6 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
 void SettingsDialog::loadInterfaceRomBrowserSettings(void)
 {
     this->searchSubDirectoriesCheckbox->setChecked(CoreSettingsGetBoolValue(SettingsID::RomBrowser_Recursive));
-    this->sortRomBrowserResultsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::RomBrowser_SortAfterSearch));
     this->romSearchLimitSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::RomBrowser_MaxItems));
 }
 
@@ -560,7 +588,7 @@ void SettingsDialog::loadDefaultCoreSettings(void)
     randomizeInterrupt = CoreSettingsGetDefaultBoolValue(SettingsID::CoreOverlay_RandomizeInterrupt);
     usePIFROM = CoreSettingsGetDefaultBoolValue(SettingsID::Core_PIF_Use);
     ntscPifROM = QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_PIF_NTSC));
-    palPifRom = QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_PIF_PAL));;
+    palPifRom = QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_PIF_PAL));
     overrideGameSettings = CoreSettingsGetDefaultBoolValue(SettingsID::Core_OverrideGameSpecificSettings);
 
     this->coreCpuEmulatorComboBox->setCurrentIndex(cpuEmulator);
@@ -678,7 +706,6 @@ void SettingsDialog::loadDefaultInterfaceEmulationSettings(void)
 void SettingsDialog::loadDefaultInterfaceRomBrowserSettings(void)
 {
     this->searchSubDirectoriesCheckbox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::RomBrowser_Recursive));
-    this->sortRomBrowserResultsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::RomBrowser_SortAfterSearch));
     this->romSearchLimitSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::RomBrowser_MaxItems));
 }
 
@@ -718,7 +745,7 @@ void SettingsDialog::loadDefaultInterfaceNetplaySettings(void)
 void SettingsDialog::saveSettings(void)
 {
     this->saveCoreSettings();
-    if (romOpened)
+    if (this->showGameSettings)
     {
         // clean 'game settings'
         CoreSettingsDeleteSection(this->gameSection);
@@ -792,6 +819,18 @@ void SettingsDialog::saveGameSettings(void)
         CoreSettingsSetValue(SettingsID::Game_SaveType, this->gameSection, saveType);
         CoreSettingsSetValue(SettingsID::Game_CountPerOp, this->gameSection, countPerOp);
         CoreSettingsSetValue(SettingsID::Game_SiDmaDuration, this->gameSection, siDmaDuration);
+    }
+
+    // update cache when needed
+    if (!this->currentGameFile.isEmpty())
+    {
+        CoreRomSettings romSettings = this->currentGameSettings;
+        romSettings.SaveType = saveType;
+        romSettings.DisableExtraMem = disableExtraMem;
+        romSettings.CountPerOp = countPerOp;
+        romSettings.TransferPak = transferPak;
+        romSettings.SiDMADuration = siDmaDuration;
+        CoreUpdateCachedRomHeaderAndSettings(this->currentGameFile.toStdU32String(), this->currentGameType, this->currentGameHeader, this->defaultGameSettings, romSettings);
     }
 }
 
@@ -917,7 +956,6 @@ void SettingsDialog::saveInterfaceEmulationSettings(void)
 void SettingsDialog::saveInterfaceRomBrowserSettings(void)
 {
     CoreSettingsSetValue(SettingsID::RomBrowser_Recursive, this->searchSubDirectoriesCheckbox->isChecked());
-    CoreSettingsSetValue(SettingsID::RomBrowser_SortAfterSearch, this->sortRomBrowserResultsCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::RomBrowser_MaxItems, this->romSearchLimitSpinBox->value());
 }
 
@@ -1092,8 +1130,8 @@ void SettingsDialog::commonHotkeySettings(SettingsDialogAction action)
         {
         default:
         case SettingsDialogAction::ConnectSignals:
-            connect(keybinding.button, &KeybindButton::on_KeybindButton_KeybindingChanged, this, &SettingsDialog::on_KeybindButton_KeybindingChanged);
-            connect(keybinding.button, &KeybindButton::on_KeybindButton_Clicked, this, &SettingsDialog::on_KeybindButton_Clicked);
+            connect(keybinding.button, &KeybindButton::KeybindingChanged, this, &SettingsDialog::on_KeybindButton_KeybindingChanged);
+            connect(keybinding.button, &KeybindButton::Clicked, this, &SettingsDialog::on_KeybindButton_Clicked);
             break;
         case SettingsDialogAction::LoadSettings:
             keybinding.button->SetText(QString::fromStdString(CoreSettingsGetStringValue(keybinding.settingId)));
@@ -1227,11 +1265,9 @@ void SettingsDialog::hideEmulationInfoText(void)
     }
 }
 
-void SettingsDialog::chooseDirectory(QLineEdit *lineEdit)
+void SettingsDialog::chooseDirectory(QLineEdit *lineEdit, QString caption)
 {
-    QString dir;
-
-    dir = QFileDialog::getExistingDirectory(this);
+    QString dir = QFileDialog::getExistingDirectory(this, caption);
     if (dir.isEmpty())
     {
         return;
@@ -1240,11 +1276,9 @@ void SettingsDialog::chooseDirectory(QLineEdit *lineEdit)
     lineEdit->setText(QDir::toNativeSeparators(dir));
 }
 
-void SettingsDialog::chooseFile(QLineEdit *lineEdit, QString filter, QString md5)
+void SettingsDialog::chooseFile(QLineEdit *lineEdit, QString caption, QString filter, QString md5)
 {
-    QString file;
-
-    file = QFileDialog::getOpenFileName(this, "", "", filter);
+    QString file = QFileDialog::getOpenFileName(this, caption, "", filter);
     if (file.isEmpty())
     {
         return;
@@ -1381,42 +1415,42 @@ void SettingsDialog::on_buttonBox_clicked(QAbstractButton *button)
 
 void SettingsDialog::on_changeScreenShotDirButton_clicked(void)
 {
-    this->chooseDirectory(this->screenshotDirLineEdit);
+    this->chooseDirectory(this->screenshotDirLineEdit, tr("Select Screenshot Directory"));
 }
 
 void SettingsDialog::on_changeSaveStateDirButton_clicked(void)
 {
-    this->chooseDirectory(this->saveStateDirLineEdit);
+    this->chooseDirectory(this->saveStateDirLineEdit, tr("Select Save (State) Directory"));
 }
 
 void SettingsDialog::on_changeSaveSramDirButton_clicked(void)
 {
-    this->chooseDirectory(this->saveSramDirLineEdit);
+    this->chooseDirectory(this->saveSramDirLineEdit, tr("Select Save (SRAM) Directory"));
 }
 
 void SettingsDialog::on_changeUserDataDirButton_clicked(void)
 {
-    this->chooseDirectory(this->userDataDirLineEdit);
+    this->chooseDirectory(this->userDataDirLineEdit, tr("Select User Data Directory"));
 }
 
 void SettingsDialog::on_changeUserCacheDirButton_clicked(void)
 {
-    this->chooseDirectory(this->userCacheDirLineEdit);
+    this->chooseDirectory(this->userCacheDirLineEdit, tr("Select User Cache Directory"));
 }
 
 void SettingsDialog::on_changeJapaneseIPLRomPathButton_clicked(void)
 {
-    this->chooseFile(this->japaneseIPLRomLineEdit, "IPL ROMs (*.n64 *.v64 *.z64)");
+    this->chooseFile(this->japaneseIPLRomLineEdit, tr("Open Japanese Retail 64DD IPL"), "IPL ROMs (*.n64)");
 }
 
 void SettingsDialog::on_changeAmericanIPLRomPathButton_clicked(void)
 {
-    this->chooseFile(this->americanIPLRomLineEdit, "IPL ROMs (*.n64 *.v64 *.z64)");
+    this->chooseFile(this->americanIPLRomLineEdit, tr("Open American Retail 64DD IPL"), "IPL ROMs (*.n64)");
 }
 
 void SettingsDialog::on_changeDevelopmentIPLRomPathButton_clicked(void)
 {
-    this->chooseFile(this->developmentIPLRomLineEdit, "IPL ROMs (*.n64 *.v64 *.z64)");
+    this->chooseFile(this->developmentIPLRomLineEdit, tr("Open Japanese Development 64DD IPL"), "IPL ROMs (*.n64)");
 }
 
 void SettingsDialog::on_changeBackgroundColorButton_clicked(void)
@@ -1577,10 +1611,10 @@ void SettingsDialog::on_coreCpuEmulatorComboBox_currentIndexChanged(int index)
 
 void SettingsDialog::on_changeNTSCPifRomButton_clicked(void)
 {
-    this->chooseFile(this->ntscPifRomLineEdit, "PIF ROMs (*.rom)", "5c124e7948ada85da603a522782940d0");
+    this->chooseFile(this->ntscPifRomLineEdit, tr("Open NTSC PIF ROM"), "PIF ROMs (*.rom)", "5c124e7948ada85da603a522782940d0");
 }
 
 void SettingsDialog::on_changePALPifRomButton_clicked(void)
 {
-    this->chooseFile(this->palPifRomLineEdit, "PIF ROMs (*.rom)", "d4232dc935cad0650ac2664d52281f3a");
+    this->chooseFile(this->palPifRomLineEdit, tr("Open PAL PIF ROM"), "PIF ROMs (*.rom)", "d4232dc935cad0650ac2664d52281f3a");
 }

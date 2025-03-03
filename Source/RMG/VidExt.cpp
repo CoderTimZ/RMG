@@ -9,15 +9,16 @@
  */
 #include "VidExt.hpp"
 
-#include <RMG-Core/VidExt.hpp>
+#include <RMG-Core/Callback.hpp>
 #include <RMG-Core/m64p/Api.hpp>
-#include <RMG-Core/Core.hpp>
+#include <RMG-Core/Netplay.hpp>
+#include <RMG-Core/VidExt.hpp>
 
 #include "OnScreenDisplay.hpp"
 
-#include <QApplication>
-#include <QOpenGLContext>
 #include <QVulkanInstance>
+#include <QOpenGLContext>
+#include <QApplication>
 #include <QThread>
 #include <QScreen>
 
@@ -54,7 +55,14 @@ static bool VidExt_OglSetup(void)
 
     if (!(*l_OGLWidget)->GetContext()->isValid())
     {
-        CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to retrieve valid OpenGL context");
+        if (QSurfaceFormat::defaultFormat().renderableType() == QSurfaceFormat::OpenGLES)
+        {
+            CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to retrieve valid OpenGL ES context");
+        }
+        else
+        {
+            CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to retrieve valid OpenGL context");
+        }
         return false;
     }
 
@@ -444,14 +452,18 @@ static m64p_error VidExt_VK_GetInstanceExtensions(const char** Extensions[], uin
     l_VulkanExtensions = l_VulkanInstance.supportedExtensions();
     l_VulkanExtensionList.clear();
 
-    // add every extension to the string list
+    // only add surface extensions
     for (int i = 0; i < l_VulkanExtensions.size(); i++)
     {
-        l_VulkanExtensionList.append(l_VulkanExtensions[i].name.data());
+        if (l_VulkanExtensions[i].name.startsWith("VK_KHR_") &&
+            l_VulkanExtensions[i].name.endsWith("surface"))
+        {
+            l_VulkanExtensionList.append(l_VulkanExtensions[i].name.data());
+        }
     }
 
     *Extensions    = l_VulkanExtensionList.data();
-    *NumExtensions = l_VulkanExtensions.size();
+    *NumExtensions = l_VulkanExtensionList.size();
     return M64ERR_SUCCESS;
 }
 

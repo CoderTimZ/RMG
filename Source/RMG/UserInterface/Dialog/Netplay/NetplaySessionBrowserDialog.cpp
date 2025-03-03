@@ -9,8 +9,8 @@
  */
 #include "NetplaySessionBrowserDialog.hpp"
 #include "NetplaySessionPasswordDialog.hpp"
-#include "NetplayCommon.hpp"
 #include "Utilities/QtMessageBox.hpp"
+#include "NetplayCommon.hpp"
 
 #include <QRegularExpressionValidator>
 #include <QRegularExpression>
@@ -22,7 +22,8 @@
 #include <QJsonObject>
 #include <QJsonArray>
 
-#include <RMG-Core/Core.hpp>
+#include <RMG-Core/Settings.hpp>
+#include <RMG-Core/Rom.hpp>
 
 using namespace UserInterface::Dialog;
 using namespace Utilities;
@@ -40,6 +41,7 @@ NetplaySessionBrowserDialog::NetplaySessionBrowserDialog(QWidget *parent, QWebSo
     connect(this->webSocket, &QWebSocket::connected, this, &NetplaySessionBrowserDialog::on_webSocket_connected);
     connect(this->webSocket, &QWebSocket::disconnected, this, &NetplaySessionBrowserDialog::on_webSocket_disconnected);
     connect(this->webSocket, &QWebSocket::textMessageReceived, this, &NetplaySessionBrowserDialog::on_webSocket_textMessageReceived);
+    connect(this->webSocket, &QWebSocket::pong, this, &NetplaySessionBrowserDialog::on_webSocket_pong);
 
     // copy rom data for later
     this->romData = modelData;
@@ -59,7 +61,7 @@ NetplaySessionBrowserDialog::NetplaySessionBrowserDialog(QWidget *parent, QWebSo
     // change restore defaults button name
     QPushButton* refreshButton = this->buttonBox->button(QDialogButtonBox::RestoreDefaults);
     refreshButton->setText("Refresh");
-    refreshButton->setIcon(QIcon());
+    refreshButton->setIcon(QIcon::fromTheme("refresh-line"));
     refreshButton->setEnabled(false);
 
     // set validator for nickname
@@ -78,6 +80,8 @@ NetplaySessionBrowserDialog::NetplaySessionBrowserDialog(QWidget *parent, QWebSo
     }
 
     this->validateJoinButton();
+
+    this->pingTimerId = this->startTimer(2000);
 }
 
 NetplaySessionBrowserDialog::~NetplaySessionBrowserDialog(void)
@@ -158,6 +162,17 @@ void NetplaySessionBrowserDialog::validateJoinButton(void)
     joinButton->setEnabled(this->validate());
 }
 
+void NetplaySessionBrowserDialog::timerEvent(QTimerEvent *event)
+{
+    if (event->timerId() == this->pingTimerId)
+    {
+        if (this->webSocket->isValid())
+        {
+            this->webSocket->ping();
+        }
+    }
+}
+
 void NetplaySessionBrowserDialog::on_webSocket_connected(void)
 {
     if (!this->webSocket->isValid())
@@ -214,11 +229,6 @@ void NetplaySessionBrowserDialog::on_webSocket_textMessageReceived(QString messa
 
             // we're done refreshing the sessions
             this->sessionBrowserWidget->RefreshDone();
-            // enable refresh button when refreshing is done
-            QPushButton* refreshButton = this->buttonBox->button(QDialogButtonBox::RestoreDefaults);
-            refreshButton->setEnabled(true);
-            // re-validate join button after refresh
-            this->validateJoinButton();
         }
         else
         {
@@ -239,6 +249,11 @@ void NetplaySessionBrowserDialog::on_webSocket_textMessageReceived(QString messa
             this->validateJoinButton();
         }
     }
+}
+
+void NetplaySessionBrowserDialog::on_webSocket_pong(quint64 elapsedTime, const QByteArray&)
+{
+    this->pingLineEdit->setText(QString::number(elapsedTime) + " ms");
 }
 
 void NetplaySessionBrowserDialog::on_webSocket_disconnected()
@@ -299,6 +314,8 @@ void NetplaySessionBrowserDialog::on_serverComboBox_currentIndexChanged(int inde
         return;
     }
 
+    this->pingLineEdit->setText("Calculating...");
+
     this->sessionBrowserWidget->StartRefresh();
 
     QString address = this->serverComboBox->itemData(index).toString();
@@ -307,6 +324,13 @@ void NetplaySessionBrowserDialog::on_serverComboBox_currentIndexChanged(int inde
 
 void NetplaySessionBrowserDialog::on_sessionBrowserWidget_OnSessionChanged(bool valid)
 {
+    this->validateJoinButton();
+}
+
+void NetplaySessionBrowserDialog::on_sessionBrowserWidget_OnRefreshDone(void)
+{
+    QPushButton* refreshButton = this->buttonBox->button(QDialogButtonBox::RestoreDefaults);
+    refreshButton->setEnabled(true);
     this->validateJoinButton();
 }
 

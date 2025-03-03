@@ -7,21 +7,23 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
+#define CORE_INTERNAL
 #include "Archive.hpp"
+#include "Library.hpp"
 #include "String.hpp"
 #include "Error.hpp"
 
-#include <fstream>
 #include <cstring>
+#include <fstream>
 
 // lzma includes
-#include "../3rdParty/lzma/7zTypes.h"
-#include "../3rdParty/lzma/7z.h"
-#include "../3rdParty/lzma/7zAlloc.h"
-#include "../3rdParty/lzma/7zBuf.h"
-#include "../3rdParty/lzma/7zCrc.h"
-#include "../3rdParty/lzma/7zFile.h"
-#include "../3rdParty/lzma/7zVersion.h"
+#include <3rdParty/lzma/7zVersion.h>
+#include <3rdParty/lzma/7zAlloc.h>
+#include <3rdParty/lzma/7zTypes.h>
+#include <3rdParty/lzma/7zFile.h>
+#include <3rdParty/lzma/7zBuf.h>
+#include <3rdParty/lzma/7zCrc.h>
+#include <3rdParty/lzma/7z.h>
 
 // minizip includes
 #include <unzip.h>
@@ -107,7 +109,7 @@ static int zlib_filefunc_testerror(voidpf opaque, voidpf stream)
 // Exported Functions
 //
 
-bool CoreReadZipFile(std::filesystem::path file, std::filesystem::path& extractedFileName, bool& isDisk, std::vector<char>& outBuffer)
+CORE_EXPORT bool CoreReadZipFile(std::filesystem::path file, std::filesystem::path& extractedFileName, bool& isDisk, std::vector<char>& outBuffer)
 {
     std::string  error;
     std::fstream fileStream;
@@ -245,7 +247,7 @@ bool CoreReadZipFile(std::filesystem::path file, std::filesystem::path& extracte
     return false;
 }
 
-bool CoreRead7zipFile(std::filesystem::path file, std::filesystem::path& extractedFileName, bool& isDisk, std::vector<char>& outBuffer)
+CORE_EXPORT bool CoreRead7zipFile(std::filesystem::path file, std::filesystem::path& extractedFileName, bool& isDisk, std::vector<char>& outBuffer)
 {
     std::string  error;
 
@@ -401,7 +403,7 @@ bool CoreRead7zipFile(std::filesystem::path file, std::filesystem::path& extract
     return false;
 }
 
-bool CoreReadArchiveFile(std::filesystem::path file, std::filesystem::path& extractedFileName, bool& isDisk, std::vector<char>& outBuffer)
+CORE_EXPORT bool CoreReadArchiveFile(std::filesystem::path file, std::filesystem::path& extractedFileName, bool& isDisk, std::vector<char>& outBuffer)
 {
 	std::string file_extension;
 
@@ -431,11 +433,12 @@ bool CoreReadArchiveFile(std::filesystem::path file, std::filesystem::path& extr
     return true;
 }
 
-bool CoreUnzip(std::filesystem::path file, std::filesystem::path path)
+CORE_EXPORT bool CoreUnzip(std::filesystem::path file, std::filesystem::path path)
 {
     std::string error;
     std::filesystem::path targetPath;
     std::filesystem::path fileNamePath;
+    std::error_code errorCode;
 
     unzFile           zipFile;
     unz_global_info   zipInfo;
@@ -491,20 +494,14 @@ bool CoreUnzip(std::filesystem::path file, std::filesystem::path path)
         if (fileNamePath.has_filename() &&
             fileNamePath.has_parent_path())
         { // create parent directories
-            try
-            {
-                if (!std::filesystem::is_directory(targetPath.parent_path()) && 
-                    !std::filesystem::create_directories(targetPath.parent_path()))
-                {
-                    throw std::exception();
-                }
-            }
-            catch (...)
+            if (!std::filesystem::is_directory(targetPath.parent_path(), errorCode) && 
+                !std::filesystem::create_directories(targetPath.parent_path(), errorCode))
             {
                 unzClose(zipFile);
                 error = "CoreUnzip: std::filesystem::create_directory(";
                 error += targetPath.string();
-                error += ") Failed!";
+                error += ") Failed: ";
+                error += errorCode.message();
                 CoreSetError(error);
                 return false;
             }

@@ -8,6 +8,8 @@
 
 #define	F3DEX3_BRANCH_WZ	0x04
 
+#define F3DEX3_MEMSET            0xD5
+
 #define F3DEX3_TRISTRIP          0x08
 #define F3DEX3_TRIFAN            0x09
 #define F3DEX3_LIGHTTORDP        0x0A
@@ -35,21 +37,7 @@
 
 #define F3DEX3_G_MAX_LIGHTS 9
 
-struct F3DEX3_Ambient
-{
-	u8 pad0, b, g, r;
-	u8 pad1, b2, g2, r2;
-};
-
-struct F3DEX3_Light
-{
-	u8 pad0, b, g, r;
-	u8 pad1, b2, g2, r2;
-	s8 pad2, z, y, x;
-	u8 size, pad3[3];
-};
-
-// Notice how it looks like F3DEX3_Light but the ending so there are 8 bytes of difference
+// Notice how it looks like Light but the ending so there are 8 bytes of difference
 struct F3DEX3_LookAt
 {
 	s8 pad, z, y, x;
@@ -83,7 +71,7 @@ static void writeLight(int off, u32 w)
 		gSPLookAt(w - (sizeof(F3DEX3_LookAtOld) - sizeof(F3DEX3_LookAt)) + sizeof(F3DEX3_LookAt), 1);
 	}
 
-	for (u32 i = 1; i <= gSP.numLights; i++)
+	for (u32 i = 1; i <= gSP.numLights + 1; i++)
 	{
 		if (_LIGHT_TO_OFFSET(i) == off)
 		{
@@ -91,10 +79,6 @@ static void writeLight(int off, u32 w)
 		}
 	}
 
-	if (_LIGHT_TO_OFFSET(gSP.numLights + 1) == off)
-	{
-		// TODO: Write ambient lights
-	}
 	if ((F3DEX3_G_MAX_LIGHTS * 0x10) + 0x18 == off)
 	{
 		// TODO: OcclusionPlane not supported
@@ -252,6 +236,14 @@ static void F3DEX3_RelSegment(u32 w0, u32 w1)
 	gSPRelSegment(_SHIFTR(w0, 2, 4), w1 & 0x00FFFFFF);
 }
 
+static void F3DEX3_Memset(u32 w0, u32 w1)
+{
+	u32 value = (u16) gDP.half_1;
+	u32 addr = w1;
+	u32 length = w0 & 0x00FFFFFF;
+	gDPMemset(value, addr, length);
+}
+
 void F3DEX3_Init()
 {
 	gSPSetupFunctions();
@@ -276,7 +268,6 @@ void F3DEX3_Init()
 	GBI_SetGBI(G_POPMTX, F3DEX2_POPMTX, F3DEX2_PopMtx);
 	GBI_SetGBI(G_TEXTURE, F3DEX2_TEXTURE, F3DEX2_Texture);
 	GBI_SetGBI(G_DMA_IO, F3DEX2_DMA_IO, F3DEX2_DMAIO);
-	GBI_SetGBI(G_SPECIAL_1, F3DEX2_SPECIAL_1, F3DEX2_Special_1);
 	GBI_SetGBI(G_SPECIAL_2, F3DEX2_SPECIAL_2, F3DEX2_Special_2);
 	GBI_SetGBI(G_SPECIAL_3, F3DEX2_SPECIAL_3, F3DEX2_Special_3);
 
@@ -291,4 +282,5 @@ void F3DEX3_Init()
 	GBI_SetGBI(G_TRIFAN, F3DEX3_TRIFAN, F3DEX3_TriFan);
 	GBI_SetGBI(G_LIGHTTORDP, F3DEX3_LIGHTTORDP, F3DEX3_LightToRDP);
 	GBI_SetGBI(G_RELSEGMENT, F3DEX3_RELSEGMENT, F3DEX3_RelSegment);
+	GBI_SetGBI(G_SPECIAL_1, F3DEX3_MEMSET, F3DEX3_Memset);
 }

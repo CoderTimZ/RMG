@@ -13,15 +13,18 @@
 #include <string>
 #include <vector>
 
-#include <QDialog>
-#include <QHBoxLayout>
 #include <QStandardItemModel>
+#include <QHBoxLayout>
 #include <QTreeWidget>
+#include <QDialog>
 #include <QWidget>
-#include <QMutex>
 #include <QColor>
+#include <QMutex>
 
-#include <RMG-Core/Core.hpp>
+#include <RMG-Core/RomSettings.hpp>
+#include <RMG-Core/RomHeader.hpp>
+#include <RMG-Core/Plugins.hpp>
+#include <RMG-Core/Rom.hpp>
 
 // needed for KeyBindButton in ui_SettingsDialog
 #include "UserInterface/Widget/KeybindButton.hpp"
@@ -47,8 +50,11 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
       SaveSettings
     };
 
-    bool romOpened = false;
+    bool showGameSettings = false;
 
+    QString currentGameFile;
+    CoreRomType     currentGameType;
+    CoreRomHeader   currentGameHeader;
     CoreRomSettings currentGameSettings;
     CoreRomSettings defaultGameSettings;
     std::string     gameSection;
@@ -120,8 +126,8 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     void setIconsForEmulationInfoText(void);
     void hideEmulationInfoText(void);
 
-    void chooseDirectory(QLineEdit *);
-    void chooseFile(QLineEdit *, QString filter = "", QString md5 = "");
+    void chooseDirectory(QLineEdit *, QString caption);
+    void chooseFile(QLineEdit *, QString caption, QString filter = "", QString md5 = "");
     void chooseColor(QPushButton *, QColor *, bool skipChoice = false);
 
     bool applyPluginSettings(void);
@@ -154,7 +160,7 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     void on_changeNTSCPifRomButton_clicked(void);
     void on_changePALPifRomButton_clicked(void);
   public:
-    SettingsDialog(QWidget *parent);
+    SettingsDialog(QWidget *parent, QString file = "");
     ~SettingsDialog(void);
 
     void ShowGameTab(void);

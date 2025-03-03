@@ -10,21 +10,23 @@
 #ifndef CONTROLLERWIDGET_H
 #define CONTROLLERWIDGET_H
 
-#include "MappingButton.hpp"
 #include "ControllerImageWidget.hpp"
+#include "MappingButton.hpp"
 
-#include "UserInterface/EventFilter.hpp"
 #include "UserInterface/OptionsDialog.hpp"
 #include "UserInterface/HotkeysDialog.hpp"
+#include "UserInterface/EventFilter.hpp"
 
 using namespace UserInterface::Widget;
 
 #include "ui_ControllerWidget.h"
 #include "common.hpp"
 
-#include <RMG-Core/Core.hpp>
-
 #include <SDL.h>
+
+#include <RMG-Core/RomSettings.hpp>
+#include <RMG-Core/RomHeader.hpp>
+#include <RMG-Core/Settings.hpp>
 
 namespace UserInterface
 {
@@ -110,6 +112,8 @@ private:
     int previousProfileComboBoxIndex = -1;
 
     bool onlyLoadGameProfile = false;
+    CoreRomHeader gameRomHeader;
+    CoreRomSettings gameRomSettings;
 
     HotkeysDialog* currentHotkeysDialog = nullptr;
 
@@ -117,18 +121,18 @@ public:
     ControllerWidget(QWidget* parent, EventFilter* eventFilter);
     ~ControllerWidget();
 
-    void AddInputDevice(QString deviceName, int deviceNum);
-    void RemoveInputDevice(QString deviceName, int deviceNum);
+    void AddInputDevice(SDLDevice device);
+    void RemoveInputDevice(SDLDevice device);
     void CheckInputDeviceSettings();
     void CheckInputDeviceSettings(QString section);
 
     void DrawControllerImage();
     void ClearControllerImage();
 
-    void GetCurrentInputDevice(QString& deviceName, int& deviceNum, bool ignoreDeviceNotFound = false);
+    void GetCurrentInputDevice(SDLDevice& device, bool ignoreDeviceNotFound = false);
     bool IsPluggedIn();
 
-    void SetOnlyLoadGameProfile(bool value);
+    void SetOnlyLoadGameProfile(bool value, CoreRomHeader romHeader, CoreRomSettings romSettings);
 
     void SetSettingsSection(QString profile, QString section);
     void SetInitialized(bool value);
@@ -179,7 +183,7 @@ public slots:
     void on_MainDialog_SdlEventPollFinished();
 
 signals:
-    void CurrentInputDeviceChanged(ControllerWidget* widget, QString deviceName, int deviceNum);
+    void CurrentInputDeviceChanged(ControllerWidget* widget, SDLDevice device);
     void RefreshInputDevicesButtonClicked();
 
     void UserProfileAdded(QString name, QString section);

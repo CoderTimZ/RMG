@@ -8,17 +8,18 @@
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #define CORE_INTERNAL
-#include "Rom.hpp"
 #include "CachedRomHeaderAndSettings.hpp"
 #include "MediaLoader.hpp"
 #include "Directories.hpp"
 #include "RomSettings.hpp"
 #include "m64p/Api.hpp"
 #include "Archive.hpp"
+#include "Library.hpp"
 #include "Cheats.hpp"
 #include "String.hpp"
 #include "Error.hpp"
 #include "File.hpp"
+#include "Rom.hpp"
 
 #include <string>
 #include <cstdlib>
@@ -38,9 +39,10 @@ static std::filesystem::path l_RomPath;
 // Exported Functions
 //
 
-bool CoreOpenRom(std::filesystem::path file)
+CORE_EXPORT bool CoreOpenRom(std::filesystem::path file)
 {
     std::string error;
+    std::error_code error_code;
     m64p_error  ret;
     std::vector<char> buf;
     std::string file_extension;
@@ -80,20 +82,14 @@ bool CoreOpenRom(std::filesystem::path file)
             disk_file += extracted_file.filename();
 
             // attempt to create extraction directory
-            try
-            {
-                if (!std::filesystem::exists(disk_file.parent_path()) &&
-                    !std::filesystem::create_directory(disk_file.parent_path()))
-                {
-                    throw std::exception();
-                }
-            }
-            catch (...)
+            if (!std::filesystem::exists(disk_file.parent_path(), error_code) &&
+                !std::filesystem::create_directory(disk_file.parent_path(), error_code))
             {
                 error = "CoreOpenRom Failed: ";
                 error += "Failed to create \"";
                 error += disk_file.parent_path().string();
-                error += "\"!";
+                error += "\": ";
+                error += error_code.message();
                 CoreSetError(error);
                 return false;
             }
@@ -164,12 +160,12 @@ bool CoreOpenRom(std::filesystem::path file)
     return l_HasRomOpen;
 }
 
-bool CoreHasRomOpen(void)
+CORE_EXPORT bool CoreHasRomOpen(void)
 {
     return l_HasRomOpen;
 }
 
-bool CoreGetRomType(CoreRomType& type)
+CORE_EXPORT bool CoreGetRomType(CoreRomType& type)
 {
     std::string error;
 
@@ -185,7 +181,7 @@ bool CoreGetRomType(CoreRomType& type)
     return true;
 }
 
-bool CoreGetRomPath(std::filesystem::path& path)
+CORE_EXPORT bool CoreGetRomPath(std::filesystem::path& path)
 {
     std::string error;
 
@@ -201,9 +197,10 @@ bool CoreGetRomPath(std::filesystem::path& path)
     return true;
 }
 
-bool CoreCloseRom(void)
+CORE_EXPORT bool CoreCloseRom(void)
 {
     std::string error;
+    std::error_code errorCode;
     m64p_error ret;
 
     if (!m64p::Core.IsHooked())
@@ -255,18 +252,12 @@ bool CoreCloseRom(void)
     // attempt to clean temporary extracted disk file
     if (l_HasExtractedDisk)
     {
-        try
-        {
-            if (!std::filesystem::remove(l_ExtractedDiskPath))
-            {
-                throw std::exception();
-            }
-        }
-        catch (...)
+        if (!std::filesystem::remove(l_ExtractedDiskPath, errorCode))
         {
             error = "CoreCloseRom: Failed to remove \"";
             error += l_ExtractedDiskPath.string();
-            error += "\"!";
+            error += "\": ";
+            error += errorCode.message();
             CoreSetError(error);
             return false;
         }

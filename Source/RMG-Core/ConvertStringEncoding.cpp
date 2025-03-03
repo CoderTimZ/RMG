@@ -9,18 +9,18 @@
  */
 #define CORE_INTERNAL
 #include "ConvertStringEncoding.hpp"
-
+#include "Library.hpp"
 #include "Error.hpp"
-#include <string.h>
-#include <string>
 
+#include <string.h>
 #include <iconv.h>
+#include <string>
 
 //
 // Exported Functions
 //
 
-std::string CoreConvertStringEncoding(std::string str, CoreStringEncoding encoding)
+CORE_EXPORT std::string CoreConvertStringEncoding(std::string str, CoreStringEncoding encoding)
 {
     std::string error;
     std::string encodingString;
