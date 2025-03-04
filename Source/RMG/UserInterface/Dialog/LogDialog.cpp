@@ -25,7 +25,7 @@ LogDialog::LogDialog(QWidget *parent) : QDialog(parent)
     { // for some reason on Windows 10 for some users, 
       // ->setFont() will crash in DwriteCreateFactory,
       // so catch the exception and do nothing
-        QFont font("monospace");
+        QFont font({"Cascadia Mono", "Consolas", "monospace"});
 #ifdef _WIN32
         font.setStyleHint(QFont::TypeWriter);
 #endif

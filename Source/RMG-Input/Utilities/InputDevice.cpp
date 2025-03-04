@@ -181,11 +181,14 @@ void InputDevice::on_SDLThread_DeviceSearchFinished(void)
             device = this->foundDevicesWithNameMatch.at(0);
         }
     }
-
-    this->joystick = SDL_JoystickOpen(device.number);
-    if (SDL_IsGameController(device.number))
+    
+    if (iter != this->foundDevicesWithNameMatch.end())
     {
-        this->gameController = SDL_GameControllerOpen(device.number);
+        this->joystick = SDL_JoystickOpen(device.number);
+        if (SDL_IsGameController(device.number))
+        {
+            this->gameController = SDL_GameControllerOpen(device.number);
+        }
     }
 
     this->isOpeningDevice = false;

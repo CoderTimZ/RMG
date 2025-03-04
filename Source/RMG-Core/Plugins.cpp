@@ -48,7 +48,7 @@ static char l_PluginContext[NUM_PLUGIN_TYPES][20];
 static m64p::PluginApi* get_plugin(CorePluginType type)
 {
     if (type == CorePluginType::Invalid ||
-        (int)type < 0 || (int)type > 5)
+        (int)type < 1 || (int)type > 5)
     {
         return nullptr;
     }
