@@ -78,8 +78,8 @@ struct SDLDevice
     bool operator== (const SDLDevice& other) const
     {
         return other.name == name &&
-                other.path == path &&
-                other.serial == serial &&
+                //other.path == path &&
+                //other.serial == serial &&
                 other.number == number;
     }
 };

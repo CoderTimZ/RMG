@@ -588,7 +588,7 @@ void ControllerWidget::CheckInputDeviceSettings(QString sectionQString)
     int deviceNameIndex = this->inputDeviceComboBox->findText(QString::fromStdString(deviceName), Qt::MatchFlag::MatchStartsWith);
     int deviceIndex = -1;
     int deviceSerialIndex = -1;
-    bool needCompatibility = deviceNum >= 0 && devicePath.empty() && deviceSerial.empty();
+    bool needCompatibility = true;//deviceNum >= 0 && devicePath.empty() && deviceSerial.empty();
 
     int count = this->inputDeviceComboBox->count();
     for (int i = 0; i < count; i++)
@@ -629,18 +629,20 @@ void ControllerWidget::CheckInputDeviceSettings(QString sectionQString)
             this->on_inputDeviceComboBox_currentIndexChanged(deviceIndex);
         }
     }
-    else if (deviceSerialIndex != -1)
-    { // name and serial match
-        this->inputDeviceComboBox->setCurrentIndex(deviceSerialIndex);
-    }
-    else if (deviceNameIndex != -1)
-    { // name only match
-        this->inputDeviceComboBox->setCurrentIndex(deviceNameIndex);
-    }
+    //else if (deviceSerialIndex != -1)
+    //{ // name and serial match
+    //    this->inputDeviceComboBox->setCurrentIndex(deviceSerialIndex);
+    //}
+    //else if (deviceNameIndex != -1)
+    //{ // name only match
+    //    this->inputDeviceComboBox->setCurrentIndex(deviceNameIndex);
+    //}
     else
     { // no match
         QString title = QString::fromStdString(deviceName);
-        title += " (not found)";
+        title += " (";
+        title += QString::number(deviceNum);
+        title += ") (not found)";
         this->inputDeviceNameList.append(QString::fromStdString(deviceName));
         this->inputDeviceComboBox->addItem(title, QVariant::fromValue<SDLDevice>(device));
         this->inputDeviceComboBox->setCurrentIndex(this->inputDeviceNameList.count() - 1);
