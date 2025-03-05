@@ -1361,7 +1361,7 @@ static l_Setting get_setting(SettingsID settingId)
     return setting;
 }
 
-static void config_listsections_callback(void* context, const char* section)
+static void config_listsections_callback(void*, const char* section)
 {
     l_sectionList.emplace_back(std::string(section));
 }
@@ -1418,7 +1418,7 @@ static bool config_section_open(std::string section)
     return ret == M64ERR_SUCCESS;
 }
 
-static void config_listkeys_callback(void* context, const char* key, m64p_type type)
+static void config_listkeys_callback(void*, const char* key, m64p_type)
 {
     l_keyList.push_back(std::string(key));
 }
@@ -1530,25 +1530,25 @@ static bool config_option_default_set(std::string section, std::string key, m64p
         } break;
         case M64TYPE_INT:
         {
-            ret = m64p::Config.SetDefaultInt(l_sectionHandle, key.c_str(), *(int*)value, description);
+            ret = m64p::Config.SetDefaultInt(l_sectionHandle, key.c_str(), *static_cast<int*>(value), description);
             error = "config_option_default_set m64p::Config.SetDefaultInt Failed: ";
             error += m64p::Core.ErrorMessage(ret);
         } break;
         case M64TYPE_BOOL:
         {
-            ret = m64p::Config.SetDefaultBool(l_sectionHandle, key.c_str(), *(bool*)value, description);
+            ret = m64p::Config.SetDefaultBool(l_sectionHandle, key.c_str(), *static_cast<bool*>(value), description);
             error = "config_option_default_set m64p::Config.SetDefaultBool Failed: ";
             error += m64p::Core.ErrorMessage(ret);
         } break;
         case M64TYPE_FLOAT:
         {
-            ret = m64p::Config.SetDefaultFloat(l_sectionHandle, key.c_str(), *(float*)value, description);
+            ret = m64p::Config.SetDefaultFloat(l_sectionHandle, key.c_str(), *static_cast<float*>(value), description);
             error = "config_option_default_set m64p::Config.SetDefaultFloat Failed: ";
             error += m64p::Core.ErrorMessage(ret);
         } break;
         case M64TYPE_STRING:
         {
-            ret = m64p::Config.SetDefaultString(l_sectionHandle, key.c_str(), (char*)value, description);
+            ret = m64p::Config.SetDefaultString(l_sectionHandle, key.c_str(), static_cast<char*>(value), description);
             error = "config_option_default_set m64p::Config.SetDefaultString Failed: ";
             error += m64p::Core.ErrorMessage(ret);
         } break;
@@ -1562,7 +1562,7 @@ static bool config_option_default_set(std::string section, std::string key, m64p
     return ret == M64ERR_SUCCESS;
 }
 
-static bool int_list_to_string(std::vector<int> intList, std::string& string)
+static bool int_list_to_string(const std::vector<int>& intList, std::string& string)
 {
     for (size_t i = 0; i < intList.size(); i++)
     {
@@ -1604,7 +1604,7 @@ static bool string_to_int_list(std::string string, std::vector<int>& intList)
     return true;
 }
 
-static bool string_list_to_string(std::vector<std::string> stringList, std::string& string)
+static bool string_list_to_string(const std::vector<std::string>& stringList, std::string& string)
 {
     std::string error;
 
@@ -1734,7 +1734,7 @@ CORE_EXPORT bool CoreSettingsSetupDefaults(void)
     bool ret = false;
     bool hasForceUsedSetOnce = CoreSettingsGetBoolValue(SettingsID::Settings_HasForceUsedSetOnce);
 
-    for (int i = 0; i < (int)SettingsID::Invalid; i++)
+    for (int i = 0; i < static_cast<int>(SettingsID::Invalid); i++)
     {
         setting = get_setting((SettingsID)i);
 
@@ -1766,11 +1766,11 @@ CORE_EXPORT bool CoreSettingsSetupDefaults(void)
                 if (setting.ForceUseSetAlways ||
                     (setting.ForceUseSetOnce && !hasForceUsedSetOnce))
                 {
-                    ret = config_option_set(setting.Section, setting.Key, M64TYPE_STRING, (void*)value.c_str());
+                    ret = config_option_set(setting.Section, setting.Key, M64TYPE_STRING, const_cast<char*>(value.c_str()));
                 }
                 else if (!setting.ForceUseSetOnce && !setting.ForceUseSetAlways)
                 {
-                    ret = config_option_default_set(setting.Section, setting.Key, M64TYPE_STRING, (void*)value.c_str(), setting.Description.c_str());
+                    ret = config_option_default_set(setting.Section, setting.Key, M64TYPE_STRING, const_cast<char*>(value.c_str()), setting.Description.c_str());
                 }
             } break;
             default:
@@ -1874,7 +1874,7 @@ CORE_EXPORT bool CoreSettingsSetValue(SettingsID settingId, float value)
 CORE_EXPORT bool CoreSettingsSetValue(SettingsID settingId, std::string value)
 {
     l_Setting setting = get_setting(settingId);
-    return config_option_set(setting.Section, setting.Key, M64TYPE_STRING, (void*)value.c_str());
+    return config_option_set(setting.Section, setting.Key, M64TYPE_STRING, const_cast<char*>(value.c_str()));
 }
 
 CORE_EXPORT bool CoreSettingsSetValue(SettingsID settingId, std::vector<int> value)
@@ -1919,7 +1919,7 @@ CORE_EXPORT bool CoreSettingsSetValue(SettingsID settingId, std::string section,
 CORE_EXPORT bool CoreSettingsSetValue(SettingsID settingId, std::string section, std::string value)
 {
     l_Setting setting = get_setting(settingId);
-    return config_option_set(section, setting.Key, M64TYPE_STRING, (void*)value.c_str());
+    return config_option_set(section, setting.Key, M64TYPE_STRING, const_cast<char*>(value.c_str()));
 }
 
 CORE_EXPORT bool CoreSettingsSetValue(SettingsID settingId, std::string section, std::vector<int> value)
@@ -1960,7 +1960,7 @@ CORE_EXPORT bool CoreSettingsSetValue(std::string section, std::string key, floa
 
 CORE_EXPORT bool CoreSettingsSetValue(std::string section, std::string key, std::string value)
 {
-    return config_option_set(section, key, M64TYPE_STRING, (void*)value.c_str());
+    return config_option_set(section, key, M64TYPE_STRING, const_cast<char*>(value.c_str()));
 }
 
 CORE_EXPORT bool CoreSettingsSetValue(std::string section, std::string key, std::vector<int> value)
@@ -2047,7 +2047,7 @@ CORE_EXPORT std::string CoreSettingsGetStringValue(SettingsID settingId)
 {
     l_Setting setting = get_setting(settingId);
     char value[STR_SIZE] = {0};
-    config_option_get(setting.Section, setting.Key, M64TYPE_STRING, (char*)value, sizeof(value));
+    config_option_get(setting.Section, setting.Key, M64TYPE_STRING, value, sizeof(value));
     return std::string(value);
 }
 
@@ -2091,7 +2091,7 @@ CORE_EXPORT std::string CoreSettingsGetStringValue(SettingsID settingId, std::st
 {
     l_Setting setting = get_setting(settingId);
     char value[STR_SIZE] = {0};
-    config_option_get(section, setting.Key, M64TYPE_STRING, (char*)value, sizeof(value));
+    config_option_get(section, setting.Key, M64TYPE_STRING, value, sizeof(value));
     return std::string(value);
 }
 
@@ -2152,7 +2152,7 @@ CORE_EXPORT float CoreSettingsGetFloatValue(std::string section, std::string key
 CORE_EXPORT std::string CoreSettingsGetStringValue(std::string section, std::string key)
 {
     char value[STR_SIZE] = {0};
-    config_option_get(section, key, M64TYPE_STRING, (char*)value, sizeof(value));
+    config_option_get(section, key, M64TYPE_STRING, value, sizeof(value));
     return std::string(value);
 }
 

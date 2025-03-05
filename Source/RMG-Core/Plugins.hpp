@@ -21,6 +21,7 @@ enum class CorePluginType
     Audio = 3,
     Input = 4,
     Execution = 5,
+    Count = 5,
     Invalid,
 };
 
