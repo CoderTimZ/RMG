@@ -1,6 +1,6 @@
 /*
  * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *  Copyright (C) 2020 Rosalie Wanders <rosalie@mailbox.org>
+ *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 3.
@@ -120,7 +120,8 @@ void RomBrowserLoadingWidget::updateLoadingText()
     QString loadingText = "Loading";
 
     if (this->elapsedTimeSinceLoading.isValid() &&
-        this->elapsedTimeSinceLoading.elapsed() >= 5000)
+        this->elapsedTimeSinceLoading.elapsed() >= 5000 &&
+        this->romCount > 0)
     {
         QString romCountString = QString::number(this->romCount);
 

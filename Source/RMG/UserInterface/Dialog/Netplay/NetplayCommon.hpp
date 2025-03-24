@@ -1,6 +1,6 @@
 /*
  * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *  Copyright (C) 2020 Rosalie Wanders <rosalie@mailbox.org>
+ *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 3.
@@ -10,6 +10,7 @@
 #ifndef NETPLAYCOMMON_HPP
 #define NETPLAYCOMMON_HPP
 
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QComboBox>
 #include <QString>
@@ -25,6 +26,9 @@ namespace NetplayCommon
 
     // Retrieves RSP and GFX plugin names
     QList<QString> GetPluginNames(QString md5QString);
+
+    // Adds servers from json to combobox
+    void AddServers(QComboBox* comboBox, QJsonDocument document);
 
     // Restores previously selected server
     void RestoreSelectedServer(QComboBox* comboBox);

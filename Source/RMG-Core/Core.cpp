@@ -1,6 +1,6 @@
 /*
  * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *  Copyright (C) 2020 Rosalie Wanders <rosalie@mailbox.org>
+ *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 3.
@@ -138,7 +138,7 @@ CORE_EXPORT bool CoreInit(void)
                                     CoreStateCallback);
     if (m64p_ret != M64ERR_SUCCESS)
     {
-        error = "CoreInit M64P::Core.Startup() Failed: ";
+        error = "CoreInit m64p::Core.Startup() Failed: ";
         error += m64p::Core.ErrorMessage(m64p_ret);
         CoreSetError(error);
         return false;
@@ -195,6 +195,8 @@ CORE_EXPORT void CoreShutdown(void)
 #ifdef DISCORD_RPC
     CoreDiscordRpcShutdown();
 #endif // DISCORD_RPC
+
+    m64p::Core.Shutdown();
 
     m64p::Core.Unhook();
     m64p::Config.Unhook();

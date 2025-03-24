@@ -1,6 +1,6 @@
 /*
  * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *  Copyright (C) 2020 Rosalie Wanders <rosalie@mailbox.org>
+ *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 3.
@@ -24,11 +24,21 @@ bool EventFilter::eventFilter(QObject *object, QEvent *event)
     switch (event->type())
     {
     case QEvent::Type::KeyPress:
-        emit this->on_EventFilter_KeyPressed((QKeyEvent *)event);
-        return true;
+    {
+        if (((QKeyEvent *)event)->key() != Qt::Key_Escape)
+        {
+            emit this->on_EventFilter_KeyPressed((QKeyEvent *)event);
+            return true;
+        }
+    } break;
     case QEvent::Type::KeyRelease:
-        emit this->on_EventFilter_KeyReleased((QKeyEvent *)event);
-        return true;
+    {
+        if (((QKeyEvent *)event)->key() != Qt::Key_Escape)
+        {
+            emit this->on_EventFilter_KeyReleased((QKeyEvent *)event);
+            return true;
+        }
+    } break;
     default:
         break;
     }

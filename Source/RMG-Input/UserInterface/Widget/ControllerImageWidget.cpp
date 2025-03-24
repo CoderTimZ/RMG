@@ -1,6 +1,6 @@
 /*
  * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *  Copyright (C) 2020 Rosalie Wanders <rosalie@mailbox.org>
+ *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 3.
@@ -166,15 +166,15 @@ void ControllerImageWidget::paintEvent(QPaintEvent *event)
     const int height = rectF.height();
     // we'll move the analog stick by a percentage
     // of the total width/height from the image
-    const double absoluteMaxOffset = (static_cast<double>(height * 0.12265f) / 2);
+    const double absoluteMaxOffset = (static_cast<double>(height * 0.114) / 2.0);
     // slope as in line gradient
     const double offsetSlope = absoluteMaxOffset / 100;
     // take sensitivity into account
     const double sensitivityFactor = this->sensitivityValue / 100.0;
     const double sensitivityAdjustedMaxOffset = absoluteMaxOffset * std::min(sensitivityFactor, 1.0);
-    double offsetDeadzone = this->deadzoneValue * sensitivityFactor * offsetSlope;
-    int offsetx = this->xAxisState * sensitivityFactor * offsetSlope;
-    int offsety = this->yAxisState * sensitivityFactor * offsetSlope;
+    const double offsetDeadzone = this->deadzoneValue * sensitivityFactor * offsetSlope;
+    double offsetx = this->xAxisState * sensitivityFactor * offsetSlope;
+    double offsety = this->yAxisState * sensitivityFactor * offsetSlope;
     const double offsetDist = std::hypot(offsetx, offsety);
 
     // take deadzone into account

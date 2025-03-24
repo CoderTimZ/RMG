@@ -1,6 +1,6 @@
 /*
  * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *  Copyright (C) 2020 Rosalie Wanders <rosalie@mailbox.org>
+ *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 3.
@@ -24,7 +24,6 @@
 // Local Defines
 //
 
-#define MAX_FILENAME_LEN 4096
 #define ROMHEADER_NAME_LEN 256
 #define GOODNAME_LEN 256
 #define MD5_LEN 33
@@ -79,7 +78,7 @@ static std::filesystem::path get_cache_file_name(void)
 
 static std::vector<l_CacheEntry>::iterator get_cache_entry_iter(const std::filesystem::path& file, bool checkFileTime = true)
 {
-    CoreFileTime fileTime = CoreGetFileTime(file);
+    CoreFileTime fileTime = (checkFileTime ? CoreGetFileTime(file) : 0);
 
     auto predicate = [file, fileTime, checkFileTime](const auto& entry)
     {
@@ -87,7 +86,7 @@ static std::vector<l_CacheEntry>::iterator get_cache_entry_iter(const std::files
                 (!checkFileTime || entry.fileTime == fileTime);
     };
 
-        return std::find_if(l_CacheEntries.begin(), l_CacheEntries.end(), predicate);
+    return std::find_if(l_CacheEntries.begin(), l_CacheEntries.end(), predicate);
 }
 
 static void add_cache_entry(const std::filesystem::path& file, CoreRomType type, 
@@ -152,7 +151,7 @@ CORE_EXPORT void CoreReadRomHeaderAndSettingsCache(void)
 {
     std::ifstream inputStream;
     char magicBuf[sizeof(CACHE_FILE_MAGIC)];
-    wchar_t fileNameBuf[MAX_FILENAME_LEN];
+    wchar_t fileNameBuf[CORE_DIR_MAX_LEN];
     char headerNameBuf[ROMHEADER_NAME_LEN];
     char gameIDBuf[GAMEID_LEN];
     char regionBuf[REGION_LEN];
@@ -262,7 +261,7 @@ CORE_EXPORT void CoreReadRomHeaderAndSettingsCache(void)
 CORE_EXPORT bool CoreSaveRomHeaderAndSettingsCache(void)
 {
     std::ofstream outputStream;
-    wchar_t fileNameBuf[MAX_FILENAME_LEN];
+    wchar_t fileNameBuf[CORE_DIR_MAX_LEN];
     char headerNameBuf[ROMHEADER_NAME_LEN];
     char gameIDBuf[GAMEID_LEN];
     char regionBuf[REGION_LEN];
@@ -307,7 +306,7 @@ CORE_EXPORT bool CoreSaveRomHeaderAndSettingsCache(void)
         memset(md5Buf, 0, sizeof(md5Buf));
 
         // copy strings into buffers
-        wcsncpy(fileNameBuf, cacheEntry.fileName.wstring().c_str(), MAX_FILENAME_LEN);
+        wcsncpy(fileNameBuf, cacheEntry.fileName.wstring().c_str(), CORE_DIR_MAX_LEN);
         strncpy(headerNameBuf, cacheEntry.header.Name.c_str(), sizeof(headerNameBuf));
         strncpy(gameIDBuf, cacheEntry.header.GameID.c_str(), sizeof(gameIDBuf));
         strncpy(regionBuf, cacheEntry.header.Region.c_str(), sizeof(regionBuf));

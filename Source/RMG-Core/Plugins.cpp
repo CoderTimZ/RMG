@@ -1,6 +1,6 @@
 /*
  * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *  Copyright (C) 2020 Rosalie Wanders <rosalie@mailbox.org>
+ *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 3.
@@ -24,6 +24,7 @@
 
 #include <filesystem>
 #include <algorithm>
+#include <stdexcept>
 #include <cstring>
 #include <array>
 
@@ -39,24 +40,23 @@ static char l_PluginContext[5][20];
 // Local Functions
 //
 
-static m64p::PluginApi* get_plugin(CorePluginType type)
+static m64p::PluginApi& get_plugin(CorePluginType type)
 {
-    if (type == CorePluginType::Invalid ||
-        static_cast<int>(type) < 1 || 
+    if (static_cast<int>(type) < 1 || 
         static_cast<int>(type) > 5)
     {
-        return nullptr;
+        throw std::runtime_error("get_plugin: called with invalid type");
     }
 
-    return &l_Plugins[static_cast<int>(type) - 1];
+    return l_Plugins[static_cast<int>(type) - 1];
 }
 
-static CorePluginType get_plugin_type(m64p::PluginApi* plugin)
+static CorePluginType get_plugin_type(m64p::PluginApi& plugin)
 {
     m64p_error ret;
     m64p_plugin_type m64p_type = M64PLUGIN_NULL;
 
-    ret = plugin->GetVersion(&m64p_type, nullptr, nullptr, nullptr, nullptr);
+    ret = plugin.GetVersion(&m64p_type, nullptr, nullptr, nullptr, nullptr);
     if (ret != M64ERR_SUCCESS)
     {
         return CorePluginType::Invalid;
@@ -71,12 +71,12 @@ static CorePluginType get_plugin_type(m64p::PluginApi* plugin)
     return static_cast<CorePluginType>(m64p_type);
 }
 
-static std::string get_plugin_name(m64p::PluginApi* plugin, const std::string& filename)
+static std::string get_plugin_name(m64p::PluginApi& plugin, const std::string& filename)
 {
     m64p_error ret;
     const char* name = nullptr;
     
-    ret = plugin->GetVersion(nullptr, nullptr, nullptr, &name, nullptr);
+    ret = plugin.GetVersion(nullptr, nullptr, nullptr, &name, nullptr);
     if (ret != M64ERR_SUCCESS || 
         name == nullptr)
     {
@@ -204,7 +204,6 @@ static bool apply_plugin_settings(const std::array<std::string, 5>& pluginSettin
 {
     std::string       error;
     std::string       settingValue;
-    m64p::PluginApi*  plugin;
     CorePluginType    pluginType;
     CoreLibraryHandle handle;
     m64p_error        ret;
@@ -223,12 +222,12 @@ static bool apply_plugin_settings(const std::array<std::string, 5>& pluginSettin
 
         if (settingValue != l_PluginFiles[i])
         {
-            plugin = &l_Plugins[i];
+            m64p::PluginApi& plugin = l_Plugins[i];
 
             // shutdown plugin when hooked
-            if (plugin->IsHooked())
+            if (plugin.IsHooked())
             {
-                ret = plugin->Shutdown();
+                ret = plugin.Shutdown();
                 if (ret != M64ERR_SUCCESS)
                 {
                     error = "apply_plugin_settings (";
@@ -240,7 +239,7 @@ static bool apply_plugin_settings(const std::array<std::string, 5>& pluginSettin
                 }
 
                 // reset plugin
-                plugin->Unhook();
+                plugin.Unhook();
             }
 
             if (settingValue == "(None)")
@@ -270,14 +269,14 @@ static bool apply_plugin_settings(const std::array<std::string, 5>& pluginSettin
             }
 
             // attempt to hook the library
-            if (!plugin->Hook(handle))
+            if (!plugin.Hook(handle))
             {
                 error = "apply_plugin_settings (";
                 error += get_plugin_type_name(pluginType);
                 error += ")->Hook() Failed: ";
-                error += plugin->GetLastError();
+                error += plugin.GetLastError();
                 CoreSetError(error);
-                plugin->Unhook();
+                plugin.Unhook();
                 return false;
             }
 
@@ -290,12 +289,12 @@ static bool apply_plugin_settings(const std::array<std::string, 5>& pluginSettin
                 error += get_plugin_type_name(pluginType);
                 error += "!";
                 CoreSetError(error);
-                plugin->Unhook();
+                plugin.Unhook();
                 return false;
             }
 
             // attempt to start plugin
-            ret = plugin->Startup(m64p::Core.GetHandle(), l_PluginContext[i], CoreDebugCallback);
+            ret = plugin.Startup(m64p::Core.GetHandle(), l_PluginContext[i], CoreDebugCallback);
             if (ret != M64ERR_SUCCESS)
             {
                 error = "apply_plugin_settings (";
@@ -303,8 +302,8 @@ static bool apply_plugin_settings(const std::array<std::string, 5>& pluginSettin
                 error += ")->Startup() Failed: ";
                 error += m64p::Core.ErrorMessage(ret);
                 CoreSetError(error);
-                plugin->Shutdown();
-                plugin->Unhook();
+                plugin.Shutdown();
+                plugin.Unhook();
                 // force a re-load next time,
                 // because this plugin isn't
                 // the one we've stored in 
@@ -328,7 +327,7 @@ static bool open_plugin_config(CorePluginType type, void* parent, bool romConfig
     std::string error;
     m64p_error ret;
     bool resumeEmulation = false;
-    m64p::PluginApi* plugin;
+    m64p::PluginApi& plugin = get_plugin(type);
     std::string functionName;
     CoreRomHeader romHeader;
     CoreRomSettings romSettings;
@@ -370,27 +369,17 @@ static bool open_plugin_config(CorePluginType type, void* parent, bool romConfig
         }
     }
 
-    plugin = get_plugin(type);
-    if (plugin == nullptr)
-    {
-        error = "open_plugin_config Failed: ";
-        error += get_plugin_type_name(type);
-        error += " isn't a valid plugin type!";
-        CoreSetError(error);
-        return false;
-    }
-
     // check if the plugin has the ConfigWithRomConfig
     // or Config function, the ConfigWithRomConfig function
     // has priority
-    if (plugin->ConfigWithRomConfig != nullptr)
+    if (plugin.ConfigWithRomConfig != nullptr)
     {
-        ret = plugin->ConfigWithRomConfig(parent, romConfig ? 1 : 0, &romHeader, &romSettings);
+        ret = plugin.ConfigWithRomConfig(parent, romConfig ? 1 : 0, &romHeader, &romSettings);
         functionName = "Config2";
     }
     else
     {
-        ret = plugin->Config(parent);
+        ret = plugin.Config(parent);
         functionName = "Config";
     }
 
@@ -442,8 +431,8 @@ CORE_EXPORT std::vector<CorePlugin> CoreGetAllPlugins(void)
                 continue;
             }
 
-            plugin_name = get_plugin_name(&plugin, entry.path().filename().string());
-            plugin_type = get_plugin_type(&plugin);
+            plugin_name = get_plugin_name(plugin, entry.path().filename().string());
+            plugin_type = get_plugin_type(plugin);
 
             plugin.Unhook();
             CoreCloseLibrary(handle);
@@ -537,20 +526,10 @@ CORE_EXPORT bool CoreArePluginsReady(void)
 CORE_EXPORT bool CorePluginsHasConfig(CorePluginType type)
 {
     std::string error;
-    m64p::PluginApi* plugin;
+    m64p::PluginApi& plugin = get_plugin(type);
 
-    plugin = get_plugin(type);
-    if (plugin == nullptr)
-    {
-        error = "CorePluginsHasConfig Failed: ";
-        error += get_plugin_type_name(type);
-        error += " isn't a valid plugin type!";
-        CoreSetError(error);
-        return false;
-    }
-
-    return plugin->Config != nullptr ||
-            plugin->ConfigWithRomConfig != nullptr;
+    return plugin.Config != nullptr ||
+            plugin.ConfigWithRomConfig != nullptr;
 }
 
 CORE_EXPORT bool CorePluginsOpenConfig(CorePluginType type, void* parent)
@@ -560,11 +539,9 @@ CORE_EXPORT bool CorePluginsOpenConfig(CorePluginType type, void* parent)
 
 CORE_EXPORT bool CorePluginsHasROMConfig(CorePluginType type)
 {
-    m64p::PluginApi* plugin;
+    m64p::PluginApi& plugin = get_plugin(type);
 
-    plugin = get_plugin(type);
-
-    return plugin->ConfigWithRomConfig != nullptr;
+    return plugin.ConfigWithRomConfig != nullptr;
 }
 
 CORE_EXPORT bool CorePluginsOpenROMConfig(CorePluginType type, void* parent, std::filesystem::path file)
@@ -592,11 +569,11 @@ CORE_EXPORT bool CoreAttachPlugins(void)
 
     for (int i = 0; i < static_cast<int>(CorePluginType::Count); i++)
     {
-        ret = m64p::Core.AttachPlugin(plugin_types[i], get_plugin(static_cast<CorePluginType>(plugin_types[i]))->GetHandle());
+        ret = m64p::Core.AttachPlugin(plugin_types[i], get_plugin(static_cast<CorePluginType>(plugin_types[i])).GetHandle());
         if (ret != M64ERR_SUCCESS)
         {
             error = "CoreAttachPlugins m64p::Core.AttachPlugin(";
-            error += get_plugin_type_name((CorePluginType)plugin_types[i]);
+            error += get_plugin_type_name(static_cast<CorePluginType>(plugin_types[i]));
             error += ") Failed: ";
             error += m64p::Core.ErrorMessage(ret);
             CoreSetError(error);

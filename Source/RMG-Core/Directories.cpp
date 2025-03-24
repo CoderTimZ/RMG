@@ -1,6 +1,6 @@
 /*
  * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *  Copyright (C) 2020 Rosalie Wanders <rosalie@mailbox.org>
+ *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 3.
@@ -17,7 +17,7 @@
 #include "m64p/Api.hpp"
 
 #include <filesystem>
-#include <iostream>
+#include <stdexcept>
 #include <optional>
 #include <cstdlib>
 #include <cstdio>
@@ -58,15 +58,14 @@ static std::filesystem::path get_exe_directory(void)
     if (GetModuleFileNameW(nullptr, buffer, MAX_PATH) == 0)
     {
         MessageBoxA(nullptr, "get_exe_directory: GetModuleFileNameW() Failed!", "Error", MB_OK | MB_ICONERROR);
-        std::terminate();
+        throw std::runtime_error("get_exe_directory: GetModuleFileNameW() failed");
     }
     directory = std::filesystem::path(buffer).parent_path();
 #else // _WIN32
     directory =  std::filesystem::canonical("/proc/self/exe", errorCode).parent_path();
     if (errorCode)
     {
-        std::cerr << "get_exe_directory: std::filesystem::canonical(\"/proc/self/exe\") failed: " << errorCode.message() << std::endl;
-        std::terminate();
+        throw std::runtime_error("get_exe_directory: std::filesystem::canonical(\"/proc/self/exe\") failed: " + errorCode.message());
     }
 #endif // _WIN32
     return directory.make_preferred();
@@ -112,8 +111,7 @@ static std::filesystem::path get_var_directory(std::string var, std::string appe
         env = std::getenv(fallbackVar.c_str());
         if (env == nullptr)
         {
-            std::cerr << "get_var_directory: fallbackVar: $" << fallbackVar << " cannot be nullptr!" << std::endl;
-            std::terminate();
+            throw std::runtime_error("get_var_directory: fallbackVar: $" + fallbackVar + " cannot be non-existent");
         }
         directory = env;
         directory += fallbackAppend;

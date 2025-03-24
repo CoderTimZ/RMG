@@ -1,6 +1,6 @@
 /*
  * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *  Copyright (C) 2020 Rosalie Wanders <rosalie@mailbox.org>
+ *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 3.
@@ -42,7 +42,7 @@ static std::vector<l_DebugCallbackMessage> l_PendingCallbacks;
 
 void CoreDebugCallback(void* context, int level, const char* message)
 {
-    std::string contextString((const char*)context);
+    std::string contextString(static_cast<char*>(context));
     std::string messageString(message);
 
     if (!l_SetupCallbacks)

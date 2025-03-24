@@ -1,6 +1,6 @@
 /*
  * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *  Copyright (C) 2020 Rosalie Wanders <rosalie@mailbox.org>
+ *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 3.
@@ -9,6 +9,8 @@
  */
 #define CORE_INTERNAL
 #include "Archive.hpp"
+
+#include "Directories.hpp"
 #include "Library.hpp"
 #include "String.hpp"
 #include "Error.hpp"
@@ -155,11 +157,11 @@ CORE_EXPORT bool CoreReadZipFile(std::filesystem::path file, std::filesystem::pa
     for (uint64_t i = 0; i < zipInfo.number_entry; i++)
     {
         unz_file_info fileInfo;
-        char          fileName[PATH_MAX];
+        char          fileName[CORE_DIR_MAX_LEN];
 
         // if we can't retrieve file info,
         // skip the file
-        if (unzGetCurrentFileInfo(zipFile, &fileInfo, fileName, PATH_MAX, nullptr, 0, nullptr, 0) != UNZ_OK)
+        if (unzGetCurrentFileInfo(zipFile, &fileInfo, fileName, CORE_DIR_MAX_LEN, nullptr, 0, nullptr, 0) != UNZ_OK)
         {
             continue;
         }
@@ -319,7 +321,7 @@ CORE_EXPORT bool CoreRead7zipFile(std::filesystem::path file, std::filesystem::p
     for (uint32_t i = 0; i < db.NumFiles; i++)
     {
         size_t filename_size = 0;
-        uint16_t fileName[PATH_MAX];
+        uint16_t fileName[CORE_DIR_MAX_LEN];
 
         // skip directories
         if (SzArEx_IsDir(&db, i))
@@ -329,7 +331,7 @@ CORE_EXPORT bool CoreRead7zipFile(std::filesystem::path file, std::filesystem::p
 
         // skip when filename size exceeds our buffer size
         filename_size = SzArEx_GetFileNameUtf16(&db, i, nullptr);
-        if (filename_size > PATH_MAX)
+        if (filename_size > CORE_DIR_MAX_LEN)
         {
             continue;
         }
@@ -342,7 +344,7 @@ CORE_EXPORT bool CoreRead7zipFile(std::filesystem::path file, std::filesystem::p
         // so we have to catch the exception and do nothing
         try
         {
-            fileNamePath = (char16_t*)fileName;
+            fileNamePath = reinterpret_cast<char16_t*>(fileName);
         }
         catch (...)
         {
@@ -474,10 +476,10 @@ CORE_EXPORT bool CoreUnzip(std::filesystem::path file, std::filesystem::path pat
     for (uint64_t i = 0; i < zipInfo.number_entry; i++)
     {
         unz_file_info fileInfo;
-        char          fileName[PATH_MAX];
+        char          fileName[CORE_DIR_MAX_LEN];
 
         // ensure we can retrieve the current file info
-        if (unzGetCurrentFileInfo(zipFile, &fileInfo, fileName, PATH_MAX, nullptr, 0, nullptr, 0) != UNZ_OK)
+        if (unzGetCurrentFileInfo(zipFile, &fileInfo, fileName, CORE_DIR_MAX_LEN, nullptr, 0, nullptr, 0) != UNZ_OK)
         {
             unzClose(zipFile);
             error = "CoreUnzip: unzGetCurrentFileInfo Failed!";

@@ -1,6 +1,6 @@
 /*
  * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *  Copyright (C) 2020 Rosalie Wanders <rosalie@mailbox.org>
+ *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 3.
@@ -17,6 +17,7 @@
 #else // Unix
 #define CORE_DIR_SEPERATOR_STR "/"
 #endif // _WIN32
+#define CORE_DIR_MAX_LEN 4096
 
 // tries to create the needed directories,
 // returns false when failed

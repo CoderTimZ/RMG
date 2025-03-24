@@ -1,6 +1,6 @@
 /*
  * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *  Copyright (C) 2020 Rosalie Wanders <rosalie@mailbox.org>
+ *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 3.
@@ -48,6 +48,9 @@ private:
 	void reloadText();
 
 	std::vector<MappingButtonInputDataType>::iterator getInputDataIter(InputType type, int value, int extraValue);
+
+protected:
+	void resizeEvent(QResizeEvent* event) Q_DECL_OVERRIDE;
 
 public:
 	MappingButton(QWidget* parent);
