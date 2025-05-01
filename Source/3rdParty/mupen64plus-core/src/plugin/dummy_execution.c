@@ -46,11 +46,7 @@ m64p_error dummyexecution_PluginGetVersion(m64p_plugin_type *PluginType, int *Pl
     return M64ERR_SUCCESS;
 }
 
-void dummyexecution_InitiateExecution()
-{
-}
-
-void dummyexecution_StartExecution(EXECUTION_INFO ExecutionInfo)
+void dummyexecution_InitiateExecution(EXECUTION_INFO ExecutionInfo)
 {
 }
 

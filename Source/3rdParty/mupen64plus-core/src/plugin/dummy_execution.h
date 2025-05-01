@@ -27,8 +27,7 @@
 
 extern m64p_error dummyexecution_PluginGetVersion(m64p_plugin_type *PluginType, int *PluginVersion,
                                                   int *APIVersion, const char **PluginNamePtr, int *Capabilities);
-extern void dummyexecution_InitiateExecution();
-extern void dummyexecution_StartExecution(EXECUTION_INFO ControlInfo);
+extern void dummyexecution_InitiateExecution(EXECUTION_INFO ExecutionInfo);
 extern int  dummyexecution_RomOpen(void);
 extern void dummyexecution_RomClosed(void);
 extern void dummyexecution_Input(int Control, BUTTONS * Keys);
