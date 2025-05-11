@@ -1366,7 +1366,7 @@ static void config_listsections_callback(void*, const char* section)
     l_sectionList.emplace_back(std::string(section));
 }
 
-static bool config_section_exists(std::string section)
+static bool config_section_exists(const std::string& section)
 {
     std::string error;
     m64p_error ret;
@@ -1390,7 +1390,7 @@ static bool config_section_exists(std::string section)
     return std::find(l_sectionList.begin(), l_sectionList.end(), section) != l_sectionList.end();
 }
 
-static bool config_section_open(std::string section)
+static bool config_section_open(const std::string& section)
 {
     std::string error;
     m64p_error ret;
@@ -1423,7 +1423,7 @@ static void config_listkeys_callback(void*, const char* key, m64p_type)
     l_keyList.push_back(std::string(key));
 }
 
-static bool config_key_exists(std::string section, std::string key)
+static bool config_key_exists(const std::string& section, const std::string& key)
 {
     std::string error;
     m64p_error ret;
@@ -1452,7 +1452,7 @@ static bool config_key_exists(std::string section, std::string key)
     return std::find(l_keyList.begin(), l_keyList.end(), key) != l_keyList.end();
 }
 
-static bool config_option_set(std::string section, std::string key, m64p_type type, void *value)
+static bool config_option_set(const std::string& section, const std::string& key, m64p_type type, void *value)
 {
     std::string error;
     m64p_error ret;
@@ -1478,7 +1478,7 @@ static bool config_option_set(std::string section, std::string key, m64p_type ty
     return ret == M64ERR_SUCCESS;
 }
 
-static bool config_option_get(std::string section, std::string key, m64p_type type, void *value, int size)
+static bool config_option_get(const std::string& section, const std::string& key, m64p_type type, void *value, int size)
 {
     std::string error;
     m64p_error ret;
@@ -1511,7 +1511,7 @@ static bool config_option_get(std::string section, std::string key, m64p_type ty
     return ret == M64ERR_SUCCESS;
 }
 
-static bool config_option_default_set(std::string section, std::string key, m64p_type type, void *value, const char* description)
+static bool config_option_default_set(const std::string& section, const std::string& key, m64p_type type, void *value, const char* description)
 {
     std::string error;
     m64p_error ret;
@@ -1579,7 +1579,7 @@ static bool int_list_to_string(const std::vector<int>& intList, std::string& str
     return true;
 }
 
-static bool string_to_int_list(std::string string, std::vector<int>& intList)
+static bool string_to_int_list(const std::string& string, std::vector<int>& intList)
 {
     std::string error;
 
@@ -1634,7 +1634,7 @@ static bool string_list_to_string(const std::vector<std::string>& stringList, st
     return true;
 }
 
-static bool string_to_string_list(std::string string, std::vector<std::string>& stringList)
+static bool string_to_string_list(const std::string& string, std::vector<std::string>& stringList)
 {
     std::string error;
 
