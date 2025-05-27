@@ -503,8 +503,11 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::KeyBinding_Fullscreen:
         setting = {SETTING_SECTION_KEYBIND, "Fullscreen", std::string("Alt+Return")};
         break;
-    case SettingsID::Keybinding_ViewLog:
+    case SettingsID::KeyBinding_ViewLog:
         setting = {SETTING_SECTION_KEYBIND, "ViewLog", std::string("Ctrl+Alt+L")};
+        break;
+    case SettingsID::KeyBinding_ViewSearch:
+        setting = {SETTING_SECTION_KEYBIND, "ViewSearch", std::string("Ctrl+F")};
         break;
     case SettingsID::KeyBinding_GraphicsSettings:
         setting = {SETTING_SECTION_KEYBIND, "GraphicsSettings", std::string("Ctrl+G")};
@@ -544,7 +547,7 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_ROMBROWSER, "Recursive", true};
         break;
     case SettingsID::RomBrowser_MaxItems:
-        setting = {SETTING_SECTION_ROMBROWSER, "MaxItems", 1024};
+        setting = {SETTING_SECTION_ROMBROWSER, "MaxItems", 2048};
         break;
     case SettingsID::RomBrowser_ColumnVisibility:
         setting = {SETTING_SECTION_ROMBROWSER, "ColumnVisibility", std::string("1;1;1;0;0;0;0;0;0;")};

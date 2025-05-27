@@ -56,10 +56,25 @@ Q_DECLARE_METATYPE(RomBrowserModelData);
 // Exported Functions
 // 
 
-RomBrowserWidget::RomBrowserWidget(QWidget *parent) : QStackedWidget(parent)
+RomBrowserWidget::RomBrowserWidget(QWidget *parent) : QWidget(parent)
 {
     // configure signal types
     qRegisterMetaType<CoreRomType>("CoreRomType");
+
+    // configure stacked widget
+    this->stackedWidget = new QStackedWidget(this);
+
+    // configure search widget
+    this->searchWidget = new Widget::RomBrowserSearchWidget(this);
+    this->searchWidget->setVisible(false);
+    connect(this->searchWidget, &RomBrowserSearchWidget::SearchTextChanged, this, &RomBrowserWidget::on_searchWidget_SearchTextChanged);
+
+    // configure layout
+    QVBoxLayout* layout = new QVBoxLayout(this);
+    layout->addWidget(this->stackedWidget);
+    layout->addWidget(this->searchWidget);
+    layout->setContentsMargins(0, 0, 0, 0);
+    this->setLayout(layout);
 
     // configure rom searcher thread
     this->romSearcherThread = new Thread::RomSearcherThread(this);
@@ -68,21 +83,23 @@ RomBrowserWidget::RomBrowserWidget(QWidget *parent) : QStackedWidget(parent)
 
     // configure empty widget
     this->emptyWidget = new Widget::RomBrowserEmptyWidget(this);
-    this->addWidget(this->emptyWidget);
+    this->stackedWidget->addWidget(this->emptyWidget);
     connect(this->emptyWidget, &RomBrowserEmptyWidget::SelectRomDirectory, this, &RomBrowserWidget::on_Action_ChangeRomDirectory);
     connect(this->emptyWidget, &RomBrowserEmptyWidget::Refresh, this, &RomBrowserWidget::on_Action_RefreshRomList);
     connect(this->emptyWidget, &RomBrowserEmptyWidget::FileDropped, this, &RomBrowserWidget::FileDropped);
 
     // configure loading widget
     this->loadingWidget = new Widget::RomBrowserLoadingWidget(this);
-    connect(this, &QStackedWidget::currentChanged, this->loadingWidget, &RomBrowserLoadingWidget::on_RomBrowserWidget_currentChanged);
+    connect(this->stackedWidget, &QStackedWidget::currentChanged, this->loadingWidget, &RomBrowserLoadingWidget::on_RomBrowserWidget_currentChanged);
     connect(this->loadingWidget, &RomBrowserLoadingWidget::FileDropped, this, &RomBrowserWidget::FileDropped);
-    this->loadingWidget->SetWidgetIndex(this->addWidget(this->loadingWidget));
+    this->loadingWidget->SetWidgetIndex(this->stackedWidget->addWidget(this->loadingWidget));
 
     // configure list view widget
     this->listViewWidget = new Widget::RomBrowserListViewWidget(this);
     this->listViewModel  = new QStandardItemModel(this);
-    this->listViewWidget->setModel(this->listViewModel);
+    this->listViewProxyModel = new QSortFilterProxyModel(this);
+    this->listViewProxyModel->setSourceModel(this->listViewModel);
+    this->listViewWidget->setModel(this->listViewProxyModel);
     this->listViewWidget->setFrameStyle(QFrame::NoFrame);
     this->listViewWidget->setItemDelegate(new NoFocusDelegate(this));
     this->listViewWidget->setWordWrap(false);
@@ -101,7 +118,7 @@ RomBrowserWidget::RomBrowserWidget(QWidget *parent) : QStackedWidget(parent)
     this->listViewWidget->horizontalHeader()->setSortIndicatorShown(false);
     this->listViewWidget->horizontalHeader()->setHighlightSections(false);
     this->listViewWidget->horizontalHeader()->setContextMenuPolicy(Qt::ContextMenuPolicy::CustomContextMenu);
-    this->addWidget(this->listViewWidget);
+    this->stackedWidget->addWidget(this->listViewWidget);
     connect(this->listViewWidget, &QTableView::doubleClicked, this, &RomBrowserWidget::on_DoubleClicked);
     connect(this->listViewWidget->horizontalHeader(), &QHeaderView::sortIndicatorChanged, this, &RomBrowserWidget::on_listViewWidget_sortIndicatorChanged);
     connect(this->listViewWidget->horizontalHeader(), &QHeaderView::sectionResized, this, &RomBrowserWidget::on_listViewWidget_sectionResized);
@@ -139,7 +156,9 @@ RomBrowserWidget::RomBrowserWidget(QWidget *parent) : QStackedWidget(parent)
     // configure grid view widget
     this->gridViewWidget = new Widget::RomBrowserGridViewWidget(this);
     this->gridViewModel  = new QStandardItemModel(this);
-    this->gridViewWidget->setModel(this->gridViewModel);
+    this->gridViewProxyModel = new QSortFilterProxyModel(this);
+    this->gridViewProxyModel->setSourceModel(this->gridViewModel);
+    this->gridViewWidget->setModel(this->gridViewProxyModel);
     this->gridViewWidget->setFlow(QListView::Flow::LeftToRight);
     this->gridViewWidget->setResizeMode(QListView::Adjust);
 #ifndef DRAG_DROP
@@ -157,7 +176,7 @@ RomBrowserWidget::RomBrowserWidget(QWidget *parent) : QStackedWidget(parent)
     int iconWidth = CoreSettingsGetIntValue(SettingsID::RomBrowser_GridViewIconWidth);
     int iconHeight = CoreSettingsGetIntValue(SettingsID::RomBrowser_GridViewIconHeight);
     this->gridViewWidget->setIconSize(QSize(iconWidth, iconHeight));
-    this->addWidget(this->gridViewWidget);
+    this->stackedWidget->addWidget(this->gridViewWidget);
     connect(this->gridViewWidget, &QListView::doubleClicked, this, &RomBrowserWidget::on_DoubleClicked);
     connect(this->gridViewWidget, &QListView::iconSizeChanged, this, &RomBrowserWidget::on_gridViewWidget_iconSizeChanged);
     connect(this->gridViewWidget, &Widget::RomBrowserGridViewWidget::ZoomIn, this, &RomBrowserWidget::on_ZoomIn);
@@ -279,11 +298,15 @@ void RomBrowserWidget::RefreshRomList(void)
     QString directory = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::RomBrowser_Directory));
     if (directory.isEmpty())
     {
-        this->setCurrentWidget(this->emptyWidget);
+        this->stackedWidget->setCurrentWidget(this->emptyWidget);
         return;
     }
 
-    this->setCurrentWidget(this->loadingWidget);
+    this->stackedWidget->setCurrentWidget(this->loadingWidget);
+
+    this->showSearchWidget = this->searchWidget->isVisible();
+    this->searchWidget->hide();
+
     this->romSearcherTimer.start();
 
     this->romSearcherThread->SetMaximumFiles(CoreSettingsGetIntValue(SettingsID::RomBrowser_MaxItems));
@@ -308,9 +331,9 @@ void RomBrowserWidget::ShowList(void)
 
     // only change widget now when we're not refreshing
     if (!this->IsRefreshingRomList() &&
-        this->currentWidget() != this->emptyWidget)
+        this->stackedWidget->currentWidget() != this->emptyWidget)
     {
-        this->setCurrentWidget(this->listViewWidget);
+        this->stackedWidget->setCurrentWidget(this->listViewWidget);
     }
 }
 
@@ -320,9 +343,9 @@ void RomBrowserWidget::ShowGrid(void)
 
     // only change widget now when we're not refreshing
     if (!this->IsRefreshingRomList() &&
-        this->currentWidget() != this->emptyWidget)
+        this->stackedWidget->currentWidget() != this->emptyWidget)
     {
-        this->setCurrentWidget(this->gridViewWidget);
+        this->stackedWidget->setCurrentWidget(this->gridViewWidget);
     }
 }
 
@@ -330,7 +353,7 @@ void RomBrowserWidget::SetGridViewUniformSizes(bool value)
 {
     // refresh ROM list when we're currently in the grid view
     // and we're not refreshing already
-    if (this->currentWidget() == this->gridViewWidget &&
+    if (this->stackedWidget->currentWidget() == this->gridViewWidget &&
         !this->IsRefreshingRomList())
     {
         if (this->gridViewWidget->uniformItemSizes() != value)
@@ -344,20 +367,46 @@ void RomBrowserWidget::SetGridViewUniformSizes(bool value)
     this->gridViewWidget->setUniformItemSizes(value);
 }
 
+void RomBrowserWidget::SetToggleSearch(void)
+{
+    const bool show = !this->searchWidget->isVisible();
+
+    // do nothing when not in a valid view
+    QWidget* currentWidget = this->stackedWidget->currentWidget();
+    if (currentWidget == this->loadingWidget ||
+        currentWidget == this->emptyWidget)
+    {
+        return;
+    }
+
+    this->searchWidget->setVisible(show);
+
+    if (show)
+    {
+        // set focus when it's being shown
+        this->searchWidget->FocusSearchText();
+    }
+    else
+    {
+        // reset search when hidden
+        this->searchWidget->ClearSearchTerm();
+    }
+}
+
 QMap<QString, CoreRomSettings> RomBrowserWidget::GetModelData(void)
 {
     QMap<QString, CoreRomSettings> data;
-    QStandardItemModel* model = this->getCurrentModel();
+    QPair<QStandardItemModel*, QSortFilterProxyModel*> model = this->getCurrentModel();
     RomBrowserModelData modelData;
 
-    if (model == nullptr)
+    if (model.first == nullptr)
     {
         return data;
     }
 
-    for (int i = 0; i < model->rowCount(); i++)
+    for (int i = 0; i < model.first->rowCount(); i++)
     {
-        modelData = model->item(i)->data().value<RomBrowserModelData>();
+        modelData = model.first->item(i)->data().value<RomBrowserModelData>();
         // only add cartridges, 64dd disks aren't supported
         if (modelData.type == CoreRomType::Cartridge)
         {
@@ -368,9 +417,9 @@ QMap<QString, CoreRomSettings> RomBrowserWidget::GetModelData(void)
     return data;
 }
 
-QStandardItemModel* RomBrowserWidget::getCurrentModel(void)
+QPair<QStandardItemModel*, QSortFilterProxyModel*> RomBrowserWidget::getCurrentModel(void)
 {
-    QWidget* currentWidget = this->currentWidget();
+    QWidget* currentWidget = this->stackedWidget->currentWidget();
     if (currentWidget == this->loadingWidget)
     {
         currentWidget = this->currentViewWidget;
@@ -378,19 +427,19 @@ QStandardItemModel* RomBrowserWidget::getCurrentModel(void)
 
     if (currentWidget == this->listViewWidget)
     {
-        return this->listViewModel;
+        return qMakePair(this->listViewModel, this->listViewProxyModel);
     }
     else if (currentWidget == this->gridViewWidget)
     {
-        return this->gridViewModel;
+        return qMakePair(this->gridViewModel, this->gridViewProxyModel);
     }
 
-    return nullptr;
+    return qMakePair(nullptr, nullptr);
 }
 
 QAbstractItemView* RomBrowserWidget::getCurrentModelView(void)
 {
-    QWidget* currentWidget = this->currentWidget();
+    QWidget* currentWidget = this->stackedWidget->currentWidget();
     if (currentWidget == this->loadingWidget)
     {
         currentWidget = this->currentViewWidget;
@@ -410,16 +459,16 @@ QAbstractItemView* RomBrowserWidget::getCurrentModelView(void)
 
 bool RomBrowserWidget::getCurrentData(RomBrowserModelData& data)
 {
-    QStandardItemModel* model = this->getCurrentModel();
-    QAbstractItemView*  view  = this->getCurrentModelView();
+    QPair<QStandardItemModel*, QSortFilterProxyModel*> model = this->getCurrentModel();
+    QAbstractItemView* view = this->getCurrentModelView();
 
-    if (model == nullptr || view == nullptr)
+    if (model.first == nullptr || model.second == nullptr || view == nullptr)
     {
         return false;
     }
 
-    QModelIndex    index = view->currentIndex();
-    QStandardItem* item  = model->item(index.row(), 0);
+    QModelIndex    index = model.second->mapToSource(view->currentIndex());
+    QStandardItem* item  = model.first->item(index.row(), 0);
 
     if (item == nullptr)
     {
@@ -614,7 +663,8 @@ QIcon RomBrowserWidget::getCurrentCover(QString file, CoreRomHeader header, Core
 void RomBrowserWidget::timerEvent(QTimerEvent* event)
 {
     this->killTimer(event->timerId());
-    this->setCurrentWidget(this->currentViewWidget);
+    this->stackedWidget->setCurrentWidget(this->currentViewWidget);
+    this->searchWidget->setVisible(this->showSearchWidget);
 }
 
 void RomBrowserWidget::on_DoubleClicked(const QModelIndex& index)
@@ -624,9 +674,8 @@ void RomBrowserWidget::on_DoubleClicked(const QModelIndex& index)
 
 void RomBrowserWidget::customContextMenuRequested(QPoint position)
 {
-    QStandardItemModel* model = this->getCurrentModel();
-    QAbstractItemView*  view = this->getCurrentModelView();
-    if (view == nullptr || model == nullptr)
+    QAbstractItemView* view = this->getCurrentModelView();
+    if (view == nullptr)
     {
         return;
     }
@@ -713,20 +762,20 @@ void RomBrowserWidget::generateColumnsMenu(void)
 void RomBrowserWidget::generatePlayWithDiskMenu(void)
 {
     QAction* playGameWithAction;
-    QStandardItemModel* model = this->getCurrentModel();
+    QPair<QStandardItemModel*, QSortFilterProxyModel*> model = this->getCurrentModel();
     RomBrowserModelData modelData;
     int count = 0;
 
     this->menu_PlayGameWithDisk->clear();
 
-    if (model == nullptr)
+    if (model.first == nullptr)
     {
         return;
     }
 
-    for (int i = 0; i < model->rowCount(); i++)
+    for (int i = 0; i < model.first->rowCount(); i++)
     {
-        modelData = model->item(i)->data().value<RomBrowserModelData>();
+        modelData = model.first->item(i)->data().value<RomBrowserModelData>();
         if (modelData.type == CoreRomType::Disk)
         {
             if (count == 0)
@@ -736,8 +785,8 @@ void RomBrowserWidget::generatePlayWithDiskMenu(void)
             }
 
             playGameWithAction = new QAction(this);
-            playGameWithAction->setText(model->item(i)->text());
-            playGameWithAction->setData(model->item(i)->data());
+            playGameWithAction->setText(model.first->item(i)->text());
+            playGameWithAction->setData(model.first->item(i)->data());
             this->menu_PlayGameWithDisk->addAction(playGameWithAction);
 
             // only add 10 disks to menu,
@@ -792,6 +841,19 @@ void RomBrowserWidget::generateStateMenu(void)
     }
 
     this->menu_PlayGameWithSlot->setDisabled(this->menu_PlayGameWithSlot->isEmpty());
+}
+
+void RomBrowserWidget::on_searchWidget_SearchTextChanged(const QString& text)
+{
+    // TODO: I should really make a custom data
+    // model at this point to save memory & CPU cycles...
+    this->listViewProxyModel->setFilterCaseSensitivity(Qt::CaseInsensitive);
+    this->listViewProxyModel->setFilterWildcard(text);
+    this->listViewProxyModel->setFilterKeyColumn(0);
+
+    this->gridViewProxyModel->setFilterCaseSensitivity(Qt::CaseInsensitive);
+    this->gridViewProxyModel->setFilterWildcard(text);
+    this->gridViewProxyModel->setFilterKeyColumn(0);
 }
 
 void RomBrowserWidget::on_listViewWidget_sortIndicatorChanged(int logicalIndex, Qt::SortOrder sortOrder)
@@ -910,8 +972,8 @@ void RomBrowserWidget::on_RomBrowserThread_RomsFound(QList<RomSearcherThreadData
 void RomBrowserWidget::on_RomBrowserThread_Finished(bool canceled)
 {
     // sort data
-    this->listViewModel->sort(this->listViewSortSection, (Qt::SortOrder)this->listViewSortOrder);
-    this->gridViewModel->sort(0, Qt::SortOrder::AscendingOrder);
+    this->listViewProxyModel->sort(this->listViewSortSection, (Qt::SortOrder)this->listViewSortOrder);
+    this->gridViewProxyModel->sort(0, Qt::SortOrder::AscendingOrder);
 
     // retrieve column settings
     std::vector<int> columnSizes = CoreSettingsGetIntListValue(SettingsID::RomBrowser_ColumnSizes);
@@ -1007,7 +1069,7 @@ void RomBrowserWidget::on_RomBrowserThread_Finished(bool canceled)
 
     if (this->listViewModel->rowCount() == 0)
     {
-        this->setCurrentWidget(this->emptyWidget);
+        this->stackedWidget->setCurrentWidget(this->emptyWidget);
         return;
     }
 
@@ -1020,7 +1082,8 @@ void RomBrowserWidget::on_RomBrowserThread_Finished(bool canceled)
         return;
     }
 
-    this->setCurrentWidget(this->currentViewWidget);
+    this->stackedWidget->setCurrentWidget(this->currentViewWidget);
+    this->searchWidget->setVisible(this->showSearchWidget);
 }
 
 void RomBrowserWidget::on_Action_PlayGame(void)
@@ -1144,9 +1207,9 @@ void RomBrowserWidget::on_Action_SetCoverImage(void)
     QFileInfo sourceFileInfo;
     QString coverFile;
 
-    QStandardItemModel* model = this->getCurrentModel();
-    QAbstractItemView*  view  = this->getCurrentModelView();
-    if (model == nullptr || view == nullptr)
+    QPair<QStandardItemModel*, QSortFilterProxyModel*> model = this->getCurrentModel();
+    QAbstractItemView* view  = this->getCurrentModelView();
+    if (model.first == nullptr || model.second == nullptr || view == nullptr)
     {
         return;
     }
@@ -1165,9 +1228,9 @@ void RomBrowserWidget::on_Action_SetCoverImage(void)
     // retrieve file info
     sourceFileInfo = QFileInfo(sourceFile);
 
-    QModelIndex         index = view->currentIndex();
-    QStandardItem*      item  = model->item(index.row(), index.column());
-    RomBrowserModelData data  = model->itemData(index).last().value<RomBrowserModelData>();
+    QModelIndex         index = model.second->mapToSource(view->currentIndex());
+    QStandardItem*      item  = model.first->item(index.row(), index.column());
+    RomBrowserModelData data  = model.first->itemData(index).last().value<RomBrowserModelData>();
 
     // construct new file name (for the cover)
     QString newFileName = this->coversDirectory;
@@ -1203,16 +1266,16 @@ void RomBrowserWidget::on_Action_SetCoverImage(void)
 
 void RomBrowserWidget::on_Action_RemoveCoverImage(void)
 {
-    QStandardItemModel* model = this->getCurrentModel();
+    QPair<QStandardItemModel*, QSortFilterProxyModel*> model = this->getCurrentModel();
     QAbstractItemView*  view  = this->getCurrentModelView();
-    if (model == nullptr || view == nullptr)
+    if (model.first == nullptr || model.second == nullptr || view == nullptr)
     {
         return;
     }
 
-    QModelIndex         index = view->currentIndex();
-    QStandardItem*      item  = model->item(index.row(), index.column());
-    RomBrowserModelData data  = model->itemData(index).last().value<RomBrowserModelData>();
+    QModelIndex         index = model.second->mapToSource(view->currentIndex());
+    QStandardItem*      item  = model.first->item(index.row(), index.column());
+    RomBrowserModelData data  = model.first->itemData(index).last().value<RomBrowserModelData>();
     QString coverFile;
 
     if (!data.coverFile.isEmpty() && QFile::exists(data.coverFile))
