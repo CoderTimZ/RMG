@@ -669,11 +669,16 @@ m64p_error plugin_check(void)
     return M64ERR_SUCCESS;
 }
 
+void save_state()
+{
+    main_state_save(1, NULL);
+}
+
 void initiate_execution_plugin(void)
 {
     memset(&execution_addr_mask, 0, sizeof(execution_addr_mask));
     
-    execution_info.window = 0;
+    execution_info.window = NULL;
     execution_info.rom_name = ROM_HEADER.Name;
     execution_info.rom_hash = (uint8_t*)ROM_SETTINGS.MD5;
     execution_info.addr_mask = execution_addr_mask;
@@ -683,5 +688,7 @@ void initiate_execution_plugin(void)
     execution_info.fpr = (double*)r4300_cp1_regs(&g_dev.r4300.cp1);
     execution_info.rdram = mem_base_u32(g_mem_base, MM_RDRAM_DRAM);
     execution_info.rdram_size = g_dev.rdram.dram_size;
+    execution_info.save_state = save_state;
+    execution_info.set_save_state_slot = main_state_set_slot;
     execution.initiateExecution(execution_info);
 }

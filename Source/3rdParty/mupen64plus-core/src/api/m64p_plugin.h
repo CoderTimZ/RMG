@@ -189,6 +189,8 @@ typedef struct {
     double* fpr;
     void* rdram;
     uint32_t rdram_size;
+    void (*save_state)();
+    void (*set_save_state_slot)(int32_t slot);
 } EXECUTION_INFO;
 
 /* common plugin function pointer types */
