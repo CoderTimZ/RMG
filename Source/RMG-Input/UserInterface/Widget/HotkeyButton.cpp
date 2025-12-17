@@ -31,7 +31,7 @@ void HotkeyButton::Initialize(HotkeysDialog* dialog)
 {
     this->hotkeysDialog = dialog;
 
-    connect(this, &QPushButton::released, [=, this]
+    connect(this, &QPushButton::released, [this]
     {
         emit this->hotkeysDialog->on_HotkeyButton_Released(this);
     });
@@ -173,6 +173,7 @@ void HotkeyButton::on_countDownTimer_triggered()
         this->currentCountDownNum = 5;
         this->countDownTimer->stop();
         emit this->hotkeysDialog->on_HotkeyButton_TimerFinished(this);
+        return;
     }
 
     this->currentCountDownNum--;

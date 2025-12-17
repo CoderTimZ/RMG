@@ -21,17 +21,13 @@
 #include "File.hpp"
 #include "Rom.hpp"
 
-#ifdef DISCORD_RPC
-#include "DiscordRpc.hpp"
-#endif // DISCORD_RPC
-
 #include "m64p/Api.hpp"
 
 //
 // Local Functions
 //
 
-static bool get_emulation_state(m64p_emu_state* state)
+static bool get_emulation_state(m64p_emu_state& state)
 {
     std::string error;
     m64p_error ret;
@@ -41,7 +37,7 @@ static bool get_emulation_state(m64p_emu_state* state)
         return false;
     }
 
-    ret = m64p::Core.DoCommand(M64CMD_CORE_STATE_QUERY, M64CORE_EMU_STATE, state);
+    ret = m64p::Core.DoCommand(M64CMD_CORE_STATE_QUERY, M64CORE_EMU_STATE, &state);
     if (ret != M64ERR_SUCCESS)
     {
         error = "get_emulation_state m64p::Core.DoCommand(M64CMD_CORE_STATE_QUERY) Failed: ";
@@ -62,6 +58,7 @@ static void apply_coresettings_overlay(void)
     CoreSettingsSetValue(SettingsID::Core_CountPerOpDenomPot, CoreSettingsGetIntValue(SettingsID::CoreOverlay_CountPerOpDenomPot));
     CoreSettingsSetValue(SettingsID::Core_SiDmaDuration, CoreSettingsGetIntValue(SettingsID::CoreOverlay_SiDmaDuration));
     CoreSettingsSetValue(SettingsID::Core_SaveFileNameFormat, CoreSettingsGetIntValue(SettingsID::CoreOverLay_SaveFileNameFormat));
+    CoreSettingsSetValue(SettingsID::Core_GbCameraVideoCaptureBackend1, CoreSettingsGetStringValue(SettingsID::CoreOverlay_GbCameraVideoCaptureBackend1));
 }
 
 static void apply_game_coresettings_overlay(void)
@@ -234,10 +231,6 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
     // apply pif rom settings
     apply_pif_rom_settings();
 
-#ifdef DISCORD_RPC
-    CoreDiscordRpcUpdate(true);
-#endif // DISCORD_RPC
-
 #ifdef NETPLAY
     if (netplay)
     {
@@ -277,10 +270,6 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 
     // reset media loader state
     CoreResetMediaLoader();
-
-#ifdef DISCORD_RPC
-    CoreDiscordRpcUpdate(false);
-#endif // DISCORD_RPC
 
     if (!netplay || netplay_ret)
     {
@@ -423,11 +412,11 @@ CORE_EXPORT bool CoreResetEmulation(bool hard)
 CORE_EXPORT bool CoreIsEmulationRunning(void)
 {
     m64p_emu_state state = M64EMU_STOPPED;
-    return get_emulation_state(&state) && state == M64EMU_RUNNING;
+    return get_emulation_state(state) && state == M64EMU_RUNNING;
 }
 
 CORE_EXPORT bool CoreIsEmulationPaused(void)
 {
     m64p_emu_state state = M64EMU_STOPPED;
-    return get_emulation_state(&state) && state == M64EMU_PAUSED;
+    return get_emulation_state(state) && state == M64EMU_PAUSED;
 }

@@ -29,6 +29,133 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="v0.8.8" date="2025-11-16" type="stable">
+      <description>
+        <p>Changes:</p>
+        <ul>
+          <li>Fix exit confirmation dialog showing when launching RMG with '--nogui'</li>
+          <li>Fix emulation not shutting down properly on exit in some cases</li>
+          <li>Fix remaining issues with the 'Auto-Configure' button state in the configuration dialog of RMG-Input</li>
+          <li>Fix asserts being enabled when building the RelWithDebInfo configuration</li>
+          <li>Fix uninitialized variable being read in the configuration dialog of GLideN64</li>
+          <li>Add checkbox to drag and drop confirmation dialog to prevent future confirmations</li>
+          <li>Move 'Ask for confirmation on exit' setting to the emulation tab in the settings dialog</li>
+          <li>Improve 'Input Device' UI element in the configuration GUI of RMG-Input by allowing it to take more width</li>
+          <li>Improve refresh and join button state in the Netplay Session Browser dialog</li>
+        </ul>
+      </description>
+    </release>
+    <release version="v0.8.7" date="2025-11-06" type="stable">
+      <description>
+        <p>Changes:</p>
+        <ul>
+          <li>Fix drag and drop not working in the flatpak</li>
+          <li>Fix hotkeys dialog in RMG-Input not showing native face button names</li>
+          <li>Fix cheat dialog in RMG not allowing users to set cheat option since v0.7.2</li>
+          <li>Fix cheat codes not being cleared before trying to load another cheat in RMG-Core</li>
+          <li>Fix 'Auto-Configure' button being enabled when it should be disabled after configuring a button</li>
+          <li>Fix top row of UI elements in the configuration GUI of RMG-Input not being aligned properly</li>
+          <li>Add tooltips to the top row of UI elements in the configuration GUI of RMG-Input</li>
+          <li>Add 'Game Type' to the 'ROM Information' dialog</li>
+        </ul>
+      </description>
+    </release>
+    <release version="v0.8.6" date="2025-10-19" type="stable">
+      <description>
+        <p>Changes:</p>
+        <ul>
+          <li>Fix game specific profile name being empty for ROMs with no internal ROM name in RMG-Input</li>
+          <li>Fix GameBoy tower functionality not working in Pokemon Stadium when using a GameBoy save</li>
+          <li>Fix currently set directory not being the starting directory in directory dialogs</li>
+          <li>Fix ROM browser refreshing after 'Edit ROM Directory...' when the directory is the same</li>
+          <li>Fix settings dialog not allowing you to select all supported PIF file variants</li>
+          <li>Fix slowdown when using RMG-Input-GCA by polling input on a different thread</li>
+          <li>Fix RMG-Input not using native controller button names for the face buttons in the configuration GUI</li>
+          <li>Add icons to the cheats dialog</li>
+          <li>Add icons to the context menu of the ROM browser</li>
+          <li>Add icons to the buttons of the settings dialog</li>
+          <li>Add icons to the buttons of the options dialog in RMG-Input</li>
+          <li>Add 'Swap Z and L' setting to RMG-Input-GCA</li>
+          <li>Add Auto-Configure feature to RMG-Input</li>
+          <li>Add more bounds checking to mupen64plus-core</li>
+          <li>Remove user directories override settings</li>
+          <li>Update mupen64plus-core</li>
+        </ul>
+      </description>
+    </release>
+    <release version="v0.8.5" date="2025-10-09" type="stable">
+      <description>
+        <p>Changes:</p>
+        <ul>
+          <li>Fix buttons being stuck as pressed in the configuration GUI of RMG-Input in some cases</li>
+        </ul>
+      </description>
+    </release>
+    <release version="v0.8.4" date="2025-10-09" type="stable">
+      <description>
+        <p>Changes:</p>
+        <ul>
+          <li>Fix 'Test Rumble' functionality in RMG-Input not checking for rumble support since v0.8.1</li>
+          <li>Fix exit confirmation checkbox saving the setting when rejecting the dialog</li>
+          <li>Remove discord rich presence support</li>
+          <li>Remove mupen64plus-input-gca</li>
+          <li>Remove fallback to libfmt when 'std::format' isn't supported by the compiler</li>
+          <li>Introduce RMG-Input-GCA</li>
+          <li>Update mupen64plus-core, GLideN64 and SDL_GameControllerDB</li>
+        </ul>
+      </description>
+    </release>
+    <release version="v0.8.3" date="2025-09-28" type="stable">
+      <description>
+        <p>Changes:</p>
+        <ul>
+          <li>Fix supported 64DD games not having the transfer pak functionality enabled</li>
+          <li>Fix crash in Mario Artist Talent Studio when using mupen64plus-rsp-hle since v0.8.2</li>
+          <li>Fix frame count not increasing from 0 since v0.8.2</li>
+          <li>Fix loading save states freezing since v0.8.2</li>
+          <li>Add clear buttons to 64DD IPL settings in the settings dialog</li>
+        </ul>
+      </description>
+    </release>
+    <release version="v0.8.2" date="2025-09-26" type="stable">
+      <description>
+        <p>Changes:</p>
+        <ul>
+          <li>Fix screenshot filename being incorrect when playing 64DD games</li>
+          <li>Fix GameBoy tower functionality not working in Pokemon Stadium 1 and 2</li>
+          <li>Add clear buttons to transfer pak settings in RMG-Input</li>
+          <li>Add support for the GameBoy camera by implementing a SDL3 backend in mupen64plus-core</li>
+          <li>Improve accuracy of RSP</li>
+        </ul>
+      </description>
+    </release>
+    <release version="v0.8.1" date="2025-09-23" type="stable">
+      <description>
+        <p>Changes:</p>
+        <ul>
+          <li>Fix incorrect usage of 'i.e' and replace it with 'e.g.' in the settings dialog</li>
+          <li>Fix 7zip archives not supporting the PPMd compression method</li>
+          <li>Fix being able to open another game while emulation is being started</li>
+          <li>Fix allowing drag and drop events while emulation is being started</li>
+          <li>Add 'Ask for confirmation on exit while in-game' setting</li>
+          <li>Migrate RMG-Audio to SDL3 (thank you loganmc10 for the help)</li>
+          <li>Migrate RMG-Input to SDL3</li>
+          <li>Migrate RMG to SDL3</li>
+          <li>Migrate mupen64plus-core to SDL3 and SDL3_net</li>
+          <li>Update GLideN64 and LZMA SDK</li>
+        </ul>
+      </description>
+    </release>
+    <release version="v0.8.0" date="2025-09-10" type="stable">
+      <description>
+        <p>Changes:</p>
+        <ul>
+          <li>Fix 64DD games crashing in some cases since v0.7.8</li>
+          <li>Add Windows Vista theme to settings on Windows (thank you RibShark)</li>
+          <li>Add support for the netplay dispatch server</li>
+        </ul>
+      </description>
+    </release>
     <release version="v0.7.9" date="2025-05-19" type="stable">
       <description>
         <p>Changes:</p>

@@ -20,6 +20,7 @@
 #include <QColorDialog>
 #include <QDirIterator>
 #include <QLabel>
+#include <QDir>
 
 #include <RMG-Core/CachedRomHeaderAndSettings.hpp>
 #include <RMG-Core/Directories.hpp>
@@ -114,7 +115,7 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 
     pluginList = CoreGetAllPlugins();
 
-    for (int i = 0; i < (int)SettingsDialogTab::Invalid; i++)
+    for (int i = 0; i < static_cast<int>(SettingsDialogTab::Invalid); i++)
     {
         this->loadSettings(i);
     }
@@ -123,16 +124,12 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
     this->commonHotkeySettings(SettingsDialogAction::ConnectSignals);
 
 #ifndef NETPLAY
-    this->innerInterfaceTabWidget->setTabVisible((int)SettingsDialogTab::InterfaceNetplay, false);
+    this->innerInterfaceTabWidget->setTabVisible(static_cast<int>(SettingsDialogTab::InterfaceNetplay), false);
 #endif // !NETPLAY
 
 #ifndef UPDATER
     this->checkForUpdatesCheckBox->setHidden(true);
 #endif // !UPDATER
-
-#ifndef DISCORD_RPC
-    this->discordRpcCheckBox->setHidden(true);
-#endif // !DISCORD_RPC
 }
 
 SettingsDialog::~SettingsDialog(void)
@@ -173,12 +170,12 @@ int SettingsDialog::currentIndex(void)
 void SettingsDialog::restoreDefaults(int stackedWidgetIndex)
 {
     if (stackedWidgetIndex < 0 || 
-        stackedWidgetIndex > (int)SettingsDialogTab::Invalid)
+        stackedWidgetIndex > static_cast<int>(SettingsDialogTab::Invalid))
     {
         return;
     }
 
-    switch ((SettingsDialogTab)stackedWidgetIndex)
+    switch (static_cast<SettingsDialogTab>(stackedWidgetIndex))
     {
     default:
         break;
@@ -230,12 +227,12 @@ void SettingsDialog::restoreDefaults(int stackedWidgetIndex)
 void SettingsDialog::loadSettings(int stackedWidgetIndex)
 {
     if (stackedWidgetIndex < 0 || 
-        stackedWidgetIndex > (int)SettingsDialogTab::Invalid)
+        stackedWidgetIndex > static_cast<int>(SettingsDialogTab::Invalid))
     {
         return;
     }
 
-    switch ((SettingsDialogTab)stackedWidgetIndex)
+    switch (static_cast<SettingsDialogTab>(stackedWidgetIndex))
     {
     default:
         break;
@@ -286,29 +283,20 @@ void SettingsDialog::loadSettings(int stackedWidgetIndex)
 
 void SettingsDialog::loadCoreSettings(void)
 {
-    bool disableExtraMem = false;
-    int counterFactor = 0;
-    int cpuEmulator = 0;
-    int saveFilenameFormat = 0;
-    int siDmaDuration = -1;
-    bool randomizeInterrupt = true;
-    bool usePIFROM = false;
-    QString ntscPifROM;
-    QString palPifRom;
-    bool overrideGameSettings = false;
-
-    disableExtraMem = CoreSettingsGetBoolValue(SettingsID::CoreOverlay_DisableExtraMem);
-    counterFactor = CoreSettingsGetIntValue(SettingsID::CoreOverlay_CountPerOp);
-    cpuEmulator = CoreSettingsGetIntValue(SettingsID::CoreOverlay_CPU_Emulator);
-    saveFilenameFormat = CoreSettingsGetIntValue(SettingsID::CoreOverLay_SaveFileNameFormat);
-    siDmaDuration = CoreSettingsGetIntValue(SettingsID::CoreOverlay_SiDmaDuration);
-    randomizeInterrupt = CoreSettingsGetBoolValue(SettingsID::CoreOverlay_RandomizeInterrupt);
-    usePIFROM = CoreSettingsGetBoolValue(SettingsID::Core_PIF_Use);
-    ntscPifROM = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Core_PIF_NTSC));
-    palPifRom = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Core_PIF_PAL));
-    overrideGameSettings = CoreSettingsGetBoolValue(SettingsID::Core_OverrideGameSpecificSettings);
+    bool disableExtraMem = CoreSettingsGetBoolValue(SettingsID::CoreOverlay_DisableExtraMem);
+    int counterFactor = CoreSettingsGetIntValue(SettingsID::CoreOverlay_CountPerOp);
+    const int cpuEmulator = CoreSettingsGetIntValue(SettingsID::CoreOverlay_CPU_Emulator);
+    const QString videoCaptureBackend = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::CoreOverlay_GbCameraVideoCaptureBackend1));
+    const int saveFilenameFormat = CoreSettingsGetIntValue(SettingsID::CoreOverLay_SaveFileNameFormat);
+    int siDmaDuration = CoreSettingsGetIntValue(SettingsID::CoreOverlay_SiDmaDuration);
+    const bool randomizeInterrupt = CoreSettingsGetBoolValue(SettingsID::CoreOverlay_RandomizeInterrupt);
+    const bool usePIFROM = CoreSettingsGetBoolValue(SettingsID::Core_PIF_Use);
+    const QString ntscPifROM = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Core_PIF_NTSC));
+    const QString palPifRom = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Core_PIF_PAL));
+    const bool overrideGameSettings = CoreSettingsGetBoolValue(SettingsID::Core_OverrideGameSpecificSettings);
 
     this->coreCpuEmulatorComboBox->setCurrentIndex(cpuEmulator);
+    this->coreVideoCaptureBackendComboBox->setCurrentIndex(videoCaptureBackend == "sdl3" ? 1 : 0);
     this->coreSaveFilenameFormatComboBox->setCurrentIndex(saveFilenameFormat);
     this->coreRandomizeTimingCheckBox->setChecked(randomizeInterrupt);
 
@@ -342,13 +330,10 @@ void SettingsDialog::loadGameSettings(void)
 
 void SettingsDialog::loadGameCoreSettings(void)
 {
-    bool overrideEnabled, randomizeInterrupt;
-    int cpuEmulator = 0, overclockingFactor = 0;
-
-    overrideEnabled = CoreSettingsGetBoolValue(SettingsID::Game_OverrideCoreSettings, this->gameSection);
-    cpuEmulator = CoreSettingsGetIntValue(SettingsID::Game_CPU_Emulator, this->gameSection);
-    overclockingFactor = CoreSettingsGetIntValue(SettingsID::Game_CountPerOpDenomPot, this->gameSection);
-    randomizeInterrupt = CoreSettingsGetBoolValue(SettingsID::Game_RandomizeInterrupt, this->gameSection);
+    const bool overrideEnabled = CoreSettingsGetBoolValue(SettingsID::Game_OverrideCoreSettings, this->gameSection);
+    const int cpuEmulator = CoreSettingsGetIntValue(SettingsID::Game_CPU_Emulator, this->gameSection);
+    const int overclockingFactor = CoreSettingsGetIntValue(SettingsID::Game_CountPerOpDenomPot, this->gameSection);
+    const bool randomizeInterrupt = CoreSettingsGetBoolValue(SettingsID::Game_RandomizeInterrupt, this->gameSection);
 
     gameOverrideCoreSettingsGroupBox->setChecked(overrideEnabled);
     gameCoreCpuEmulatorComboBox->setCurrentIndex(cpuEmulator);
@@ -392,7 +377,7 @@ void SettingsDialog::loadGamePluginSettings(void)
 
     for (const auto &p : this->pluginList)
     {
-        index = ((int)p.Type - 1);
+        index = (static_cast<int>(p.Type) - 1);
 
         comboBox = comboBoxArray[index];
         comboBox->addItem(QString::fromStdString(p.Name), QString::fromStdString(p.File));
@@ -430,41 +415,21 @@ void SettingsDialog::loadPluginSettings(void)
 
 void SettingsDialog::loadDirectorySettings(void)
 {
-    // these need to be static, otherwise Qt will segfault
-    static std::string screenshotDir;
-    static std::string saveStateDir;
-    static std::string saveSramDir;
-    static bool overrideUserDirs = false;
-    static std::string userDataDir;
-    static std::string userCacheDir;
-
-    screenshotDir = CoreSettingsGetStringValue(SettingsID::Core_ScreenshotPath);
-    saveStateDir = CoreSettingsGetStringValue(SettingsID::Core_SaveStatePath);
-    saveSramDir = CoreSettingsGetStringValue(SettingsID::Core_SaveSRAMPath);
-
-    overrideUserDirs = CoreSettingsGetBoolValue(SettingsID::Core_OverrideUserDirs);
-    userDataDir = CoreSettingsGetStringValue(SettingsID::Core_UserDataDirOverride);
-    userCacheDir = CoreSettingsGetStringValue(SettingsID::Core_UserCacheDirOverride);
+    const std::string screenshotDir = CoreSettingsGetStringValue(SettingsID::Core_ScreenshotPath);
+    const std::string saveStateDir = CoreSettingsGetStringValue(SettingsID::Core_SaveStatePath);
+    const std::string saveSramDir = CoreSettingsGetStringValue(SettingsID::Core_SaveSRAMPath);
 
     this->screenshotDirLineEdit->setText(QString::fromStdString(screenshotDir));
     this->saveStateDirLineEdit->setText(QString::fromStdString(saveStateDir));
     this->saveSramDirLineEdit->setText(QString::fromStdString(saveSramDir));
-    this->overrideUserDirsGroupBox->setChecked(overrideUserDirs);
-    this->userDataDirLineEdit->setText(QString::fromStdString(userDataDir));
-    this->userCacheDirLineEdit->setText(QString::fromStdString(userCacheDir));
 }
 
 void SettingsDialog::load64DDSettings(void)
 {
-    std::string japaneseIPLRom;
-    std::string americanIPlRom;
-    std::string developmentIPLRom;
-    int saveDiskFormat = 0;
-
-    japaneseIPLRom = CoreSettingsGetStringValue(SettingsID::Core_64DD_JapaneseIPL);
-    americanIPlRom = CoreSettingsGetStringValue(SettingsID::Core_64DD_AmericanIPL);
-    developmentIPLRom = CoreSettingsGetStringValue(SettingsID::Core_64DD_DevelopmentIPL);
-    saveDiskFormat = CoreSettingsGetIntValue(SettingsID::Core_64DD_SaveDiskFormat);
+    const std::string japaneseIPLRom = CoreSettingsGetStringValue(SettingsID::Core_64DD_JapaneseIPL);
+    const std::string americanIPlRom = CoreSettingsGetStringValue(SettingsID::Core_64DD_AmericanIPL);
+    const std::string developmentIPLRom = CoreSettingsGetStringValue(SettingsID::Core_64DD_DevelopmentIPL);
+    const int saveDiskFormat = CoreSettingsGetIntValue(SettingsID::Core_64DD_SaveDiskFormat);
 
     this->japaneseIPLRomLineEdit->setText(QString::fromStdString(japaneseIPLRom));
     this->americanIPLRomLineEdit->setText(QString::fromStdString(americanIPlRom));
@@ -496,15 +461,16 @@ void SettingsDialog::loadInterfaceGeneralSettings(void)
         this->themeComboBox->addItem(fileInfo.fileName());
     }
 
+#ifdef _WIN32
+    this->themeComboBox->insertItem(1,"Windows Vista");
+#endif
+
     // select currently chosen theme in UI
     this->themeComboBox->setCurrentText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_Theme)));
     this->iconThemeComboBox->setCurrentText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_IconTheme)));
 #ifdef UPDATER
     this->checkForUpdatesCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_CheckForUpdates));
 #endif // UPDATER
-#ifdef DISCORD_RPC
-    this->discordRpcCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_DiscordRpc));
-#endif // DISCORD_RPC
 }
 
 void SettingsDialog::loadInterfaceEmulationSettings(void)
@@ -515,6 +481,7 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
     this->hideCursorFullscreenCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_HideCursorInFullscreenEmulation));
     this->automaticFullscreenCheckbox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_AutomaticFullscreen));
     this->confirmDragDropCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_ConfirmDragDrop));
+    this->confirmExitWhileInGameCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_ConfirmExitWhileInGame));
     this->statusBarMessageDurationSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_StatusbarMessageDuration));
     this->openglTypeComboBox->setCurrentIndex(CoreSettingsGetBoolValue(SettingsID::GUI_OpenGLES));
 }
@@ -542,7 +509,8 @@ void SettingsDialog::loadInterfaceOSDSettings(void)
     std::vector<int> textColor = CoreSettingsGetIntListValue(SettingsID::GUI_OnScreenDisplayTextColor);
     if (backgroundColor.size() == 4)
     {
-        this->currentBackgroundColor = QColor(backgroundColor.at(0), backgroundColor.at(1), backgroundColor.at(2), backgroundColor.at(3));
+        this->currentBackgroundColor = QColor(backgroundColor.at(0), backgroundColor.at(1), 
+                                              backgroundColor.at(2), backgroundColor.at(3));
         this->chooseColor(this->changeBackgroundColorButton, &this->currentBackgroundColor, true);
     }
     if (textColor.size() == 4)
@@ -565,33 +533,25 @@ void SettingsDialog::loadInterfaceNetplaySettings(void)
 
     this->netplayNicknameLineEdit->setText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Netplay_Nickname)));
     this->netplayServerUrlLineEdit->setText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Netplay_ServerJsonUrl)));
+    this->netplayDispatcherUrlLineEdit->setText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Netplay_DispatcherUrl)));
 }
 
 void SettingsDialog::loadDefaultCoreSettings(void)
 {
-    bool disableExtraMem = false;
-    int counterFactor = 0;
-    int cpuEmulator = 0;
-    int saveFilenameFormat = 0;
-    int siDmaDuration = -1;
-    bool randomizeInterrupt = true;
-    bool usePIFROM;
-    QString ntscPifROM;
-    QString palPifRom;
-    bool overrideGameSettings;
-
-    disableExtraMem = CoreSettingsGetDefaultBoolValue(SettingsID::CoreOverlay_DisableExtraMem);
-    counterFactor = CoreSettingsGetDefaultIntValue(SettingsID::CoreOverlay_CountPerOp);
-    cpuEmulator = CoreSettingsGetDefaultIntValue(SettingsID::CoreOverlay_CPU_Emulator);
-    siDmaDuration = CoreSettingsGetDefaultIntValue(SettingsID::CoreOverlay_SiDmaDuration);
-    saveFilenameFormat = CoreSettingsGetDefaultIntValue(SettingsID::CoreOverLay_SaveFileNameFormat);
-    randomizeInterrupt = CoreSettingsGetDefaultBoolValue(SettingsID::CoreOverlay_RandomizeInterrupt);
-    usePIFROM = CoreSettingsGetDefaultBoolValue(SettingsID::Core_PIF_Use);
-    ntscPifROM = QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_PIF_NTSC));
-    palPifRom = QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_PIF_PAL));
-    overrideGameSettings = CoreSettingsGetDefaultBoolValue(SettingsID::Core_OverrideGameSpecificSettings);
+    bool disableExtraMem = CoreSettingsGetDefaultBoolValue(SettingsID::CoreOverlay_DisableExtraMem);
+    int counterFactor = CoreSettingsGetDefaultIntValue(SettingsID::CoreOverlay_CountPerOp);
+    const int cpuEmulator = CoreSettingsGetDefaultIntValue(SettingsID::CoreOverlay_CPU_Emulator);
+    const QString videoCaptureBackend = QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::CoreOverlay_GbCameraVideoCaptureBackend1));
+    int siDmaDuration = CoreSettingsGetDefaultIntValue(SettingsID::CoreOverlay_SiDmaDuration);
+    const int saveFilenameFormat = CoreSettingsGetDefaultIntValue(SettingsID::CoreOverLay_SaveFileNameFormat);
+    const bool randomizeInterrupt = CoreSettingsGetDefaultBoolValue(SettingsID::CoreOverlay_RandomizeInterrupt);
+    const bool usePIFROM = CoreSettingsGetDefaultBoolValue(SettingsID::Core_PIF_Use);
+    const QString ntscPifROM = QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_PIF_NTSC));
+    const QString palPifRom = QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_PIF_PAL));
+    const bool overrideGameSettings = CoreSettingsGetDefaultBoolValue(SettingsID::Core_OverrideGameSpecificSettings);
 
     this->coreCpuEmulatorComboBox->setCurrentIndex(cpuEmulator);
+    this->coreVideoCaptureBackendComboBox->setCurrentIndex(videoCaptureBackend == "sdl3" ? 1 : 0);
     this->coreSaveFilenameFormatComboBox->setCurrentIndex(saveFilenameFormat);
     this->coreRandomizeTimingCheckBox->setChecked(randomizeInterrupt);
 
@@ -625,18 +585,10 @@ void SettingsDialog::loadDefaultGameSettings(void)
 
 void SettingsDialog::loadDefaultGameCoreSettings(void)
 {
-    bool overrideEnabled, randomizeInterrupt;
-    int cpuEmulator = 0, overclockingFactor = 0;
-
-    overrideEnabled = CoreSettingsGetDefaultBoolValue(SettingsID::Game_OverrideCoreSettings);
-    cpuEmulator = CoreSettingsGetDefaultIntValue(SettingsID::Game_CPU_Emulator);
-    overclockingFactor = CoreSettingsGetDefaultIntValue(SettingsID::Game_CountPerOpDenomPot);
-    randomizeInterrupt = CoreSettingsGetDefaultBoolValue(SettingsID::Game_RandomizeInterrupt);
-
-    gameOverrideCoreSettingsGroupBox->setChecked(overrideEnabled);
-    gameCoreCpuEmulatorComboBox->setCurrentIndex(cpuEmulator);
-    gameOverclockingFactorSpinBox->setValue(overclockingFactor);
-    gameRandomizeTimingCheckBox->setChecked(randomizeInterrupt);
+    this->gameOverrideCoreSettingsGroupBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Game_OverrideCoreSettings));
+    this->gameCoreCpuEmulatorComboBox->setCurrentIndex(CoreSettingsGetDefaultIntValue(SettingsID::Game_CPU_Emulator));
+    this->gameOverclockingFactorSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::Game_CountPerOpDenomPot));
+    this->gameRandomizeTimingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Game_RandomizeInterrupt));
 }
 
 void SettingsDialog::loadDefaultGamePluginSettings(void)
@@ -661,9 +613,6 @@ void SettingsDialog::loadDefaultDirectorySettings(void)
     this->screenshotDirLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_ScreenshotPath)));
     this->saveStateDirLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_SaveStatePath)));
     this->saveSramDirLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_SaveSRAMPath)));
-    this->overrideUserDirsGroupBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Core_OverrideUserDirs));
-    this->userDataDirLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_UserDataDirOverride)));
-    this->userCacheDirLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_UserCacheDirOverride)));
 }
 
 void SettingsDialog::loadDefault64DDSettings(void)
@@ -686,9 +635,6 @@ void SettingsDialog::loadDefaultInterfaceGeneralSettings(void)
 #ifdef UPDATER
     this->checkForUpdatesCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_CheckForUpdates));
 #endif // UPDATER
-#ifdef DISCORD_RPC
-    this->discordRpcCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_DiscordRpc));
-#endif // DISCORD_RPC
 }
 
 void SettingsDialog::loadDefaultInterfaceEmulationSettings(void)
@@ -699,6 +645,7 @@ void SettingsDialog::loadDefaultInterfaceEmulationSettings(void)
     this->hideCursorFullscreenCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_HideCursorInFullscreenEmulation));
     this->automaticFullscreenCheckbox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_AutomaticFullscreen));
     this->confirmDragDropCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_ConfirmDragDrop));
+    this->confirmExitWhileInGameCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_ConfirmExitWhileInGame));
     this->statusBarMessageDurationSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_StatusbarMessageDuration));
     this->openglTypeComboBox->setCurrentIndex(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OpenGLES));
 }
@@ -722,11 +669,12 @@ void SettingsDialog::loadDefaultInterfaceOSDSettings(void)
     this->osdHorizontalPaddingSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayPaddingX));
     this->osdDurationSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayDuration));
 
-    std::vector<int> backgroundColor = CoreSettingsGetDefaultIntListValue(SettingsID::GUI_OnScreenDisplayBackgroundColor);
-    std::vector<int> textColor = CoreSettingsGetDefaultIntListValue(SettingsID::GUI_OnScreenDisplayTextColor);
+    const std::vector<int> backgroundColor = CoreSettingsGetDefaultIntListValue(SettingsID::GUI_OnScreenDisplayBackgroundColor);
+    const std::vector<int> textColor = CoreSettingsGetDefaultIntListValue(SettingsID::GUI_OnScreenDisplayTextColor);
     if (backgroundColor.size() == 4)
     {
-        this->currentBackgroundColor = QColor(backgroundColor.at(0), backgroundColor.at(1), backgroundColor.at(2), backgroundColor.at(3));
+        this->currentBackgroundColor = QColor(backgroundColor.at(0), backgroundColor.at(1), 
+                                              backgroundColor.at(2), backgroundColor.at(3));
         this->chooseColor(this->changeBackgroundColorButton, &this->currentBackgroundColor, true);
     }
     if (textColor.size() == 4)
@@ -740,6 +688,7 @@ void SettingsDialog::loadDefaultInterfaceNetplaySettings(void)
 {
     this->netplayNicknameLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Netplay_Nickname)));
     this->netplayServerUrlLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Netplay_ServerJsonUrl)));
+    this->netplayDispatcherUrlLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Netplay_DispatcherUrl)));
 }
 
 void SettingsDialog::saveSettings(void)
@@ -770,16 +719,18 @@ void SettingsDialog::saveCoreSettings(void)
 {
     bool disableExtraMem = (this->coreMemorySizeComboBox->currentIndex() == 0);
     int counterFactor = this->coreCounterFactorComboBox->currentIndex() + 1;
-    int cpuEmulator = this->coreCpuEmulatorComboBox->currentIndex();
-    int saveFilenameFormat = this->coreSaveFilenameFormatComboBox->currentIndex();
+    const int cpuEmulator = this->coreCpuEmulatorComboBox->currentIndex();
+    const int videoCaptureBackend = this->coreVideoCaptureBackendComboBox->currentIndex();
+    const int saveFilenameFormat = this->coreSaveFilenameFormatComboBox->currentIndex();
     int siDmaDuration = this->coreSiDmaDurationSpinBox->value();
-    bool randomizeInterrupt = this->coreRandomizeTimingCheckBox->isChecked();
-    bool usePIF = this->usePifRomGroupBox->isChecked();
-    QString ntscPifROM = this->ntscPifRomLineEdit->text();
-    QString palPifROM = this->palPifRomLineEdit->text();
-    bool overrideGameSettings = this->coreOverrideGameSettingsGroup->isChecked();
+    const bool randomizeInterrupt = this->coreRandomizeTimingCheckBox->isChecked();
+    const bool usePIF = this->usePifRomGroupBox->isChecked();
+    const QString ntscPifROM = this->ntscPifRomLineEdit->text();
+    const QString palPifROM = this->palPifRomLineEdit->text();
+    const bool overrideGameSettings = this->coreOverrideGameSettingsGroup->isChecked();
 
     CoreSettingsSetValue(SettingsID::CoreOverlay_CPU_Emulator, cpuEmulator);
+    CoreSettingsSetValue(SettingsID::CoreOverlay_GbCameraVideoCaptureBackend1, std::string((videoCaptureBackend == 1) ? "sdl3" : ""));
     CoreSettingsSetValue(SettingsID::CoreOverLay_SaveFileNameFormat, saveFilenameFormat);
     CoreSettingsSetValue(SettingsID::CoreOverlay_RandomizeInterrupt, randomizeInterrupt);
     CoreSettingsSetValue(SettingsID::Core_PIF_Use, usePIF);
@@ -801,11 +752,11 @@ void SettingsDialog::saveCoreSettings(void)
 
 void SettingsDialog::saveGameSettings(void)
 {
-    bool disableExtraMem = this->gameMemorySizeComboBox->currentIndex() == 0;
-    int saveType = this->gameSaveTypeComboBox->currentIndex();
-    int countPerOp = this->gameCounterFactorComboBox->currentIndex() + 1;
-    bool transferPak = this->gameTransferPakComboBox->currentIndex() != 0;
-    int siDmaDuration = this->gameSiDmaDurationSpinBox->value();
+    const bool disableExtraMem = this->gameMemorySizeComboBox->currentIndex() == 0;
+    const int saveType = this->gameSaveTypeComboBox->currentIndex();
+    const int countPerOp = this->gameCounterFactorComboBox->currentIndex() + 1;
+    const bool transferPak = this->gameTransferPakComboBox->currentIndex() != 0;
+    const int siDmaDuration = this->gameSiDmaDurationSpinBox->value();
 
     if ((this->defaultGameSettings.DisableExtraMem != disableExtraMem) ||
         (this->defaultGameSettings.SaveType != saveType) ||
@@ -836,20 +787,15 @@ void SettingsDialog::saveGameSettings(void)
 
 void SettingsDialog::saveGameCoreSettings(void)
 {
-    bool overrideEnabled, randomizeInterrupt;
-    bool defaultOverrideEnabled, defaultRandomizeInterrupt;
-    int cpuEmulator = 0, defaultCpuEmulator;
-    int overclockingFactor = 0, defaultoverclockingFactor;
+    const bool overrideEnabled = gameOverrideCoreSettingsGroupBox->isChecked();
+    const int cpuEmulator = gameCoreCpuEmulatorComboBox->currentIndex();
+    const int overclockingFactor = gameOverclockingFactorSpinBox->value();
+    const bool randomizeInterrupt = gameRandomizeTimingCheckBox->isChecked();
 
-    overrideEnabled = gameOverrideCoreSettingsGroupBox->isChecked();
-    cpuEmulator = gameCoreCpuEmulatorComboBox->currentIndex();
-    overclockingFactor = gameOverclockingFactorSpinBox->value();
-    randomizeInterrupt = gameRandomizeTimingCheckBox->isChecked();
-
-    defaultOverrideEnabled = CoreSettingsGetDefaultBoolValue(SettingsID::Game_OverrideCoreSettings);
-    defaultRandomizeInterrupt = CoreSettingsGetDefaultBoolValue(SettingsID::Game_RandomizeInterrupt);
-    defaultCpuEmulator = CoreSettingsGetDefaultIntValue(SettingsID::Game_CPU_Emulator);
-    defaultoverclockingFactor = CoreSettingsGetDefaultIntValue(SettingsID::Game_CountPerOpDenomPot);
+    const bool defaultOverrideEnabled = CoreSettingsGetDefaultBoolValue(SettingsID::Game_OverrideCoreSettings);
+    const int defaultCpuEmulator = CoreSettingsGetDefaultIntValue(SettingsID::Game_CPU_Emulator);
+    const int defaultoverclockingFactor = CoreSettingsGetDefaultIntValue(SettingsID::Game_CountPerOpDenomPot);
+    const bool defaultRandomizeInterrupt = CoreSettingsGetDefaultBoolValue(SettingsID::Game_RandomizeInterrupt);
 
     if ((defaultOverrideEnabled != overrideEnabled) ||
         (defaultCpuEmulator != cpuEmulator) ||
@@ -879,7 +825,7 @@ void SettingsDialog::saveGamePluginSettings(void)
         comboBox = comboBoxArray[i];
         id = settingsIdArray[i];
 
-        if (comboBox->currentIndex() != 0 )
+        if (comboBox->currentIndex() != 0)
         {
             CoreSettingsSetValue(id, this->gameSection, comboBox->currentData().toString().toStdString());
         }
@@ -910,10 +856,6 @@ void SettingsDialog::saveDirectorySettings(void)
     CoreSettingsSetValue(SettingsID::Core_ScreenshotPath, this->screenshotDirLineEdit->text().toStdString());
     CoreSettingsSetValue(SettingsID::Core_SaveStatePath, this->saveStateDirLineEdit->text().toStdString());
     CoreSettingsSetValue(SettingsID::Core_SaveSRAMPath, this->saveSramDirLineEdit->text().toStdString());
-
-    CoreSettingsSetValue(SettingsID::Core_OverrideUserDirs, this->overrideUserDirsGroupBox->isChecked());
-    CoreSettingsSetValue(SettingsID::Core_UserDataDirOverride, this->userDataDirLineEdit->text().toStdString());
-    CoreSettingsSetValue(SettingsID::Core_UserCacheDirOverride, this->userCacheDirLineEdit->text().toStdString());
 }
 
 void SettingsDialog::save64DDSettings(void)
@@ -936,9 +878,6 @@ void SettingsDialog::saveInterfaceGeneralSettings(void)
 #ifdef UPDATER
     CoreSettingsSetValue(SettingsID::GUI_CheckForUpdates, this->checkForUpdatesCheckBox->isChecked());
 #endif // UPDATER
-#ifdef DISCORD_RPC
-    CoreSettingsSetValue(SettingsID::GUI_DiscordRpc, this->discordRpcCheckBox->isChecked());
-#endif // DISCORD_RPC
 }
 
 void SettingsDialog::saveInterfaceEmulationSettings(void)
@@ -949,6 +888,7 @@ void SettingsDialog::saveInterfaceEmulationSettings(void)
     CoreSettingsSetValue(SettingsID::GUI_ResumeEmulationOnFocus, this->resumeEmulationOnFocusCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_AutomaticFullscreen, this->automaticFullscreenCheckbox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_ConfirmDragDrop, this->confirmDragDropCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::GUI_ConfirmExitWhileInGame, this->confirmExitWhileInGameCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_StatusbarMessageDuration, this->statusBarMessageDurationSpinBox->value());
     CoreSettingsSetValue(SettingsID::GUI_OpenGLES, this->openglTypeComboBox->currentIndex() == 1);
 }
@@ -987,6 +927,7 @@ void SettingsDialog::saveInterfaceNetplaySettings(void)
 {
     CoreSettingsSetValue(SettingsID::Netplay_Nickname, this->netplayNicknameLineEdit->text().toStdString());
     CoreSettingsSetValue(SettingsID::Netplay_ServerJsonUrl, this->netplayServerUrlLineEdit->text().toStdString());
+    CoreSettingsSetValue(SettingsID::Netplay_DispatcherUrl, this->netplayDispatcherUrlLineEdit->text().toStdString());
 }
 
 void SettingsDialog::commonHotkeySettings(SettingsDialogAction action)
@@ -1183,7 +1124,7 @@ void SettingsDialog::commonPluginSettings(SettingsDialogAction action)
 
     for (const auto &p : this->pluginList)
     {
-        index = ((int)p.Type - 1);
+        index = (static_cast<int>(p.Type) - 1);
         comboBox = comboBoxArray[index];
         pluginFileName = pluginFileNames[index];
         pluginName = QString::fromStdString(p.Name);
@@ -1268,7 +1209,13 @@ void SettingsDialog::hideEmulationInfoText(void)
 
 void SettingsDialog::chooseDirectory(QLineEdit *lineEdit, QString caption)
 {
-    QString dir = QFileDialog::getExistingDirectory(this, caption);
+    QString currentDir = lineEdit->text();
+    if (!QDir(currentDir).exists())
+    {
+        currentDir = "";
+    }
+
+    QString dir = QFileDialog::getExistingDirectory(this, caption, currentDir);
     if (dir.isEmpty())
     {
         return;
@@ -1277,7 +1224,7 @@ void SettingsDialog::chooseDirectory(QLineEdit *lineEdit, QString caption)
     lineEdit->setText(QDir::toNativeSeparators(dir));
 }
 
-void SettingsDialog::chooseFile(QLineEdit *lineEdit, QString caption, QString filter, QString md5)
+void SettingsDialog::chooseFile(QLineEdit *lineEdit, QString caption, QString filter, QStringList md5List)
 {
     QString file = QFileDialog::getOpenFileName(this, caption, "", filter);
     if (file.isEmpty())
@@ -1285,7 +1232,7 @@ void SettingsDialog::chooseFile(QLineEdit *lineEdit, QString caption, QString fi
         return;
     }
 
-    if (!md5.isEmpty())
+    if (!md5List.isEmpty())
     {
         QFile qFile(file);
         if (!qFile.open(QFile::ReadOnly))
@@ -1295,14 +1242,28 @@ void SettingsDialog::chooseFile(QLineEdit *lineEdit, QString caption, QString fi
         }
 
         QCryptographicHash hash(QCryptographicHash::Algorithm::Md5);
-        if (hash.addData(&qFile))
+        if (!hash.addData(&qFile))
         {
-            QString md5Hash = QString(hash.result().toHex());
-            if (md5Hash != md5)
+            QtMessageBox::Error(this, "MD5 hashing failed", "QCryptographicHash::addData() Failed");
+            return;
+        }
+
+        QString md5Hash = QString(hash.result().toHex());
+
+        bool hashFound = false;
+        for (const QString& md5 : md5List)
+        {
+            if (md5Hash == md5)
             {
-                QtMessageBox::Error(this, "MD5 mismatch", "Expected file with MD5: \"" + md5 + "\"");
-                return;
+                hashFound = true;
+                break;
             }
+        }
+
+        if (!hashFound)
+        {
+            QtMessageBox::Error(this, "MD5 mismatch", "Expected file with MD5: \"" + md5List.first() + "\"");
+            return;
         }
     }
 
@@ -1429,16 +1390,6 @@ void SettingsDialog::on_changeSaveSramDirButton_clicked(void)
     this->chooseDirectory(this->saveSramDirLineEdit, tr("Select Save (SRAM) Directory"));
 }
 
-void SettingsDialog::on_changeUserDataDirButton_clicked(void)
-{
-    this->chooseDirectory(this->userDataDirLineEdit, tr("Select User Data Directory"));
-}
-
-void SettingsDialog::on_changeUserCacheDirButton_clicked(void)
-{
-    this->chooseDirectory(this->userCacheDirLineEdit, tr("Select User Cache Directory"));
-}
-
 void SettingsDialog::on_changeJapaneseIPLRomPathButton_clicked(void)
 {
     this->chooseFile(this->japaneseIPLRomLineEdit, tr("Open Japanese Retail 64DD IPL"), "IPL ROMs (*.n64)");
@@ -1452,6 +1403,21 @@ void SettingsDialog::on_changeAmericanIPLRomPathButton_clicked(void)
 void SettingsDialog::on_changeDevelopmentIPLRomPathButton_clicked(void)
 {
     this->chooseFile(this->developmentIPLRomLineEdit, tr("Open Japanese Development 64DD IPL"), "IPL ROMs (*.n64)");
+}
+
+void SettingsDialog::on_clearJapaneseIPLRomPathButton_clicked(void)
+{
+    this->japaneseIPLRomLineEdit->clear();
+}
+
+void SettingsDialog::on_clearAmericanIPLRomPathButton_clicked(void)
+{
+    this->americanIPLRomLineEdit->clear();
+}
+
+void SettingsDialog::on_clearDevelopmentIPLRomPathButton_clicked(void)
+{
+    this->developmentIPLRomLineEdit->clear();
 }
 
 void SettingsDialog::on_changeBackgroundColorButton_clicked(void)
@@ -1612,10 +1578,10 @@ void SettingsDialog::on_coreCpuEmulatorComboBox_currentIndexChanged(int index)
 
 void SettingsDialog::on_changeNTSCPifRomButton_clicked(void)
 {
-    this->chooseFile(this->ntscPifRomLineEdit, tr("Open NTSC PIF ROM"), "PIF ROMs (*.rom)", "5c124e7948ada85da603a522782940d0");
+    this->chooseFile(this->ntscPifRomLineEdit, tr("Open NTSC PIF ROM"), "PIF ROMs (*.rom)", { "5C124E7948ADA85DA603A522782940D0", "4921D5F2165DEE6E2496F4388C4C81DA" });
 }
 
 void SettingsDialog::on_changePALPifRomButton_clicked(void)
 {
-    this->chooseFile(this->palPifRomLineEdit, tr("Open PAL PIF ROM"), "PIF ROMs (*.rom)", "d4232dc935cad0650ac2664d52281f3a");
+    this->chooseFile(this->palPifRomLineEdit, tr("Open PAL PIF ROM"), "PIF ROMs (*.rom)", { "D4232DC935CAD0650AC2664D52281F3A", "2B6EEC586FAA43F3462333B844834554" });
 }

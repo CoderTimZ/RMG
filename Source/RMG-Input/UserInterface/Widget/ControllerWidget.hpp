@@ -16,13 +16,14 @@
 #include "UserInterface/OptionsDialog.hpp"
 #include "UserInterface/HotkeysDialog.hpp"
 #include "UserInterface/EventFilter.hpp"
+#include "Utilities/InputProfileDB.hpp"
 
 using namespace UserInterface::Widget;
 
 #include "ui_ControllerWidget.h"
 #include "common.hpp"
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include <RMG-Core/RomSettings.hpp>
 #include <RMG-Core/RomHeader.hpp>
@@ -43,13 +44,14 @@ private:
 
     OptionsDialogSettings optionsDialogSettings;
 
-    QList<QString> inputDeviceNameList;
     MappingButton* currentButton = nullptr;
     bool addMappingToButton      = false;
 
     QList<QString> profiles;
     QList<QString> removedProfiles;
     QList<QString> addedProfiles;
+
+    bool autoConfigureButtonEnabled = false;
 
     struct buttonWidgetMapping
     {
@@ -72,6 +74,12 @@ private:
         SettingsID extraDataSettingsId;
     };
 
+    struct inputDeviceData
+    {
+        InputDevice device;
+        InputProfileDBEntry inputProfile;
+    };
+
     QList<buttonWidgetMapping> buttonWidgetMappings;
     QList<axisWidgetMapping> joystickWidgetMappings;
     QList<buttonSettingMapping> buttonSettingMappings;
@@ -84,6 +92,8 @@ private:
 
     bool isCurrentDeviceKeyboard();
     bool isCurrentDeviceNotFound();
+
+    bool disabledAllChildren = false;
 
     void disableAllChildren();
     void enableAllChildren();
@@ -101,13 +111,15 @@ private:
 
     bool hasAnySettingChanged(QString section);
 
+    void addProfile(const QString& profile, const QString& section);
+
     void showErrorMessage(QString text, QString details = "");
 
-    SDL_JoystickID currentJoystickId     = -1;
-    bool isCurrentJoystickGameController = false;
+    SDL_JoystickID currentJoystickId = -1;
+    bool isCurrentJoystickGamepad = false;
 
-    SDL_Joystick* currentJoystick         = nullptr;
-    SDL_GameController* currentController = nullptr;
+    SDL_Joystick* currentJoystick = nullptr;
+    SDL_Gamepad* currentGamepad = nullptr;
 
     int previousProfileComboBoxIndex = -1;
 
@@ -115,24 +127,27 @@ private:
     CoreRomHeader gameRomHeader;
     CoreRomSettings gameRomSettings;
 
+    bool allowKeyboardForAutomatic = false;
+
     HotkeysDialog* currentHotkeysDialog = nullptr;
 
 public:
     ControllerWidget(QWidget* parent, EventFilter* eventFilter);
     ~ControllerWidget();
 
-    void AddInputDevice(SDLDevice device);
-    void RemoveInputDevice(SDLDevice device);
+    void AddInputDevice(const InputDevice& device, const InputProfileDBEntry& inputProfile);
+    void RemoveInputDevice(const InputDevice& device);
     void CheckInputDeviceSettings();
     void CheckInputDeviceSettings(QString section);
 
     void DrawControllerImage();
     void ClearControllerImage();
 
-    void GetCurrentInputDevice(SDLDevice& device, bool ignoreDeviceNotFound = false);
+    void GetCurrentInputDevice(InputDevice& device, bool ignoreDeviceNotFound = false);
     bool IsPluggedIn();
 
     void SetOnlyLoadGameProfile(bool value, CoreRomHeader romHeader, CoreRomSettings romSettings);
+    void SetAllowKeyboardForAutomatic(bool value);
 
     void SetSettingsSection(QString profile, QString section);
     void SetInitialized(bool value);
@@ -148,9 +163,8 @@ public:
 
     void RevertSettings();
 
-    void SetCurrentJoystickID(SDL_JoystickID joystickId);
-    void SetIsCurrentJoystickGameController(bool isGameController);
-    void SetCurrentJoystick(SDL_Joystick* joystick, SDL_GameController* controller);
+    void SetCurrentInputDevice(SDL_JoystickID joystickId, SDL_Joystick* joystick, 
+                               SDL_Gamepad* gamepad, const InputProfileDBEntry& inputProfile);
 
     void AddUserProfile(QString name, QString section);
     void RemoveUserProfile(QString name, QString section);
@@ -167,6 +181,7 @@ private slots:
     void on_addProfileButton_clicked();
     void on_removeProfileButton_clicked();
 
+    void on_autoConfigureButton_clicked();
     void on_resetButton_clicked();
     void on_optionsButton_clicked();
     void on_hotkeysButton_clicked();
@@ -184,7 +199,7 @@ public slots:
     void on_MainDialog_SdlEventPollFinished();
 
 signals:
-    void CurrentInputDeviceChanged(ControllerWidget* widget, SDLDevice device);
+    void CurrentInputDeviceChanged(ControllerWidget* widget, InputDevice device);
     void RefreshInputDevicesButtonClicked();
 
     void UserProfileAdded(QString name, QString section);

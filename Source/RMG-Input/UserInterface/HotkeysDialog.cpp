@@ -8,20 +8,23 @@
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "HotkeysDialog.hpp"
+
+#include "UserInterface/UICommon.hpp"
 #include "common.hpp"
 
 using namespace UserInterface;
 
 HotkeysDialog::HotkeysDialog(QWidget* parent, QList<HotkeySettingMapping> hotkeySettingMappings, 
-    bool isGameController, SDL_JoystickID joystickId, 
+    SDL_JoystickID joystickId, SDL_Gamepad* gamepad,
     bool filterEvents, bool removeDuplicates) : QDialog(parent, Qt::WindowSystemMenuHint | Qt::WindowTitleHint)
 {
     this->setupUi(this);
 
-    this->currentJoystickId               = joystickId;
-    this->isCurrentJoystickGameController = isGameController;
-    this->filterEventsForButtons          = filterEvents;
-    this->removeDuplicates                = removeDuplicates;
+    this->currentJoystickId        = joystickId;
+    this->currentGamepad           = gamepad;
+    this->isCurrentJoystickGamepad = (gamepad != nullptr);
+    this->filterEventsForButtons   = filterEvents;
+    this->removeDuplicates         = removeDuplicates;
 
     this->hotkeySettingMappings.append(
     {
@@ -87,7 +90,7 @@ HotkeysDialog::HotkeysDialog(QWidget* parent, QList<HotkeySettingMapping> hotkey
         for (size_t y = 0; y < givenMapping.inputTypes.size(); y++)
         {
             buttonMapping.button->AddInputData(
-                (InputType)givenMapping.inputTypes.at(y),
+                static_cast<InputType>(givenMapping.inputTypes.at(y)),
                 givenMapping.inputData.at(y),
                 givenMapping.extraInputData.at(y),
                 QString::fromStdString(givenMapping.inputText.at(y))
@@ -105,30 +108,30 @@ void HotkeysDialog::on_MainDialog_SdlEvent(SDL_Event* event)
         default:
             break;
 
-        case SDL_CONTROLLERBUTTONDOWN:
-        case SDL_JOYBUTTONDOWN:
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
         {
             SDL_JoystickID joystickId = -1;
             InputType inputType = InputType::Invalid;
             int sdlButton = 0;
             QString sdlButtonName;
 
-            if (event->type == SDL_CONTROLLERBUTTONDOWN)
+            if (event->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN)
             { // gamepad button
-                if (!this->isCurrentJoystickGameController &&
+                if (!this->isCurrentJoystickGamepad &&
                     this->filterEventsForButtons)
                 {
                     return;
                 }
 
-                joystickId = event->cbutton.which;
+                joystickId = event->gbutton.which;
                 inputType = InputType::GamepadButton;
-                sdlButton = event->cbutton.button;
-                sdlButtonName = SDL_GameControllerGetStringForButton((SDL_GameControllerButton)sdlButton);
+                sdlButton = event->gbutton.button;
+                sdlButtonName = UICommon::GetGamepadButtonText(this->currentGamepad, static_cast<SDL_GamepadButton>(sdlButton));
             }
             else
             { // joystick button
-                if (this->isCurrentJoystickGameController &&
+                if (this->isCurrentJoystickGamepad &&
                     this->filterEventsForButtons)
                 {
                     return;
@@ -157,24 +160,24 @@ void HotkeysDialog::on_MainDialog_SdlEvent(SDL_Event* event)
             }
         } break;
 
-        case SDL_CONTROLLERBUTTONUP:
-        case SDL_JOYBUTTONUP:
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:
+        case SDL_EVENT_JOYSTICK_BUTTON_UP:
         {
             SDL_JoystickID joystickId = -1;
 
-            if (event->type == SDL_CONTROLLERBUTTONUP)
+            if (event->type == SDL_EVENT_GAMEPAD_BUTTON_UP)
             { // gamepad button
-                if (!this->isCurrentJoystickGameController &&
+                if (!this->isCurrentJoystickGamepad &&
                     this->filterEventsForButtons)
                 {
                     return;
                 }
 
-                joystickId = event->cbutton.which;
+                joystickId = event->gbutton.which;
             }
             else
             { // joystick button
-                if (this->isCurrentJoystickGameController &&
+                if (this->isCurrentJoystickGamepad &&
                     this->filterEventsForButtons)
                 {
                     return;
@@ -198,8 +201,8 @@ void HotkeysDialog::on_MainDialog_SdlEvent(SDL_Event* event)
             }
         } break;
 
-        case SDL_CONTROLLERAXISMOTION:
-        case SDL_JOYAXISMOTION:
+        case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+        case SDL_EVENT_JOYSTICK_AXIS_MOTION:
         { // gamepad & joystick axis
             SDL_JoystickID joystickId = -1;
             InputType inputType = InputType::Invalid;
@@ -207,24 +210,24 @@ void HotkeysDialog::on_MainDialog_SdlEvent(SDL_Event* event)
             int sdlAxisValue = 0;
             QString sdlAxisName;
 
-            if (event->type == SDL_CONTROLLERAXISMOTION)
+            if (event->type == SDL_EVENT_GAMEPAD_AXIS_MOTION)
             { // gamepad axis
-                if (!this->isCurrentJoystickGameController &&
+                if (!this->isCurrentJoystickGamepad &&
                     this->filterEventsForButtons)
                 {
                     return;
                 }
 
-                joystickId = event->caxis.which;
+                joystickId = event->gaxis.which;
                 inputType = InputType::GamepadAxis;
-                sdlAxis = event->caxis.axis;
-                sdlAxisValue = event->caxis.value;
-                sdlAxisName = SDL_GameControllerGetStringForAxis((SDL_GameControllerAxis)sdlAxis);
+                sdlAxis = event->gaxis.axis;
+                sdlAxisValue = event->gaxis.value;
+                sdlAxisName = SDL_GetGamepadStringForAxis(static_cast<SDL_GamepadAxis>(sdlAxis));
                 sdlAxisName += sdlAxisValue > 0 ? "+" : "-";
             }
             else
             { // joystick axis
-                if (this->isCurrentJoystickGameController &&
+                if (this->isCurrentJoystickGamepad &&
                     this->filterEventsForButtons)
                 {
                     return;

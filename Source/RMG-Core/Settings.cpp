@@ -68,6 +68,7 @@ static std::vector<std::string> l_keyList;
 #define SETTING_SECTION_M64P        "Core"
 #define SETTING_SECTION_AUDIO       SETTING_SECTION_GUI  " - Audio Plugin"
 #define SETTING_SECTION_INPUT       SETTING_SECTION_GUI  " - Input Plugin"
+#define SETTING_SECTION_GCA         SETTING_SECTION_GUI  " - GameCube Adapter Input Plugin"
 #define SETTING_SECTION_RSP         "Rsp-HLE"
 
 // retrieves l_Setting from settingId
@@ -156,8 +157,8 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::GUI_LastUpdateCheck:
         setting = {SETTING_SECTION_GUI, "LastUpdateCheck", std::string("")};
         break;
-    case SettingsID::GUI_DiscordRpc:
-        setting = {SETTING_SECTION_GUI, "DiscordRpc", true};
+    case SettingsID::GUI_ConfirmExitWhileInGame:
+        setting = {SETTING_SECTION_GUI, "ConfirmExitWhileInGame", true};
         break;
     case SettingsID::GUI_Version:
         setting = {SETTING_SECTION_GUI, "Version", CoreGetVersion()};
@@ -167,7 +168,10 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_NETPLAY, "Nickname", std::string("NetplayUser")};
         break;
     case SettingsID::Netplay_ServerJsonUrl:
-        setting = {SETTING_SECTION_NETPLAY, "ServerJsonUrl", std::string("https://m64p.s3.amazonaws.com/servers.json")};
+        setting = {SETTING_SECTION_NETPLAY, "ServerJsonUrl", std::string("")};
+        break;
+    case SettingsID::Netplay_DispatcherUrl:
+        setting = {SETTING_SECTION_NETPLAY, "DispatcherUrl", std::string("https://dispatch.gopher64.com")};
         break;
     case SettingsID::Netplay_SelectedServer:
         setting = {SETTING_SECTION_NETPLAY, "SelectedServer", std::string("")};
@@ -213,16 +217,6 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_CORE, "EXECUTION_Plugin", std::string("(None)")};
         break;
 
-    case SettingsID::Core_OverrideUserDirs:
-        setting = {SETTING_SECTION_CORE, "OverrideUserDirectories", true};
-        break;
-    case SettingsID::Core_UserDataDirOverride:
-        setting = {SETTING_SECTION_CORE, "UserDataDirectory", CoreGetDefaultUserDataDirectory().string()};
-        break;
-    case SettingsID::Core_UserCacheDirOverride:
-        setting = {SETTING_SECTION_CORE, "UserCacheDirectory", CoreGetDefaultUserCacheDirectory().string()};
-        break;
-
     case SettingsID::Core_OverrideGameSpecificSettings:
         setting = {SETTING_SECTION_CORE, "OverrideGameSpecificSettings", false};
         break;
@@ -251,6 +245,9 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::Core_SaveFileNameFormat:
         setting = {SETTING_SECTION_M64P, "SaveFilenameFormat", 1};
         break;
+    case SettingsID::Core_GbCameraVideoCaptureBackend1:
+        setting = {SETTING_SECTION_M64P, "GbCameraVideoCaptureBackend1", std::string("sdl3")};
+        break;
 
     case SettingsID::CoreOverlay_RandomizeInterrupt:
         setting = {SETTING_SECTION_OVERLAY, "RandomizeInterrupt", true};
@@ -275,6 +272,9 @@ static l_Setting get_setting(SettingsID settingId)
         break;
     case SettingsID::CoreOverLay_SaveFileNameFormat:
         setting = {SETTING_SECTION_OVERLAY, "SaveFilenameFormat", 1};
+        break;
+    case SettingsID::CoreOverlay_GbCameraVideoCaptureBackend1:
+        setting = {SETTING_SECTION_OVERLAY, "GbCameraVideoCaptureBackend1", std::string("sdl3")};
         break;
 
     case SettingsID::Core_ScreenshotPath:
@@ -1359,6 +1359,22 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::Input_Hotkey_Fullscreen_ExtraData:
         setting = {"", "Hotkey_Fullscreen_ExtraData" };
         break;
+
+    case SettingsID::GCAInput_Deadzone:
+        setting = {SETTING_SECTION_GCA, "Deadzone", 9};
+        break;
+    case SettingsID::GCAInput_Sensitivity:
+        setting = {SETTING_SECTION_GCA, "Sensitivity", 100};
+        break;
+    case SettingsID::GCAInput_CButtonTreshold:
+        setting = {SETTING_SECTION_GCA, "CButtonTreshold", 40};
+        break;
+    case SettingsID::GCAInput_TriggerTreshold:
+        setting = {SETTING_SECTION_GCA, "TriggerTreshold", 50};
+        break;
+    case SettingsID::GCAInput_SwapZL:
+        setting = {SETTING_SECTION_GCA, "GCAInput_SwapZL", true};
+        break;
     }
 
     return setting;
@@ -1684,6 +1700,10 @@ CORE_EXPORT bool CoreSettingsUpgrade(void)
     std::string settingsString;
 
     settingsVersion = CoreSettingsGetStringValue(SettingsID::GUI_Version);
+    if (settingsVersion.size() > 6)
+    { // strip git prefix
+        settingsVersion = settingsVersion.substr(0, 6);
+    }
 
     // we don't need to do anything
     // when the core version and the settings version match
@@ -1694,7 +1714,6 @@ CORE_EXPORT bool CoreSettingsUpgrade(void)
 
     if (settingsVersion.empty())
     { // settings version was introduced in >v0.1.5
-
 #ifndef PORTABLE_INSTALL // only applies to non-portable installs (i.e flatpak)
         // sadly v0.1.5 introduced an issue,
         // in v0.1.4 the screenshot directory was set to 'Screenshots',
@@ -1722,6 +1741,31 @@ CORE_EXPORT bool CoreSettingsUpgrade(void)
         if (CoreSettingsGetBoolValue(SettingsID::Audio_Synchronize))
         {
             CoreSettingsSetValue(SettingsID::Audio_Synchronize, false);
+        }
+    }
+
+    if (settingsVersion == "v0.6.8" || 
+        settingsVersion == "v0.6.9" ||
+        settingsVersion == "v0.7.0" ||
+        settingsVersion == "v0.7.0" ||
+        settingsVersion == "v0.7.1" ||
+        settingsVersion == "v0.7.2" ||
+        settingsVersion == "v0.7.3" ||
+        settingsVersion == "v0.7.4" ||
+        settingsVersion == "v0.7.5" ||
+        settingsVersion == "v0.7.6" ||
+        settingsVersion == "v0.7.7" ||
+        settingsVersion == "v0.7.8" ||
+        settingsVersion == "v0.7.9")
+    {
+        // in v0.8.0 RMG switched to the dispatcher server for netplay,
+        // to keep support for the json file, we only empty that setting
+        // when it is the default value because the default json url
+        // no longer exists
+        settingsString = CoreSettingsGetStringValue(SettingsID::Netplay_ServerJsonUrl);
+        if (settingsString == "https://m64p.s3.amazonaws.com/servers.json")
+        {
+            CoreSettingsSetValue(SettingsID::Netplay_ServerJsonUrl, std::string(""));
         }
     }
 

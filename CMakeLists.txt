@@ -6,15 +6,12 @@ cmake_minimum_required(VERSION 3.15)
 option(PORTABLE_INSTALL "Portable Installation" ON)
 option(UPDATER          "Enables updater" ${WIN32})
 option(APPIMAGE_UPDATER "Enables AppImage updater" OFF)
-option(DISCORD_RPC      "Enables Discord Rich Presence" ON)
-option(DRAG_DROP        "Enables drag and drop" ON)
+option(KCA_DRAG_DROP    "Enables drag and drop using KCoreAddons" OFF) # https://bugreports.qt.io/browse/QTBUG-91357
 option(NETPLAY          "Enables netplay" ON)
 option(VRU              "Enables VRU support in RMG-Input" ON)
 option(USE_CCACHE       "Enables usage of ccache when ccache has been found" ON)
 option(USE_LTO          "Enables building with LTO/IPO when compiler supports it" ON)
 option(NO_ASM           "Disables the usage of assembly in the mupen64plus-core" OFF)
-option(NO_RUST          "Disables the building of rust subprojects" OFF)
-option(USE_LIBFMT       "Enables usage of libfmt instead of detecting whether std::format is supported" OFF)
 option(USE_ANGRYLION    "Enables building angrylion-rdp-plus which uses a non-GPL compliant license" OFF)
 
 project(RMG)
@@ -57,27 +54,6 @@ if (USE_LTO)
         endif(ENABLE_IPO)
     endif()
 endif(USE_LTO)
-
-if (NOT USE_LIBFMT)
-    set(CMAKE_CXX_STANDARD 20)
-    set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-    include(CheckCXXSourceCompiles)
-
-    check_cxx_source_compiles("
-        #include <format>
-        int main(void)
-        {
-            std::string str = std::format(\"number: {}\", 10);
-            return 0;
-        }" HAVE_STDFORMAT)
-
-    # fallback to libfmt if std::format
-    # isn't supported in the compiler
-    if (NOT HAVE_STDFORMAT)
-        set(USE_LIBFMT ON)
-    endif(NOT HAVE_STDFORMAT)
-endif(NOT USE_LIBFMT)
 
 if (NOT PORTABLE_INSTALL AND WIN32)
     message(WARNING "Not-Portable build not supported on windows, re-enabling PORTABLE_INSTALL!")
@@ -138,6 +114,7 @@ add_subdirectory(Source/RMG-Core)
 add_subdirectory(Source/RMG)
 add_subdirectory(Source/RMG-Audio)
 add_subdirectory(Source/RMG-Input)
+add_subdirectory(Source/RMG-Input-GCA)
 install(TARGETS RMG-Core
     DESTINATION ${SYSTEM_LIB_INSTALL_PATH}
 )
@@ -147,7 +124,7 @@ install(TARGETS RMG
 install(TARGETS RMG-Audio
     DESTINATION ${PLUGIN_INSTALL_PATH}/Audio
 )
-install(TARGETS RMG-Input
+install(TARGETS RMG-Input RMG-Input-GCA
     DESTINATION ${PLUGIN_INSTALL_PATH}/Input
 )
 
@@ -179,7 +156,7 @@ if (VRU)
         DESTINATION ${DATA_INSTALL_PATH}
     )
 endif(VRU)
-install(FILES ${SDL_GAMECONTROLLERDB}
+install(FILES ${SDL_GAMECONTROLLERDB} ${CMAKE_SOURCE_DIR}/Data/InputProfileDB.json
     DESTINATION ${DATA_INSTALL_PATH}
 )
 file(GLOB GENERATED_CHEAT_FILES ${CMAKE_SOURCE_DIR}/Data/Cheats/Generated/*.cht)
@@ -200,10 +177,6 @@ install(FILES ${MUPEN64PLUS_PLUGIN_RSP_PARALLEL}
     PERMISSIONS ${LIB_PERMISSIONS}
 )
 install(FILES ${MUPEN64PLUS_PLUGIN_INPUT_RAPHNET}
-    DESTINATION ${PLUGIN_INSTALL_PATH}/Input
-    PERMISSIONS ${LIB_PERMISSIONS}
-)
-install(FILES ${MUPEN64PLUS_PLUGIN_INPUT_GCA}
     DESTINATION ${PLUGIN_INSTALL_PATH}/Input
     PERMISSIONS ${LIB_PERMISSIONS}
 )

@@ -14,9 +14,20 @@
 #include <QJsonObject>
 #include <QComboBox>
 #include <QString>
+#ifdef NETPLAY
+#include <QNetworkRequest>
+#include <QUrl>
+#endif // NETPLAY
+
 
 namespace NetplayCommon
 {
+    struct NetplayServerData
+    {
+        bool Dispatcher;
+        QString Data;
+    };
+
     #define NETPLAYCOMMON_SESSION_REGEX "[a-zA-Z0-9 ]+"
     #define NETPLAYCOMMON_NICKNAME_REGEX "[a-zA-Z0-9]+"
     #define NETPLAYCOMMON_PASSWORD_REGEX "[a-zA-Z0-9,.\\/<>?;:[\\]{}\\-=_+`~!@#$%^&*()]+"
@@ -28,10 +39,21 @@ namespace NetplayCommon
     QList<QString> GetPluginNames(QString md5QString);
 
     // Adds servers from json to combobox
-    void AddServers(QComboBox* comboBox, QJsonDocument document);
+    void AddServers(QComboBox* comboBox, const QJsonDocument& document, bool dispatcher = false);
 
     // Restores previously selected server
     void RestoreSelectedServer(QComboBox* comboBox);
+
+    // Returns whether server from comboBox is dispatcher
+    bool IsServerDispatcher(QComboBox* comboBox, int index = -1);
+
+    // Returns server data from comboBox
+    QString GetServerData(QComboBox* comboBox, int index = -1);
+
+#ifdef NETPLAY
+    // Returns network request from url with emulator id
+    QNetworkRequest GetNetworkRequest(QUrl url);
+#endif // NETPLAY
 }
 
 #endif // NETPLAYCOMMON_HPP

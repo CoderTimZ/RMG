@@ -1,5 +1,5 @@
 Name:    RMG       
-Version: 0.7.9
+Version: 0.8.8
 Release: %autorelease
 Summary: Rosalie's Mupen GUI 
 
@@ -11,11 +11,11 @@ BuildRequires: gcc
 BuildRequires: g++
 BuildRequires: nasm
 BuildRequires: cmake
+BuildRequires: libusb1-devel
 BuildRequires: hidapi-devel
 BuildRequires: libsamplerate-devel
 BuildRequires: minizip-compat-devel
-BuildRequires: SDL2-devel
-BuildRequires: SDL2_net-devel
+BuildRequires: SDL3-devel
 BuildRequires: freetype-devel
 BuildRequires: mesa-libGL-devel
 BuildRequires: mesa-libGLU-devel
@@ -26,16 +26,18 @@ BuildRequires: qt6-qtbase-devel
 BuildRequires: qt6-qtsvg-devel
 BuildRequires: qt6-qtwebsockets-devel
 BuildRequires: libxkbcommon-devel
+BuildRequires: libatomic
 
+Requires: libusb1
 Requires: hidapi
-Requires: SDL2
-Requires: SDL2_net
+Requires: SDL3
 Requires: zlib-ng
 Requires: libsamplerate
 Requires: speexdsp
 Requires: qt6-qtbase
 Requires: qt6-qtsvg
 Requires: qt6-qtwebsockets
+Requires: libatomic
 
 %description
 Rosalie's Mupen GUI is a free and open-source mupen64plus front-end written in C++
@@ -44,7 +46,7 @@ Rosalie's Mupen GUI is a free and open-source mupen64plus front-end written in C
 %autosetup
 
 %build
-%cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPORTABLE_INSTALL=OFF -DDISCORD_RPC=OFF
+%cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPORTABLE_INSTALL=OFF
 %cmake_build
 
 %install

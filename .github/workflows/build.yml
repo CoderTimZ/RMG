@@ -4,27 +4,64 @@ on: [push, pull_request]
 
 jobs:
   build-linux:
-    runs-on: ubuntu-24.04
     strategy:
       matrix:
-        features: [ ON, OFF ]
+        include:
+          - { os: ubuntu-24.04, features: ON, architecture: x86_64 }
+          - { os: ubuntu-24.04, features: OFF, architecture: x86_64 }
+          - { os: ubuntu-24.04-arm, features: ON, architecture: aarch64 }
+          - { os: ubuntu-24.04-arm, features: OFF, architecture: aarch64 }
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: linux-features-${{ matrix.features }}
+          key: linux-${{ matrix.architecture }}-features-${{ matrix.features }}
       - name: Install Packages
         run: |
+          # remove and disable snap, this fixes long update times
+          # taken from https://github.com/ading2210/gh-actions-remove-snap/blob/main/workflow.sh
+          sudo systemctl disable --now snapd
+          sudo apt-get purge -y snapd
+          echo "Package: snapd"    | sudo tee /etc/apt/preferences.d/disable-snap.pref
+          echo "Pin: release a=*"  | sudo tee -a /etc/apt/preferences.d/disable-snap.pref
+          echo "Pin-Priority: -10" | sudo tee -a /etc/apt/preferences.d/disable-snap.pref
+          sudo apt-mark hold firefox
+
           sudo apt-get -y update
           sudo apt-get -y upgrade
-          sudo apt-get -y install cmake libhidapi-dev libsamplerate0-dev libspeex-dev libminizip-dev libsdl2-dev libsdl2-net-dev libfreetype6-dev \
+          sudo apt-get -y install cmake libusb-1.0-0-dev libhidapi-dev libsamplerate0-dev libspeex-dev libminizip-dev libfreetype6-dev \
             libgl1-mesa-dev libglu1-mesa-dev pkg-config zlib1g-dev binutils-dev libspeexdsp-dev qt6-base-dev libqt6svg6-dev libqt6websockets6-dev libvulkan-dev \
             build-essential nasm git zip appstream xvfb qt6ct mesa-vulkan-drivers
+
+          # sdl3 dependencies
+          sudo apt-get -y install build-essential git make \
+            pkg-config cmake ninja-build gnome-desktop-testing libasound2-dev libpulse-dev \
+            libaudio-dev libjack-dev libsndio-dev libx11-dev libxext-dev \
+            libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
+            libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev
       - name: Prepare Environment
         run: |
           echo "GIT_REVISION=$(git describe --tags --always)" >> $GITHUB_ENV
+      - name: Build SDL3
+        run: |
+          export sdl_dir="$(pwd)/../SDL3"
+
+          git clone https://github.com/libsdl-org/SDL.git "$sdl_dir" -b release-3.2.24 --depth=1
+
+          mkdir -p "$sdl_dir/build"
+          cmake -S "$sdl_dir" -B "$sdl_dir/build" \
+                -DCMAKE_BUILD_TYPE="Release" \
+                -DCMAKE_INSTALL_LIBDIR="lib/${{ matrix.architecture }}-linux-gnu" \
+                -DCMAKE_INSTALL_FULL_LIBDIR="/usr/lib/${{ matrix.architecture }}-linux-gnu" \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+          cmake --build "$sdl_dir/build" --parallel "$(nproc)"
+          sudo cmake --install "$sdl_dir/build" --prefix /usr/
       - name: Build RMG (AppImage)
         run: |
           export src_dir="$(pwd)"
@@ -33,7 +70,6 @@ jobs:
     
           mkdir $build_dir Bin/ -p
           cmake -S "$src_dir" -B "$build_dir" -DCMAKE_BUILD_TYPE="Release" \
-                -DDISCORD_RPC=${{ matrix.features }} \
                 -DDRAG_DROP=${{ matrix.features }} \
                 -DNETPLAY=${{ matrix.features }} \
                 -DVRU=${{ matrix.features }} \
@@ -49,19 +85,19 @@ jobs:
           cmake --install "$build_dir" --strip --prefix="$bin_dir/usr"
         shell: bash
       - name: Create AppImage
-        if: ${{ matrix.features == 'ON' }}
+        if: ${{ matrix.features == 'ON' && matrix.architecture == 'x86_64' }}
         run: |
           ./Package/AppImage/Create.sh
         shell: bash
       - name: Upload RMG (AppImage)
-        if: ${{ matrix.features == 'ON' }}
+        if: ${{ matrix.features == 'ON' && matrix.architecture == 'x86_64' }}
         uses: actions/upload-artifact@v4
         with:
           name: RMG-Portable-Linux64-${{ env.GIT_REVISION }}
           path: Bin/*.AppImage
 
   build-windows:
-    runs-on: windows-2019
+    runs-on: windows-2025
     strategy:
       matrix:
         features: [ ON, OFF ]
@@ -81,12 +117,11 @@ jobs:
             make
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-hidapi
             mingw-w64-ucrt-x86_64-freetype
             mingw-w64-ucrt-x86_64-libpng
-            mingw-w64-ucrt-x86_64-SDL2
-            mingw-w64-ucrt-x86_64-SDL2_net
+            mingw-w64-ucrt-x86_64-sdl3
             mingw-w64-ucrt-x86_64-qt6
+            mingw-w64-ucrt-x86_64-libusb
             mingw-w64-ucrt-x86_64-hidapi
             mingw-w64-ucrt-x86_64-speexdsp
             mingw-w64-ucrt-x86_64-libsamplerate
@@ -105,7 +140,6 @@ jobs:
           export build_dir="$(pwd)/Build/Release"
 
           cmake -S "$src_dir" -B "$build_dir" -DCMAKE_BUILD_TYPE="Release" \
-                -DDISCORD_RPC=${{ matrix.features }} \
                 -DDRAG_DROP=${{ matrix.features }} \
                 -DNETPLAY=${{ matrix.features }} \
                 -DVRU=${{ matrix.features }} \

@@ -24,21 +24,17 @@ if (APPIMAGE_UPDATER)
     add_definitions(-DAPPIMAGE_UPDATER)
 endif(APPIMAGE_UPDATER)
 
-if (DISCORD_RPC)
-    add_definitions(-DDISCORD_RPC)
-endif(DISCORD_RPC)
-
-if (DRAG_DROP)
-    add_definitions(-DDRAG_DROP)
-endif(DRAG_DROP)
+if (KCA_DRAG_DROP)
+    find_package(KF6CoreAddons REQUIRED)
+    add_definitions(-DKCA_DRAG_DROP)
+endif(KCA_DRAG_DROP)
 
 if (NETPLAY)
     find_package(Qt6 COMPONENTS WebSockets REQUIRED)
     add_definitions(-DNETPLAY)
 endif(NETPLAY)
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SDL2 REQUIRED sdl2)
+find_package(SDL3 REQUIRED)
 
 set(RMG_SOURCES
     UserInterface/MainWindow.cpp
@@ -75,7 +71,7 @@ set(RMG_SOURCES
     UserInterface/UIResources.qrc
     Thread/RomSearcherThread.cpp
     Thread/EmulationThread.cpp
-    Utilities/QtKeyToSdl2Key.cpp
+    Utilities/QtKeyToSdl3Key.cpp
     Utilities/QtMessageBox.cpp
     OnScreenDisplay.cpp
     Callbacks.cpp
@@ -140,7 +136,6 @@ target_include_directories(RMG PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../
-    ${SDL2_INCLUDE_DIRS}
     ${IMGUI_DIR}
 )
 
@@ -153,6 +148,10 @@ endif(NOT WIN32)
 if (UPDATER)
     target_link_libraries(RMG Qt6::Network)
 endif(UPDATER)
+
+if (KCA_DRAG_DROP)
+    target_link_libraries(RMG KF6::CoreAddons)
+endif(KCA_DRAG_DROP)
 
 if (NETPLAY)
     target_link_libraries(RMG Qt6::WebSockets)

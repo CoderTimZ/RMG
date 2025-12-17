@@ -13,7 +13,7 @@
 #include <QDialog>
 #include <string>
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include "ui_OptionsDialog.h"
 
@@ -38,7 +38,7 @@ Q_OBJECT
 
 public:
     OptionsDialog(QWidget *parent, OptionsDialogSettings settings, 
-                  SDL_Joystick* joystick, SDL_GameController* controller);
+                  SDL_Joystick* joystick, SDL_Gamepad* gamepad);
 
     OptionsDialogSettings GetSettings();
 
@@ -48,8 +48,8 @@ protected:
 private:
     OptionsDialogSettings settings;
 
-    SDL_Joystick* currentJoystick         = nullptr;
-    SDL_GameController* currentController = nullptr;
+    SDL_Joystick* currentJoystick = nullptr;
+    SDL_Gamepad* currentGamepad = nullptr;
 
     void setIconsForEmulationInfoText(void);
     void hideEmulationInfoText(void);
@@ -58,7 +58,11 @@ private slots:
     void on_controllerPakComboBox_currentIndexChanged(int index);
 
     void on_changeGameboyRomButton_clicked();
+    void on_clearGameboyRomButton_clicked();
+
     void on_changeGameboySaveButton_clicked();
+    void on_clearGameboySaveButton_clicked();
+
     void on_testRumbleButton_clicked();
 };
 }

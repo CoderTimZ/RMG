@@ -6,7 +6,6 @@ project(RMG-Core)
 set(CMAKE_CXX_STANDARD 20)
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(SDL2 REQUIRED sdl2)
 pkg_check_modules(MINIZIP REQUIRED minizip)
 if (WIN32)
     pkg_check_modules(ICONV REQUIRED iconv)
@@ -53,13 +52,6 @@ set(RMG_CORE_SOURCES
     Rom.cpp
 )
 
-if (DISCORD_RPC)
-    list(APPEND RMG_CORE_SOURCES 
-        DiscordRpc.cpp
-    )
-    add_definitions(-DDISCORD_RPC)
-endif(DISCORD_RPC)
-
 if (NETPLAY)
     add_definitions(-DNETPLAY)
 endif(NETPLAY)
@@ -67,10 +59,6 @@ endif(NETPLAY)
 if (PORTABLE_INSTALL)
     add_definitions(-DPORTABLE_INSTALL)
 endif(PORTABLE_INSTALL)
-
-if (USE_LIBFMT)
-    add_definitions(-DUSE_LIBFMT)
-endif(USE_LIBFMT)
 
 add_library(RMG-Core SHARED ${RMG_CORE_SOURCES})
 
@@ -86,13 +74,6 @@ target_link_libraries(RMG-Core
     ${MINIZIP_LIBRARIES}
     lzma
 )
-
-if (DISCORD_RPC)
-    target_link_libraries(RMG-Core
-        ${DISCORD_RPC_LIB}
-    )
-    add_dependencies(RMG-Core discord-rpc)
-endif(DISCORD_RPC)
 
 target_include_directories(RMG-Core PRIVATE 
     ${CMAKE_CURRENT_BINARY_DIR}

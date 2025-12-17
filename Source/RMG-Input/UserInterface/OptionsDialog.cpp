@@ -11,8 +11,9 @@
 
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QIcon>
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include <RMG-Core/Emulation.hpp>
 #include <RMG-Core/Settings.hpp>
@@ -21,7 +22,7 @@
 using namespace UserInterface;
 
 OptionsDialog::OptionsDialog(QWidget* parent, OptionsDialogSettings settings,
-                             SDL_Joystick* joystick, SDL_GameController* controller) : QDialog(parent, Qt::WindowSystemMenuHint | Qt::WindowTitleHint)
+                             SDL_Joystick* joystick, SDL_Gamepad* gamepad) : QDialog(parent, Qt::WindowSystemMenuHint | Qt::WindowTitleHint)
 {
     this->setupUi(this);
 
@@ -42,11 +43,11 @@ OptionsDialog::OptionsDialog(QWidget* parent, OptionsDialogSettings settings,
         this->hideEmulationInfoText();
     }
 
-    this->currentJoystick   = joystick;
-    this->currentController = controller;
+    this->currentJoystick = joystick;
+    this->currentGamepad = gamepad;
 
     this->testRumbleButton->setVisible(settings.ControllerPak == 1);
-    this->testRumbleButton->setEnabled(this->currentJoystick != nullptr || this->currentController != nullptr);
+    this->testRumbleButton->setEnabled(this->currentJoystick != nullptr || this->currentGamepad != nullptr);
 }
 
 OptionsDialogSettings OptionsDialog::GetSettings()
@@ -112,6 +113,11 @@ void OptionsDialog::on_changeGameboyRomButton_clicked()
     }
 }
 
+void OptionsDialog::on_clearGameboyRomButton_clicked()
+{
+    this->gameboyRomLineEdit->clear();
+}
+
 void OptionsDialog::on_changeGameboySaveButton_clicked()
 {
     QString gameBoySave = QFileDialog::getOpenFileName(this, tr("Open Gameboy Save"), "", "Gameboy save (*.sav *.ram)");
@@ -121,11 +127,26 @@ void OptionsDialog::on_changeGameboySaveButton_clicked()
     }
 }
 
+void OptionsDialog::on_clearGameboySaveButton_clicked()
+{
+    this->gameboySaveLineEdit->clear();
+}
+
 void OptionsDialog::on_testRumbleButton_clicked()
 {
-#if SDL_VERSION_ATLEAST(2,0,18)
-    if ((this->currentJoystick != nullptr   && SDL_JoystickHasRumble(this->currentJoystick) != SDL_TRUE) ||
-        (this->currentController != nullptr && SDL_GameControllerHasRumble(this->currentController) != SDL_TRUE))
+    bool rumbleSupported = false;
+
+    SDL_PropertiesID properties;
+    if ((this->currentJoystick != nullptr && (properties = SDL_GetJoystickProperties(this->currentJoystick)) != 0) ||
+        (this->currentGamepad != nullptr && (properties = SDL_GetGamepadProperties(this->currentGamepad)) != 0))
+    {
+        const char* propertyName = this->currentJoystick != nullptr ? SDL_PROP_JOYSTICK_CAP_RUMBLE_BOOLEAN
+                                                                    : SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN;
+
+        rumbleSupported = SDL_GetBooleanProperty(properties, propertyName, false);
+    }
+
+    if (!rumbleSupported)
     {
         QMessageBox msgBox(this);
         msgBox.setIcon(QMessageBox::Icon::Critical);
@@ -135,14 +156,13 @@ void OptionsDialog::on_testRumbleButton_clicked()
         msgBox.exec();
         return;
     }
-#endif
 
     if (this->currentJoystick != nullptr)
     {
-        SDL_JoystickRumble(this->currentJoystick, 0xFFFF, 0xFFFF, 1500);
+        SDL_RumbleJoystick(this->currentJoystick, 0xFFFF, 0xFFFF, 1500);
     }
     else
     {
-        SDL_GameControllerRumble(this->currentController, 0xFFFF, 0xFFFF, 1500);
+        SDL_RumbleGamepad(this->currentGamepad, 0xFFFF, 0xFFFF, 1500);
     }
 }

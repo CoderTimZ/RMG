@@ -12,6 +12,8 @@
 
 #include <string>
 
+#include <SDL3/SDL.h>
+
 #define SDL_AXIS_PEAK 32767
 
 enum class N64ControllerButton
@@ -35,10 +37,12 @@ enum class N64ControllerButton
 
 enum class InputDeviceType
 {
-    EmulateVRU = -4,
-    None       = -3,
-    Automatic  = -2,
-    Keyboard   = -1,
+    None = 0,
+    EmulateVRU,
+    Automatic,
+    Keyboard,
+    Joystick,
+    Invalid
 };
 
 enum class InputType
@@ -57,7 +61,8 @@ enum class InputAxisDirection
     Up = 0,
     Down,
     Left,
-    Right
+    Right,
+    Invalid
 };
 
 enum class N64ControllerPak
@@ -68,19 +73,22 @@ enum class N64ControllerPak
     None,
 };
 
-struct SDLDevice
+struct InputDevice
 {
+    InputDeviceType type = InputDeviceType::Invalid;
+
     std::string name;
     std::string path;
     std::string serial;
-    int number;
+    SDL_JoystickID id = 0;
 
-    bool operator== (const SDLDevice& other) const
+    bool operator== (const InputDevice& other) const
     {
-        return other.name == name &&
-                //other.path == path &&
-                //other.serial == serial &&
-                other.number == number;
+        return other.type == type &&
+                other.name == name &&
+                other.path == path &&
+                other.serial == serial &&
+                other.id == id;
     }
 };
 

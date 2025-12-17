@@ -39,12 +39,13 @@ enum class SettingsID
     GUI_IconTheme,
     GUI_CheckForUpdates,
     GUI_LastUpdateCheck,
-    GUI_DiscordRpc,
+    GUI_ConfirmExitWhileInGame,
     GUI_Version,
 
     // Netplay Settings
     Netplay_Nickname,
     Netplay_ServerJsonUrl,
+    Netplay_DispatcherUrl,
     Netplay_SelectedServer,
 
     // Core Plugin Settings
@@ -53,11 +54,6 @@ enum class SettingsID
     Core_INPUT_Plugin,
     Core_RSP_Plugin,
     Core_EXECUTION_Plugin,
-
-    // Core User Directory Settings
-    Core_OverrideUserDirs,
-    Core_UserDataDirOverride,
-    Core_UserCacheDirOverride,
 
     // Core 64DD ROM Settings
     Core_64DD_JapaneseIPL,
@@ -90,6 +86,7 @@ enum class SettingsID
     Core_CountPerOpDenomPot,
     Core_SiDmaDuration,
     Core_SaveFileNameFormat,
+    Core_GbCameraVideoCaptureBackend1,
 
     // (mupen64plus) Overlay Core Settings
     CoreOverlay_RandomizeInterrupt,
@@ -100,6 +97,7 @@ enum class SettingsID
     CoreOverlay_CountPerOpDenomPot,
     CoreOverlay_SiDmaDuration,
     CoreOverLay_SaveFileNameFormat,
+    CoreOverlay_GbCameraVideoCaptureBackend1,
 
     // (mupen64plus) Core Directory Settings
     Core_ScreenshotPath,
@@ -459,6 +457,13 @@ enum class SettingsID
     Input_Hotkey_Fullscreen_Name,
     Input_Hotkey_Fullscreen_Data,
     Input_Hotkey_Fullscreen_ExtraData,
+
+    // GCA Input Plugin Settings
+    GCAInput_Deadzone,
+    GCAInput_Sensitivity,
+    GCAInput_CButtonTreshold,
+    GCAInput_TriggerTreshold,
+    GCAInput_SwapZL,
 
     Invalid
 };

@@ -15,8 +15,10 @@
 
 #include <QStandardItemModel>
 #include <QHBoxLayout>
+#include <QStringList>
 #include <QTreeWidget>
 #include <QDialog>
+#include <QString>
 #include <QWidget>
 #include <QColor>
 #include <QMutex>
@@ -127,7 +129,7 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     void hideEmulationInfoText(void);
 
     void chooseDirectory(QLineEdit *, QString caption);
-    void chooseFile(QLineEdit *, QString caption, QString filter = "", QString md5 = "");
+    void chooseFile(QLineEdit *, QString caption, QString filter = "", QStringList md5List = {});
     void chooseColor(QPushButton *, QColor *, bool skipChoice = false);
 
     bool applyPluginSettings(void);
@@ -142,12 +144,14 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     void on_changeScreenShotDirButton_clicked(void);
     void on_changeSaveStateDirButton_clicked(void);
     void on_changeSaveSramDirButton_clicked(void);
-    void on_changeUserDataDirButton_clicked(void);
-    void on_changeUserCacheDirButton_clicked(void);
 
     void on_changeJapaneseIPLRomPathButton_clicked(void);
     void on_changeAmericanIPLRomPathButton_clicked(void);
     void on_changeDevelopmentIPLRomPathButton_clicked(void);
+
+    void on_clearJapaneseIPLRomPathButton_clicked(void);
+    void on_clearAmericanIPLRomPathButton_clicked(void);
+    void on_clearDevelopmentIPLRomPathButton_clicked(void);
 
     void on_changeBackgroundColorButton_clicked(void);
     void on_changeTextColorButton_clicked(void);

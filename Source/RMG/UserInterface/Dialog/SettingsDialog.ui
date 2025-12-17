@@ -124,13 +124,6 @@
                 </widget>
                </item>
                <item>
-                <widget class="QCheckBox" name="discordRpcCheckBox">
-                 <property name="text">
-                  <string>Discord Rich Presence</string>
-                 </property>
-                </widget>
-               </item>
-               <item>
                 <spacer name="verticalSpacer_6">
                  <property name="orientation">
                   <enum>Qt::Orientation::Vertical</enum>
@@ -231,6 +224,13 @@
                 <widget class="QCheckBox" name="confirmDragDropCheckBox">
                  <property name="text">
                   <string>Ask for confirmation during drag and drop</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QCheckBox" name="confirmExitWhileInGameCheckBox">
+                 <property name="text">
+                  <string>Ask for confirmation on exit</string>
                  </property>
                 </widget>
                </item>
@@ -655,6 +655,27 @@
                  </item>
                  <item>
                   <widget class="QLineEdit" name="netplayServerUrlLineEdit">
+                   <property name="sizePolicy">
+                    <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+                     <horstretch>0</horstretch>
+                     <verstretch>0</verstretch>
+                    </sizepolicy>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </item>
+               <item>
+                <layout class="QHBoxLayout" name="horizontalLayout_21">
+                 <item>
+                  <widget class="QLabel" name="label_18">
+                   <property name="text">
+                    <string>Dispatcher URL</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLineEdit" name="netplayDispatcherUrlLineEdit">
                    <property name="sizePolicy">
                     <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
                      <horstretch>0</horstretch>
@@ -1790,6 +1811,31 @@
             </layout>
            </item>
            <item>
+            <layout class="QHBoxLayout" name="horizontalLayout_47">
+             <item>
+              <widget class="QLabel" name="label_26">
+               <property name="text">
+                <string>Video capture backend</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QComboBox" name="coreVideoCaptureBackendComboBox">
+               <item>
+                <property name="text">
+                 <string>None</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>SDL3</string>
+                </property>
+               </item>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item>
             <widget class="QGroupBox" name="usePifRomGroupBox">
              <property name="title">
               <string>&amp;Use PIF ROM</string>
@@ -2537,7 +2583,7 @@
                     <number>1</number>
                    </property>
                    <property name="text">
-                    <string>Make sure to use a LLE RSP plugin (i.e paraLLEl RSP) when using a LLE Video plugin (i.e paraLLEl)</string>
+                    <string>Make sure to use a LLE RSP plugin (e.g. paraLLEl RSP) when using a LLE Video plugin (e.g. paraLLEl)</string>
                    </property>
                    <property name="textFormat">
                     <enum>Qt::TextFormat::PlainText</enum>
@@ -2764,7 +2810,7 @@
                 <number>1</number>
                </property>
                <property name="text">
-                <string>Make sure to use a LLE RSP plugin (i.e paraLLEl RSP) when using a LLE Video plugin (i.e paraLLEl)</string>
+                <string>Make sure to use a LLE RSP plugin (e.g. paraLLEl RSP) when using a LLE Video plugin (e.g. paraLLEl)</string>
                </property>
                <property name="textFormat">
                 <enum>Qt::TextFormat::PlainText</enum>
@@ -2843,6 +2889,9 @@
                 <property name="text">
                  <string>Change</string>
                 </property>
+                <property name="icon">
+                 <iconset theme="folder-open-line"/>
+                </property>
                </widget>
               </item>
              </layout>
@@ -2865,6 +2914,9 @@
                <widget class="QPushButton" name="changeSaveStateDirButton">
                 <property name="text">
                  <string>Change</string>
+                </property>
+                <property name="icon">
+                 <iconset theme="folder-open-line"/>
                 </property>
                </widget>
               </item>
@@ -2889,70 +2941,9 @@
                 <property name="text">
                  <string>Change</string>
                 </property>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
-            <widget class="QGroupBox" name="overrideUserDirsGroupBox">
-             <property name="enabled">
-              <bool>true</bool>
-             </property>
-             <property name="title">
-              <string>Override &amp;user directories</string>
-             </property>
-             <property name="checkable">
-              <bool>true</bool>
-             </property>
-             <property name="checked">
-              <bool>false</bool>
-             </property>
-             <layout class="QVBoxLayout" name="verticalLayout_27">
-              <item>
-               <widget class="QGroupBox" name="groupBox_30">
-                <property name="title">
-                 <string>User Data Directory</string>
+                <property name="icon">
+                 <iconset theme="folder-open-line"/>
                 </property>
-                <layout class="QHBoxLayout" name="horizontalLayout_67">
-                 <item>
-                  <widget class="QLineEdit" name="userDataDirLineEdit">
-                   <property name="readOnly">
-                    <bool>true</bool>
-                   </property>
-                  </widget>
-                 </item>
-                 <item>
-                  <widget class="QPushButton" name="changeUserDataDirButton">
-                   <property name="text">
-                    <string>Change</string>
-                   </property>
-                  </widget>
-                 </item>
-                </layout>
-               </widget>
-              </item>
-              <item>
-               <widget class="QGroupBox" name="groupBox_31">
-                <property name="title">
-                 <string>User Cache Directory</string>
-                </property>
-                <layout class="QHBoxLayout" name="horizontalLayout_68">
-                 <item>
-                  <widget class="QLineEdit" name="userCacheDirLineEdit">
-                   <property name="readOnly">
-                    <bool>true</bool>
-                   </property>
-                  </widget>
-                 </item>
-                 <item>
-                  <widget class="QPushButton" name="changeUserCacheDirButton">
-                   <property name="text">
-                    <string>Change</string>
-                   </property>
-                  </widget>
-                 </item>
-                </layout>
                </widget>
               </item>
              </layout>
@@ -3041,6 +3032,19 @@
                 <property name="text">
                  <string>Change</string>
                 </property>
+                <property name="icon">
+                 <iconset theme="folder-open-line"/>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="clearJapaneseIPLRomPathButton">
+                <property name="text">
+                 <string/>
+                </property>
+                <property name="icon">
+                 <iconset theme="delete-bin-line"/>
+                </property>
                </widget>
               </item>
              </layout>
@@ -3064,6 +3068,19 @@
                 <property name="text">
                  <string>Change</string>
                 </property>
+                <property name="icon">
+                 <iconset theme="folder-open-line"/>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="clearAmericanIPLRomPathButton">
+                <property name="text">
+                 <string/>
+                </property>
+                <property name="icon">
+                 <iconset theme="delete-bin-line"/>
+                </property>
                </widget>
               </item>
              </layout>
@@ -3086,6 +3103,19 @@
                <widget class="QPushButton" name="changeDevelopmentIPLRomPathButton">
                 <property name="text">
                  <string>Change</string>
+                </property>
+                <property name="icon">
+                 <iconset theme="folder-open-line"/>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="clearDevelopmentIPLRomPathButton">
+                <property name="text">
+                 <string/>
+                </property>
+                <property name="icon">
+                 <iconset theme="delete-bin-line"/>
                 </property>
                </widget>
               </item>

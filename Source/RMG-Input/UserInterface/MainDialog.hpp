@@ -13,6 +13,7 @@
 #include "common.hpp"
 #include <QDialog>
 
+#include "Utilities/InputProfileDB.hpp"
 #include "Widget/ControllerWidget.hpp"
 #include "Thread/SDLThread.hpp"
 #include "EventFilter.hpp"
@@ -31,23 +32,26 @@ private:
     QTimer* inputPollTimer;
     Thread::SDLThread* sdlThread;
 
-    QList<SDLDevice> oldInputDeviceList;
-    QList<SDLDevice> inputDeviceList;
+    Utilities::InputProfileDB inputProfileDB;
+
+    QList<InputDevice> oldInputDeviceList;
+    QList<InputDevice> inputDeviceList;
     bool updatingDeviceList = false;
 
     QList<Widget::ControllerWidget*> controllerWidgets;
-    SDL_Joystick* currentJoystick         = nullptr;
-    SDL_GameController* currentController = nullptr;
-    SDLDevice currentDevice;
+    SDL_Joystick* currentJoystick = nullptr;
+    SDL_Gamepad* currentGamepad = nullptr;
+    InputDevice currentDevice;
 
     int previousTabWidgetIndex = 0;
 
     EventFilter* eventFilter;
 
-    void addInputDevice(SDLDevice device);
-    void removeInputDevice(SDLDevice device);
+    void addInputDevice(Widget::ControllerWidget* controllerWidget, const InputDevice& device);
+    void addInputDevice(const InputDevice& device);
+    void removeInputDevice(const InputDevice& device);
 
-    void openInputDevice(SDLDevice device);
+    void openInputDevice(InputDevice device);
     void closeInputDevice();
 
 public:
@@ -57,7 +61,7 @@ public:
 public slots:
     void on_InputPollTimer_triggered();
 
-    void on_ControllerWidget_CurrentInputDeviceChanged(ControllerWidget*, SDLDevice);
+    void on_ControllerWidget_CurrentInputDeviceChanged(ControllerWidget*, InputDevice);
     void on_ControllerWidget_RefreshInputDevicesButtonClicked();
 
     void on_ControllerWidget_UserProfileAdded(QString, QString);
@@ -65,7 +69,7 @@ public slots:
 
     void on_tabWidget_currentChanged(int);
 
-    void on_SDLThread_DeviceFound(QString, QString, QString, int);
+    void on_SDLThread_DeviceFound(QString, QString, QString, SDL_JoystickID);
     void on_SDLThread_DeviceSearchFinished(void);
 
 private slots:

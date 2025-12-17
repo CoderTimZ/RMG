@@ -24,7 +24,7 @@
 #include "Dialog/Netplay/NetplaySessionDialog.hpp"
 #endif // NETPLAY
 #include "UserInterface/EventFilter.hpp"
-#include "Utilities/QtKeyToSdl2Key.hpp"
+#include "Utilities/QtKeyToSdl3Key.hpp"
 #include "Utilities/QtMessageBox.hpp"
 #include "OnScreenDisplay.hpp"
 #include "Callbacks.hpp"
@@ -51,8 +51,15 @@
 #include <QMenuBar>
 #include <QString>
 #include <QTimer>
-#include <cmath>
+#include <QDir>
 #include <QUrl>
+
+#ifdef KCA_DRAG_DROP
+#include <KUrlMimeData>
+#endif
+
+#include <cstdlib>
+#include <cmath>
 
 #include <RMG-Core/CachedRomHeaderAndSettings.hpp>
 #include <RMG-Core/SpeedLimiter.hpp>
@@ -162,11 +169,30 @@ void MainWindow::OpenROM(QString file, QString disk, bool fullscreen, bool quitA
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    bool inEmulation = this->emulationThread->isRunning();
+
+    if (this->ui_ShowUI &&
+        !this->ui_ForceClose &&
+        inEmulation &&
+        CoreSettingsGetBoolValue(SettingsID::GUI_ConfirmExitWhileInGame))
+    {
+        bool skipExitConfirmation = false;
+        bool ret = QtMessageBox::Question(this, "Are you sure you want to exit RMG?", "Don't ask for confirmation again", skipExitConfirmation);
+        if (!ret)
+        {
+            event->ignore();
+            return;
+        }
+
+        // only save setting when user accepted
+        CoreSettingsSetValue(SettingsID::GUI_ConfirmExitWhileInGame, !skipExitConfirmation);
+    }
+
     // we have to make sure we save the geomtry
     // for the ROM browser when emulation
     // isn't running (or hasn't run at all)
     if (!this->ui_QuitAfterEmulation && 
-        !this->emulationThread->isRunning())
+        !inEmulation)
     {
         this->storeGeometry();
     }
@@ -175,8 +201,15 @@ void MainWindow::closeEvent(QCloseEvent *event)
     Qt::ToolBarArea toolbarArea = this->toolBarArea(this->toolBar);
     CoreSettingsSetValue(SettingsID::GUI_ToolbarArea, this->getToolbarSettingAreaFromArea(toolbarArea));
 
+    // attempt to shutdown emulation
     this->ui_NoSwitchToRomBrowser = true;
     this->on_Action_System_Shutdown();
+
+    // wait until emulation has shut down
+    while (this->emulationThread->isRunning())
+    {
+        QCoreApplication::processEvents();
+    }
 
     this->ui_Widget_RomBrowser->StopRefreshRomList();
 
@@ -188,13 +221,6 @@ void MainWindow::closeEvent(QCloseEvent *event)
         this->netplaySessionDialog->close();
     }
 #endif // NETPLAY
-
-    this->logDialog.close();
-
-    while (this->emulationThread->isRunning())
-    {
-        QCoreApplication::processEvents();
-    }
 
     CoreSettingsSave();
     CoreShutdown();
@@ -308,11 +334,7 @@ void MainWindow::configureUI(QApplication* app, bool showUI)
     this->installEventFilter(this->ui_EventFilter);
     this->ui_Widget_Dummy->installEventFilter(this->ui_EventFilter);
 
-    this->ui_WindowTitle = QCoreApplication::applicationName();
-    this->ui_WindowTitle += " (";
-    this->ui_WindowTitle += QString::fromStdString(CoreGetVersion());
-    this->ui_WindowTitle += ")";
-
+    this->ui_WindowTitle = this->getWindowTitle();
     this->setWindowTitle(this->ui_WindowTitle);
 }
 
@@ -332,6 +354,12 @@ void MainWindow::configureTheme(QApplication* app)
     {
         // do nothing
     }
+#ifdef _WIN32
+    else if (theme == "Windows Vista")
+    {
+        app->setStyle(QStyleFactory::create("WindowsVista"));
+    }
+#endif
     else if (theme == "Fusion")
     {
         app->setPalette(QApplication::style()->standardPalette());
@@ -413,6 +441,51 @@ void MainWindow::configureTheme(QApplication* app)
 
     // fallback for icons we don't provide (i.e standard system icons)
     QIcon::setFallbackThemeName(fallbackThemeName);
+}
+
+QString MainWindow::getWindowTitle(void)
+{
+    const QDate currentDate = QDateTime::currentDateTime().date();
+    const QStringList firstWordList = {
+    {
+        "lesbian",
+        "gay",
+        "bisexual",
+        "transgender",
+        "queer",
+    }};
+    const QStringList secondWordList = {
+    {
+        " rights!!!",
+        "s rise up!!!"
+    }};
+
+    QString windowTitle = QCoreApplication::applicationName();
+
+    // initialize random seed
+    srand(time(nullptr));
+
+    bool showCustomWindowTitle = (rand() % 10) < 3;
+
+    if (showCustomWindowTitle && currentDate.month() == 3 && currentDate.day() == 31)
+    {
+        QString secondWord = secondWordList.at(rand() % secondWordList.count());
+        windowTitle += " (transgender" + secondWord + ")";
+    }
+    else if (showCustomWindowTitle && currentDate.month() == 6)
+    {
+        QString firstWsord = firstWordList.at(rand() % firstWordList.count());
+        QString secondWord = secondWordList.at(rand() % secondWordList.count());
+        windowTitle += " (" + firstWsord + secondWord + ")";
+    }
+    else
+    {
+        windowTitle += " (";
+        windowTitle += QString::fromStdString(CoreGetVersion());
+        windowTitle += ")";
+    }
+
+    return windowTitle;
 }
 
 void MainWindow::showErrorMessage(QString text, QString details, bool force)
@@ -661,7 +734,7 @@ void MainWindow::launchEmulationThread(QString cartRom, QString address, int por
     this->launchEmulationThread(cartRom, "", false, -1, true);
 }
 
-void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool refreshRomListAfterEmulation, int slot, bool netplay)
+void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool refreshRomListAfterEmulation, int slot, bool netplay, bool dragdrop)
 {
 #ifdef NETPLAY
     if (this->netplaySessionDialog != nullptr && !netplay)
@@ -670,6 +743,12 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
         return;
     }
 #endif // NETPLAY
+
+    if (!dragdrop && this->emulationThread->isRunning())
+    {
+        this->showErrorMessage("EmulationThread::run Failed", "Cannot start emulation when emulation is already running or being started");
+        return;
+    }
 
     CoreSettingsSave();
 
@@ -1080,23 +1159,19 @@ void MainWindow::configureActions(void)
     for (int i = 0; i < 12; i++)
     {
         QAction* speedAction = speedActions[i];
+        int speedActionNumber = speedActionNumbers[i];
 
         speedAction->setCheckable(true);
-        speedAction->setChecked(currentSpeedFactor == speedActionNumbers[i]);
+        speedAction->setChecked(currentSpeedFactor == speedActionNumber);
         speedAction->setActionGroup(speedActionGroup);
 
         // connect emulation speed action here because we need to do
         // something special for them
-        connect(speedAction, &QAction::triggered, [=, this](bool checked)
+        connect(speedAction, &QAction::triggered, [this, speedActionNumber](bool checked)
         {
             if (checked)
             {
-                QString factorText = speedAction->text().split("%").first();
-                // sometimes the text can contain a '&'
-                // which will make the toInt() function return 0
-                // so strip it out
-                factorText.remove('&');
-                this->on_Action_System_SpeedFactor(factorText.toInt());
+                this->on_Action_System_SpeedFactor(speedActionNumber);
             }
         });
     }
@@ -1113,16 +1188,11 @@ void MainWindow::configureActions(void)
 
         // connect slot action here because we need to do
         // something special for them
-        connect(slotAction, &QAction::triggered, [=, this](bool checked)
+        connect(slotAction, &QAction::triggered, [this, i](bool checked)
         {
             if (checked)
             {
-                QString slotText = slotAction->text().split(" ").at(1);
-                // sometimes the text can contain a '&'
-                // which will make the toInt() function return 0
-                // so strip it out
-                slotText.remove('&');
-                this->on_Action_System_CurrentSaveState(slotText.toInt());
+                this->on_Action_System_CurrentSaveState(i);
             }
         });
     }
@@ -1377,8 +1447,8 @@ void MainWindow::on_EventFilter_KeyPressed(QKeyEvent *event)
         return;
     }
 
-    int key = Utilities::QtKeyToSdl2Key(event->key());
-    int mod = Utilities::QtModKeyToSdl2ModKey(event->modifiers());
+    int key = Utilities::QtKeyToSdl3Key(event->key());
+    int mod = Utilities::QtModKeyToSdl3ModKey(event->modifiers());
 
     CoreSetKeyDown(key, mod);
 }
@@ -1391,19 +1461,23 @@ void MainWindow::on_EventFilter_KeyReleased(QKeyEvent *event)
         return;
     }
 
-    int key = Utilities::QtKeyToSdl2Key(event->key());
-    int mod = Utilities::QtModKeyToSdl2ModKey(event->modifiers());
+    int key = Utilities::QtKeyToSdl3Key(event->key());
+    int mod = Utilities::QtModKeyToSdl3ModKey(event->modifiers());
 
     CoreSetKeyUp(key, mod);
 }
 
 void MainWindow::on_EventFilter_FileDropped(QDropEvent *event)
 {
-#ifdef DRAG_DROP
     const QMimeData *mimeData = event->mimeData();
 
-    if (!mimeData->hasUrls() || mimeData->urls().empty() ||
-        !mimeData->urls().first().isLocalFile())
+    QList<QUrl> urls = mimeData->urls();
+#ifdef KCA_DRAG_DROP
+    urls = KUrlMimeData::urlsFromMimeData(mimeData, KUrlMimeData::PreferLocalUrls);
+#endif
+
+    if (!mimeData->hasUrls() || urls.empty() ||
+        !urls.first().isLocalFile())
     {
         return;
     }
@@ -1413,18 +1487,27 @@ void MainWindow::on_EventFilter_FileDropped(QDropEvent *event)
     bool refreshRomList  = false;
     QString file;
 
+    // when we're still opening the ROM while emulation is running,
+    // ignore the event
+    if (this->emulationThread->isRunning() && !CoreHasRomOpen())
+    {
+        return;
+    }
+
     if (inEmulation && confirmDragDrop)
     {
-        QMessageBox::StandardButton reply = QMessageBox::question(this, "",
-            "Are you sure you want to launch the drag & dropped ROM?",
-            QMessageBox::Yes | QMessageBox::No);
-        if (reply == QMessageBox::No)
+        confirmDragDrop = false;
+        bool ret = QtMessageBox::Question(this, "Are you sure you want to launch the drag & dropped ROM?", 
+                                                "Don't ask for confirmation again", confirmDragDrop);
+        if (!ret)
         {
             return;
         }
+
+        CoreSettingsSetValue(SettingsID::GUI_ConfirmDragDrop, !confirmDragDrop);
     }
 
-    file = mimeData->urls().first().toLocalFile();
+    file = urls.first().toLocalFile();
 
     if (inEmulation)
     {
@@ -1438,8 +1521,7 @@ void MainWindow::on_EventFilter_FileDropped(QDropEvent *event)
         refreshRomList = this->ui_RefreshRomListAfterEmulation;
     }
 
-    this->launchEmulationThread(file, "", refreshRomList);
-#endif // DRAG_DROP
+    this->launchEmulationThread(file, "", refreshRomList, -1, false, true);
 }
 
 void MainWindow::on_QGuiApplication_applicationStateChanged(Qt::ApplicationState state)
@@ -1522,7 +1604,8 @@ void MainWindow::on_networkAccessManager_Finished(QNetworkReply* reply)
     }
 
 #ifdef APPIMAGE_UPDATER
-    this->on_Action_System_Exit();
+    this->ui_ForceClose = true;
+    this->close();
 #else // normal updater
     Dialog::InstallUpdateDialog installUpdateDialog(this, QCoreApplication::applicationDirPath(), downloadUpdateDialog.GetTempDirectory(), downloadUpdateDialog.GetFileName());
     ret = installUpdateDialog.exec();
@@ -2102,6 +2185,8 @@ void MainWindow::on_Emulation_Finished(bool ret, QString error)
         {
             this->showErrorMessage("EmulationThread::run Failed", error);
         }
+
+        this->ui_ForceClose = true;
         this->close();
         return;
     }
@@ -2158,8 +2243,14 @@ void MainWindow::on_RomBrowser_PlayGameWithSlot(QString file, int slot)
 
 void MainWindow::on_RomBrowser_ChangeRomDirectory(void)
 {
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Select ROM Directory"));
-    if (!dir.isEmpty())
+    QString currentDir = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::RomBrowser_Directory));
+    if (!QDir(currentDir).exists())
+    {
+        currentDir = "";
+    }
+
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select ROM Directory"), currentDir);
+    if (!dir.isEmpty() && currentDir != dir)
     {
         CoreSettingsSetValue(SettingsID::RomBrowser_Directory, dir.toStdString());
         this->ui_Widget_RomBrowser->RefreshRomList();
@@ -2174,16 +2265,17 @@ void MainWindow::on_RomBrowser_RomInformation(QString file)
         this->ui_Widget_RomBrowser->StopRefreshRomList();
     }
 
+    CoreRomType romType;
     CoreRomHeader romHeader;
     CoreRomSettings romSettings;
 
-    if (!CoreGetCachedRomHeaderAndSettings(file.toStdU32String(), nullptr, &romHeader, nullptr, &romSettings))
+    if (!CoreGetCachedRomHeaderAndSettings(file.toStdU32String(), &romType, &romHeader, nullptr, &romSettings))
     {
         this->showErrorMessage("CoreGetCachedRomHeaderAndSettings() Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
-    Dialog::RomInfoDialog dialog(file, romHeader, romSettings, this);
+    Dialog::RomInfoDialog dialog(this, file, romType, romHeader, romSettings);
     dialog.exec();
 
     if (isRefreshingRomList)
@@ -2221,7 +2313,7 @@ void MainWindow::on_RomBrowser_EditGameInputSettings(QString file)
         this->ui_Widget_RomBrowser->StopRefreshRomList();
     }
 
-    if (!CorePluginsOpenROMConfig(CorePluginType::Input, (void*)this, file.toStdU32String()))
+    if (!CorePluginsOpenROMConfig(CorePluginType::Input, this, file.toStdU32String()))
     {
         this->showErrorMessage("CorePluginsOpenROMConfig() Failed", QString::fromStdString(CoreGetError()));
         return;
@@ -2429,8 +2521,8 @@ void MainWindow::on_VidExt_ResizeWindow(int width, int height)
     // account for HiDPI scaling
     if (this->devicePixelRatio() != 1)
     {
-        width  = (int)std::ceil((double)((double)width  / this->devicePixelRatio()));
-        height = (int)std::ceil((double)((double)height / this->devicePixelRatio()));
+        width  = static_cast<int>(std::ceil(static_cast<double>(static_cast<double>(width)  / this->devicePixelRatio())));
+        height = static_cast<int>(std::ceil(static_cast<double>(static_cast<double>(height) / this->devicePixelRatio())));
     }
 
     if (!this->menuBar()->isHidden())
@@ -2632,7 +2724,7 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
         case CoreStateCallbackType::EmulationState:
         {
             // update Pause button
-            this->action_System_Pause->setChecked(value == (int)CoreEmulationState::Paused);
+            this->action_System_Pause->setChecked(value == static_cast<int>(CoreEmulationState::Paused));
             // update OSD state
             if (value == (int)CoreEmulationState::Paused)
             {

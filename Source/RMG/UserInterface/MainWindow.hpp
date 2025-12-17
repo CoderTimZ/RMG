@@ -85,9 +85,10 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_ShowStatusbar = false;
 
     bool ui_ManuallyPaused = true;
-
     bool ui_ManuallySavedState  = false;
     bool ui_ManuallyLoadedState = false;
+
+    bool ui_ForceClose = false;
 
     QList<QAction*> ui_Actions;
     bool ui_AddedActions = false;
@@ -129,6 +130,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void configureUI(QApplication* app, bool showUI);
     void configureTheme(QApplication* app);
 
+    QString getWindowTitle(void);
+
     void showErrorMessage(QString text, QString details = "", bool force = true);
 
     void updateUI(bool inEmulation, bool isPaused);
@@ -139,7 +142,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void initializeEmulationThread(void);
     void connectEmulationThreadSignals(void);
     void launchEmulationThread(QString cartRom, QString address, int port, int player);
-    void launchEmulationThread(QString cartRom, QString diskRom = "", bool refreshRomListAfterEmulation = false, int slot = -1, bool netplay = false);
+    void launchEmulationThread(QString cartRom, QString diskRom = "", bool refreshRomListAfterEmulation = false, int slot = -1, bool netplay = false, bool dragdrop = false);
 
     QString getSaveStateSlotDateTimeText(QAction* action);
     QString getSaveStateSlotText(QAction* action, int slot);

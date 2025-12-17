@@ -3,15 +3,7 @@
 #
 include(ExternalProject)
 
-find_program(RUST_CARGO cargo)
-if(NO_RUST)
-    set(BUILD_INPUT_GCA OFF)
-elseif(${RUST_CARGO} STREQUAL "RUST_CARGO-NOTFOUND")
-    message(WARNING "mupen64plus-input-gca will not be built due to not having cargo installed")
-    set(BUILD_INPUT_GCA OFF)
-else()
-    set(BUILD_INPUT_GCA ON)
-endif()
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(M64P_CORE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-core)
 if(WIN32)
@@ -55,12 +47,28 @@ else()
     set(MAKE_OPTFLAGS "${CMAKE_C_FLAGS}")
 endif()
 
-if ("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo" OR
-    "${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+if ("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
+    set(MAKE_DEBUG "0")
+    set(MAKE_OPTFLAGS "${MAKE_OPTFLAGS} -g")
+elseif ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
     set(MAKE_DEBUG "1")
 else()
     set(MAKE_DEBUG "0")
 endif()
+
+# TODO: when SDL3_net has made a release,
+# remove the vendored SDL3_net
+set(SDL3NET_DIR ${CMAKE_CURRENT_SOURCE_DIR}/SDL_net)
+set(SDL3NET_SOURCES
+    ${SDL3NET_DIR}/src/SDL_net.c
+)
+add_library(SDL3_net STATIC ${SDL3NET_SOURCES})
+target_include_directories(SDL3_net PRIVATE ${SDL3NET_DIR}/include)
+set(SDL3NET_CFLAGS "-DUSE_SDL3NET -I${SDL3NET_DIR}/include")
+set(SDL3NET_LDLIBS "$<TARGET_FILE:SDL3_net>")
+if (WIN32)
+    set(SDL3NET_LDLIBS "${SDL3NET_LDLIBS} -liphlpapi -lws2_32")
+endif (WIN32)
 
 ExternalProject_Add(mupen64plus-core
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-core/
@@ -76,11 +84,15 @@ ExternalProject_Add(mupen64plus-core
         TARGET=${CORE_FILE} DEBUG=${MAKE_DEBUG}
         CC=${MAKE_CC_COMPILER} CXX=${MAKE_CXX_COMPILER}
         OPTFLAGS=${MAKE_OPTFLAGS}
+        # TODO: when SDL3_net has made a release,
+        # remove the vendored SDL3_net
+        SDLNET_CFLAGS=${SDL3NET_CFLAGS} SDLNET_LDLIBS=${SDL3NET_LDLIBS}
     BUILD_IN_SOURCE False
     BUILD_ALWAYS True
     BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-core
 
     BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-core/${CORE_FILE}
+    DEPENDS SDL3_net
 )
 
 set(APIDIR "${CMAKE_SOURCE_DIR}/Source/3rdParty/mupen64plus-core/src/api")
@@ -152,21 +164,6 @@ ExternalProject_Add(mupen64plus-input-raphnetraw
     BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-input-raphnetraw/mupen64plus-input-raphnetraw.${SO_EXT}
 )
 
-if (BUILD_INPUT_GCA)
-    ExternalProject_Add(mupen64plus-input-gca
-        SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-input-gca/
-
-        CONFIGURE_COMMAND ""
-        INSTALL_COMMAND ""
-
-        BUILD_COMMAND cargo build --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-input-gca/Cargo.toml --release --features "m64p_compat" --target-dir=${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-input-gca/target
-        BUILD_IN_SOURCE False
-        BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-input-gca/target/release
-
-        BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-input-gca/target/release/${GCA_LIB}
-    )
-endif(BUILD_INPUT_GCA)
-
 set(GLIDEN64_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-video-GLideN64")
 set(GLIDEN64_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-video-GLideN64")
 set(GLIDEN64_CUSTOM_INI "${GLIDEN64_DIR}/ini/GLideN64.custom.ini")
@@ -227,21 +224,6 @@ ExternalProject_Add(mupen64plus-video-parallel
     BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-video-parallel/mupen64plus-video-parallel.${SO_EXT}
 )
 
-if (DISCORD_RPC)
-    ExternalProject_Add(discord-rpc
-        SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/discord-rpc
-
-        INSTALL_COMMAND ""
-
-        BUILD_IN_SOURCE False
-        BUILD_ALWAYS True
-        CMAKE_ARGS -DBUILD_EXAMPLES=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON ${CMAKE_CONFIGURE_ARGS}
-        BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/discord-rpc
-
-        BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/discord-rpc/src/libdiscord-rpc.a
-    )
-endif(DISCORD_RPC)
-
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
 set(IMGUI_SOURCES
     ${IMGUI_DIR}/imgui_draw.cpp
@@ -289,11 +271,6 @@ set(MUPEN64PLUS_PLUGIN_RSP_PARALLEL ${BUILD_BYPRODUCTS} PARENT_SCOPE)
 ExternalProject_Get_property(mupen64plus-input-raphnetraw BUILD_BYPRODUCTS)
 set(MUPEN64PLUS_PLUGIN_INPUT_RAPHNET ${BUILD_BYPRODUCTS} PARENT_SCOPE)
 
-if (BUILD_INPUT_GCA)
-    ExternalProject_Get_property(mupen64plus-input-gca BUILD_BYPRODUCTS)
-    set(MUPEN64PLUS_PLUGIN_INPUT_GCA ${BUILD_BYPRODUCTS} PARENT_SCOPE)
-endif(BUILD_INPUT_GCA)
-
 if (USE_ANGRYLION)
     ExternalProject_Get_property(mupen64plus-video-angrylion-plus BUILD_BYPRODUCTS)
     set(MUPEN64PLUS_PLUGIN_GFX_ANGRYLION ${BUILD_BYPRODUCTS} PARENT_SCOPE)
@@ -305,11 +282,6 @@ set(MUPEN64PLUS_PLUGIN_GFX_GLIDEN64_DATA ${GLIDENUI_TRANSLATIONS} ${GLIDEN64_CUS
 
 ExternalProject_Get_property(mupen64plus-video-parallel BUILD_BYPRODUCTS)
 set(MUPEN64PLUS_PLUGIN_GFX_PARALLEL ${BUILD_BYPRODUCTS} PARENT_SCOPE)
-
-if (DISCORD_RPC)
-    ExternalProject_Get_property(discord-rpc BUILD_BYPRODUCTS)
-    set(DISCORD_RPC_LIB ${BUILD_BYPRODUCTS} PARENT_SCOPE)
-endif(DISCORD_RPC)
 
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui PARENT_SCOPE)
 

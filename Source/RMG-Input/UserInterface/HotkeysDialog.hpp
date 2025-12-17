@@ -13,7 +13,7 @@
 #include <QDialog>
 #include <string>
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include <RMG-Core/Settings.hpp>
 
@@ -40,10 +40,11 @@ Q_OBJECT
 
 private:
 
-    SDL_JoystickID currentJoystickId     = -1;
-    bool isCurrentJoystickGameController = false;
-    bool filterEventsForButtons          = false;
-    bool removeDuplicates                = false;
+    SDL_JoystickID currentJoystickId = -1;
+    SDL_Gamepad* currentGamepad = nullptr;
+    bool isCurrentJoystickGamepad = false;
+    bool filterEventsForButtons   = false;
+    bool removeDuplicates         = false;
 
     struct hotkeySettingMapping
     {
@@ -60,7 +61,7 @@ private:
 
 public:
     HotkeysDialog(QWidget *parent, QList<HotkeySettingMapping> hotkeySettingMappings, 
-        bool isGameController, SDL_JoystickID joystickId, 
+        SDL_JoystickID joystickId, SDL_Gamepad* gamepad,
         bool filterEvents, bool removeDuplicates);
 
     QList<HotkeySettingMapping> GetSettingMappings();

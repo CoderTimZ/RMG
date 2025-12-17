@@ -11,9 +11,6 @@
 #include "CachedRomHeaderAndSettings.hpp"
 #include "Directories.hpp"
 #include "MediaLoader.hpp"
-#ifdef DISCORD_RPC
-#include "DiscordRpc.hpp"
-#endif // DISCORD_RPC
 #include "Callback.hpp"
 #include "Settings.hpp"
 #include "Library.hpp"
@@ -58,18 +55,8 @@ static bool config_override_user_dirs(void)
 {
     std::string error;
     m64p_error  ret;
-    std::string dataDir;
-    std::string cacheDir;
-    bool        overrideUserDirs;
-
-    dataDir = CoreSettingsGetStringValue(SettingsID::Core_UserDataDirOverride);
-    cacheDir = CoreSettingsGetStringValue(SettingsID::Core_UserCacheDirOverride);
-    overrideUserDirs = CoreSettingsGetBoolValue(SettingsID::Core_OverrideUserDirs);
-
-    if (!overrideUserDirs)
-    {
-        return true;
-    }
+    const std::string dataDir = CoreGetUserDataDirectory().string();
+    const std::string cacheDir = CoreGetUserCacheDirectory().string();
 
     ret = m64p::Config.OverrideUserPaths(dataDir.c_str(), cacheDir.c_str());
     if (ret != M64ERR_SUCCESS)
@@ -177,12 +164,6 @@ CORE_EXPORT bool CoreInit(void)
     }
 
     CoreReadRomHeaderAndSettingsCache();
-
-#ifdef DISCORD_RPC
-    CoreDiscordRpcInit();
-    CoreDiscordRpcUpdate(false);
-#endif // DISCORD_RPC
-
     return true;
 }
 
@@ -191,10 +172,6 @@ CORE_EXPORT void CoreShutdown(void)
     CorePluginsShutdown();
 
     CoreSaveRomHeaderAndSettingsCache();
-
-#ifdef DISCORD_RPC
-    CoreDiscordRpcShutdown();
-#endif // DISCORD_RPC
 
     m64p::Core.Shutdown();
 
