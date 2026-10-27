@@ -560,8 +560,20 @@ void ControllerWidget::AddInputDevice(const InputDevice& device, const InputProf
 
     if (device.type == InputDeviceType::Joystick)
     {
+        // prefer the player index over the joystick id,
+        // for XInput devices it's the XInput slot, which
+        // stays the same between sessions
+        int playerIndex = SDL_GetJoystickPlayerIndexForID(device.id);
+
         name += " (";
-        name += QString::number(device.id);
+        if (playerIndex >= 0)
+        {
+            name += QString::number(playerIndex + 1);
+        }
+        else
+        {
+            name += QString::number(device.id);
+        }
         name += ")";
     }
 
@@ -704,6 +716,23 @@ void ControllerWidget::CheckInputDeviceSettings(QString sectionQString)
     else
     { // no match
         QString title = QString::fromStdString(deviceName);
+
+        // show the XInput slot from the device path,
+        // so it's clear which controller is missing
+        const QString xinputPathPrefix = "XInput#";
+        QString path = QString::fromStdString(devicePath);
+        if (path.startsWith(xinputPathPrefix))
+        {
+            bool isNumber = false;
+            int slot = path.mid(xinputPathPrefix.size()).toInt(&isNumber);
+            if (isNumber)
+            {
+                title += " (";
+                title += QString::number(slot + 1);
+                title += ")";
+            }
+        }
+
         title += " (not found)";
         this->inputDeviceComboBox->addItem(title, QVariant::fromValue<inputDeviceData>({ device, {} }));
         this->inputDeviceComboBox->setCurrentIndex(this->inputDeviceComboBox->count() - 1);

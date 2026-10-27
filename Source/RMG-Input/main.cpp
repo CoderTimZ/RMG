@@ -609,6 +609,15 @@ static void open_controller(InputProfile* profile, SDL_JoystickID* joysticks, in
     {
         joystickId = joysticks[i];
 
+        // skip devices with a different path before opening them,
+        // because opening a device can re-initialize it (i.e reset its LEDs),
+        // SDL_GetGamepadPathForID() returns the same path for gamepads
+        devicePath = string_from_const_char(SDL_GetJoystickPathForID(joystickId));
+        if (devicePath != profile->DevicePath)
+        {
+            continue;
+        }
+
         if (SDL_IsGamepad(joystickId))
         {
             gamepad = SDL_OpenGamepad(joystickId);
@@ -685,6 +694,20 @@ static void close_controller(InputProfile* profile)
         SDL_CloseJoystick(profile->SDLJoystick);
         profile->SDLJoystick = nullptr;
     }
+}
+
+static bool is_controller_connected(InputProfile* profile)
+{
+    if (profile->SDLGamepad != nullptr)
+    {
+        return SDL_GamepadConnected(profile->SDLGamepad);
+    }
+    else if (profile->SDLJoystick != nullptr)
+    {
+        return SDL_JoystickConnected(profile->SDLJoystick);
+    }
+
+    return false;
 }
 
 static void controller_rumble_start(InputProfile* profile)
@@ -1057,6 +1080,11 @@ static void sdl_init()
     std::string debugMessage;
     int ret = -1;
 
+    // ensure XInput devices are handled by the XInput driver,
+    // so their path and player index match the XInput slot,
+    // which keeps the controller order stable between sessions
+    SDL_SetHint(SDL_HINT_JOYSTICK_RAWINPUT, "0");
+
     for (const int subsystem : {SDL_INIT_GAMEPAD, SDL_INIT_HAPTIC})
     {
         if (!SDL_WasInit(subsystem))
@@ -1349,6 +1377,36 @@ EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
         return;
     }
 #endif // VRU
+
+    // check if device has been disconnected,
+    // if it has, try to open it again,
+    // only do this every 500ms to prevent lag,
+    // the joystick list is already refreshed
+    // by the core every frame
+    if (profile->DeviceType == InputDeviceType::Joystick)
+    {
+        const auto currentTime = std::chrono::high_resolution_clock::now();
+        const int msPassed     = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - profile->LastDeviceCheckTime).count();
+        if (msPassed >= 500)
+        {
+            profile->LastDeviceCheckTime = currentTime;
+
+            if (!is_controller_connected(profile))
+            {
+                close_controller(profile);
+
+                int joysticksCount = 0;
+                SDL_JoystickID* joysticks = SDL_GetJoysticks(&joysticksCount);
+
+                open_controller(profile, joysticks, joysticksCount);
+
+                if (joysticks != nullptr)
+                {
+                    SDL_free(joysticks);
+                }
+            }
+        }
+    }
 
     // when we've matched a hotkey,
     // we don't need to check anything
