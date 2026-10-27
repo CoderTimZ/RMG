@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: hendrikmuhs/ccache-action@v1.2
+      - uses: hendrikmuhs/ccache-action@v1.2.23
         with:
           key: linux-${{ matrix.architecture }}-${{ matrix.features }}-${{ matrix.configuration }}
       - name: Install Packages
@@ -54,7 +54,7 @@ jobs:
         run: |
           export sdl_dir="$(pwd)/../SDL3"
 
-          git clone https://github.com/libsdl-org/SDL.git "$sdl_dir" -b release-3.2.28 --depth=1
+          git clone https://github.com/libsdl-org/SDL.git "$sdl_dir" -b release-3.4.10 --depth=1
 
           mkdir -p "$sdl_dir/build"
           cmake -S "$sdl_dir" -B "$sdl_dir/build" \
@@ -94,7 +94,7 @@ jobs:
         shell: bash
       - name: Upload RMG (AppImage)
         if: ${{ matrix.features == 'ON' && matrix.architecture == 'x86_64' && matrix.configuration == 'Release' }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: RMG-Portable-Linux64-${{ env.GIT_REVISION }}
           path: Bin/*.AppImage
@@ -112,7 +112,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: hendrikmuhs/ccache-action@v1.2
+      - uses: hendrikmuhs/ccache-action@v1.2.23
         with:
           key: windows-${{ matrix.features }}-${{ matrix.configuration }}
       - uses: msys2/setup-msys2@v2
@@ -167,13 +167,13 @@ jobs:
         shell: msys2 {0}
       - name: Upload RMG (Portable)
         if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: RMG-Portable-Windows64-${{ env.GIT_REVISION }}
           path: Bin/Release/*
       - name: Upload RMG (Installer)
         if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: RMG-Setup-Windows64-${{ env.GIT_REVISION }}
           path: Bin/*.exe

@@ -28,7 +28,7 @@
 #include <3rdParty/lzma/7z.h>
 
 // minizip includes
-#include <unzip.h>
+#include <minizip/unzip.h>
 #ifndef ZNGLIB_H_
 /* sadly older minizip-ng versions didn't include zlib.h automatically,
  * so i.e voidpf would be undefined, in newer minizip-ng versions,
