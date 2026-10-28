@@ -198,7 +198,14 @@ void MainDialog::on_InputPollTimer_triggered()
     // we don't need to do anything
     if (!controllerWidget->IsPluggedIn())
     {
-        this->sdlThread->SetAction(SDLThreadAction::None);
+        // don't cancel a device search that hasn't started yet,
+        // otherwise the device list is never updated and refreshing
+        // doesn't work anymore, this happens when opening the dialog
+        // because "None" is selected until the device search finishes
+        if (this->sdlThread->GetCurrentAction() != SDLThreadAction::GetInputDevices)
+        {
+            this->sdlThread->SetAction(SDLThreadAction::None);
+        }
         return;
     }
 
