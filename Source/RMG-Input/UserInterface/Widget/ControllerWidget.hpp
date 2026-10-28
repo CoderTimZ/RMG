@@ -93,6 +93,8 @@ private:
     bool isCurrentDeviceKeyboard();
     bool isCurrentDeviceNotFound();
 
+    int getInputDeviceInsertIndex(const InputDevice& device);
+
     bool disabledAllChildren = false;
 
     void disableAllChildren();

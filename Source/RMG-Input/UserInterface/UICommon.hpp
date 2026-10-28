@@ -13,11 +13,22 @@
 #include <SDL3/SDL.h>
 #include <QString>
 
+#include <string>
+
+#define NUM_XINPUT_SLOTS 4
+
 namespace UICommon
 {
 
 // attempts to retrieve native button text for button from gamepad
 QString GetGamepadButtonText(SDL_Gamepad* gamepad, SDL_GamepadButton button);
+
+// returns the XInput slot from a device path,
+// or -1 when it isn't the path of an XInput device
+int GetXInputSlot(const std::string& path);
+
+// returns the device path of an XInput slot
+std::string GetXInputPath(int slot);
 
 };
 

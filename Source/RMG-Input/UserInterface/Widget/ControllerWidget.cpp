@@ -272,6 +272,26 @@ bool ControllerWidget::isCurrentDeviceNotFound()
     return title.endsWith("(not found)");
 }
 
+int ControllerWidget::getInputDeviceInsertIndex(const InputDevice& device)
+{
+    // keep XInput devices sorted by their slot,
+    // other devices are added at the end
+    int xinputSlot = UICommon::GetXInputSlot(device.path);
+    if (xinputSlot != -1)
+    {
+        for (int i = 0; i < this->inputDeviceComboBox->count(); i++)
+        {
+            inputDeviceData otherDeviceData = this->inputDeviceComboBox->itemData(i).value<inputDeviceData>();
+            if (UICommon::GetXInputSlot(otherDeviceData.device.path) > xinputSlot)
+            {
+                return i;
+            }
+        }
+    }
+
+    return this->inputDeviceComboBox->count();
+}
+
 void ControllerWidget::disableAllChildren()
 {
     if (this->disabledAllChildren)
@@ -577,14 +597,11 @@ void ControllerWidget::AddInputDevice(const InputDevice& device, const InputProf
         name += ")";
     }
 
-    this->inputDeviceComboBox->addItem(name, QVariant::fromValue<inputDeviceData>({ device, inputProfile }));
+    int index = this->getInputDeviceInsertIndex(device);
+    this->inputDeviceComboBox->insertItem(index, name, QVariant::fromValue<inputDeviceData>({ device, inputProfile }));
 
     // add tooltip to UI
-    int index = this->inputDeviceComboBox->findText(name);
-    if (index != -1)
-    {
-        this->inputDeviceComboBox->setItemData(index, name, Qt::ToolTipRole);
-    }
+    this->inputDeviceComboBox->setItemData(index, name, Qt::ToolTipRole);
 }
 
 void ControllerWidget::RemoveInputDevice(const InputDevice& device)
@@ -671,9 +688,49 @@ void ControllerWidget::CheckInputDeviceSettings(QString sectionQString)
 
     // clear (not found) devices first
     int notFoundIndex = this->inputDeviceComboBox->findText("(not found)", Qt::MatchFlag::MatchEndsWith);
-    if (notFoundIndex != -1)
+    while (notFoundIndex != -1)
     {
         this->inputDeviceComboBox->removeItem(notFoundIndex);
+        notFoundIndex = this->inputDeviceComboBox->findText("(not found)", Qt::MatchFlag::MatchEndsWith);
+    }
+
+    // show every XInput slot when there's a connected XInput device,
+    // or when the saved device is an XInput device, so each slot
+    // can be selected without its controller being connected
+    bool isXInputDevice = UICommon::GetXInputSlot(devicePath) != -1;
+    bool showXInputSlots = isXInputDevice;
+    bool hasXInputSlot[NUM_XINPUT_SLOTS] = { false };
+    std::string xinputDeviceName = deviceName;
+
+    for (int i = 0; i < this->inputDeviceComboBox->count(); i++)
+    {
+        inputDeviceData otherDeviceData = this->inputDeviceComboBox->itemData(i).value<inputDeviceData>();
+        int xinputSlot = UICommon::GetXInputSlot(otherDeviceData.device.path);
+        if (xinputSlot != -1)
+        {
+            showXInputSlots = true;
+            hasXInputSlot[xinputSlot] = true;
+            xinputDeviceName = otherDeviceData.device.name;
+        }
+    }
+
+    if (showXInputSlots)
+    {
+        for (int xinputSlot = 0; xinputSlot < NUM_XINPUT_SLOTS; xinputSlot++)
+        {
+            if (hasXInputSlot[xinputSlot])
+            {
+                continue;
+            }
+
+            InputDevice xinputDevice = { InputDeviceType::Joystick, xinputDeviceName, UICommon::GetXInputPath(xinputSlot), "" };
+
+            QString title = QString::fromStdString(xinputDeviceName);
+            title += " (";
+            title += QString::number(xinputSlot + 1);
+            title += ") (not found)";
+            this->inputDeviceComboBox->insertItem(this->getInputDeviceInsertIndex(xinputDevice), title, QVariant::fromValue<inputDeviceData>({ xinputDevice, {} }));
+        }
     }
 
     int deviceIndex = -1;
@@ -683,6 +740,19 @@ void ControllerWidget::CheckInputDeviceSettings(QString sectionQString)
     {
         inputDeviceData otherDeviceData = this->inputDeviceComboBox->itemData(i).value<inputDeviceData>();
         InputDevice otherDevice = otherDeviceData.device;
+
+        // XInput devices are matched by their slot only,
+        // which is part of the path
+        if (isXInputDevice)
+        {
+            if (device.path == otherDevice.path)
+            {
+                deviceIndex = i;
+                break;
+            }
+            continue;
+        }
+
         if (device.name == otherDevice.name &&
             device.serial == otherDevice.serial)
         {
@@ -716,23 +786,6 @@ void ControllerWidget::CheckInputDeviceSettings(QString sectionQString)
     else
     { // no match
         QString title = QString::fromStdString(deviceName);
-
-        // show the XInput slot from the device path,
-        // so it's clear which controller is missing
-        const QString xinputPathPrefix = "XInput#";
-        QString path = QString::fromStdString(devicePath);
-        if (path.startsWith(xinputPathPrefix))
-        {
-            bool isNumber = false;
-            int slot = path.mid(xinputPathPrefix.size()).toInt(&isNumber);
-            if (isNumber)
-            {
-                title += " (";
-                title += QString::number(slot + 1);
-                title += ")";
-            }
-        }
-
         title += " (not found)";
         this->inputDeviceComboBox->addItem(title, QVariant::fromValue<inputDeviceData>({ device, {} }));
         this->inputDeviceComboBox->setCurrentIndex(this->inputDeviceComboBox->count() - 1);

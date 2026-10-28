@@ -35,3 +35,29 @@ QString UICommon::GetGamepadButtonText(SDL_Gamepad* gamepad, SDL_GamepadButton b
 
     return text;
 }
+
+// SDL uses "XInput#<slot>" as the path of XInput devices
+static const QString l_XInputPathPrefix = "XInput#";
+
+int UICommon::GetXInputSlot(const std::string& path)
+{
+    QString pathString = QString::fromStdString(path);
+    if (!pathString.startsWith(l_XInputPathPrefix))
+    {
+        return -1;
+    }
+
+    bool isNumber = false;
+    int slot = pathString.mid(l_XInputPathPrefix.size()).toInt(&isNumber);
+    if (!isNumber || slot < 0 || slot >= NUM_XINPUT_SLOTS)
+    {
+        return -1;
+    }
+
+    return slot;
+}
+
+std::string UICommon::GetXInputPath(int slot)
+{
+    return (l_XInputPathPrefix + QString::number(slot)).toStdString();
+}

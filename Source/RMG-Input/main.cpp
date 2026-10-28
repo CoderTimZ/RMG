@@ -12,6 +12,7 @@
 #define INPUT_PLUGIN_API_VERSION 0x020100
 
 #include "UserInterface/MainDialog.hpp"
+#include "UserInterface/UICommon.hpp"
 #include "Thread/HotkeysThread.hpp"
 #include "Thread/SDLThread.hpp"
 #include "common.hpp"
@@ -605,6 +606,11 @@ static void open_controller(InputProfile* profile, SDL_JoystickID* joysticks, in
     std::string devicePath;
     std::string deviceSerial;
 
+    // XInput devices are matched by their slot only,
+    // which is part of the path, so any controller
+    // in the saved slot is used
+    const bool isXInputDevice = UICommon::GetXInputSlot(profile->DevicePath) != -1;
+
     for (int i = 0; i < joysticksCount; i++)
     {
         joystickId = joysticks[i];
@@ -658,9 +664,10 @@ static void open_controller(InputProfile* profile, SDL_JoystickID* joysticks, in
             deviceSerial = string_from_const_char(SDL_GetJoystickSerial(joystick));
         }
 
-        if (deviceName   == profile->DeviceName &&
-            devicePath   == profile->DevicePath &&
-            deviceSerial == profile->DeviceSerial)
+        if (isXInputDevice ||
+            (deviceName   == profile->DeviceName &&
+             devicePath   == profile->DevicePath &&
+             deviceSerial == profile->DeviceSerial))
         {
             profile->SDLJoystick = joystick;
             profile->SDLGamepad = gamepad;
