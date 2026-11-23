@@ -10,6 +10,11 @@
 
 static int cmd_cur;
 static int cmd_ptr;
+
+// For estimating how long the RDP takes to reach each full sync (DPC_CLOCK_REG, which the core delays the DP interrupt
+// by): the area of the most recent scissor, and the largest scissor area set since the last full sync (0 if none)
+static uint32_t last_scissor_area;
+static uint32_t scissor_area_since_sync;
 static uint32_t cmd_data[0x00040000 >> 2];
 
 static std::unique_ptr<RDP::CommandProcessor> processor;
@@ -444,11 +449,30 @@ void vk_process_commands()
 		if (command >= 8)
 			processor->enqueue_command(cmd_length * 2, &cmd_data[2 * cmd_cur]);
 
+		if (RDP::Op(command) == RDP::Op::SetScissor)
+		{
+			// Coordinates are 10.2 fixed point: upper left in the first word, lower right in the second
+			uint32_t w0 = cmd_data[2 * cmd_cur], w1 = cmd_data[2 * cmd_cur + 1];
+			uint32_t xh = (w0 >> 12) & 0xfff, yh = w0 & 0xfff, xl = (w1 >> 12) & 0xfff, yl = w1 & 0xfff;
+			uint32_t area = (xl > xh && yl > yh) ? ((xl - xh) >> 2) * ((yl - yh) >> 2) : 0;
+			last_scissor_area = area;
+			if (area > scissor_area_since_sync)
+				scissor_area_since_sync = area;
+		}
+
 		if (RDP::Op(command) == RDP::Op::SyncFull)
 		{
 			uint32_t width = viCalculateHorizonalWidth(*GET_GFX_INFO(VI_H_START_REG), *GET_GFX_INFO(VI_X_SCALE_REG), *GET_GFX_INFO(VI_WIDTH_REG));
 			uint32_t height = viCalculateVerticalHeight(*GET_GFX_INFO(VI_V_START_REG), *GET_GFX_INFO(VI_Y_SCALE_REG));
-			*GET_GFX_INFO(DPC_CLOCK_REG) = width * height * 2;
+			// Charge the RDP time for the area drawn since the last full sync (the scissor), not the whole screen:
+			// split-screen games full sync once per viewport, and charging the full screen for each made them
+			// slower than on hardware (e.g. Mario Party 3's four-player split-screen mini-games)
+			uint32_t area = width * height;
+			uint32_t drawn = scissor_area_since_sync ? scissor_area_since_sync : last_scissor_area;
+			if (drawn && drawn < area)
+				area = drawn;
+			scissor_area_since_sync = 0;
+			*GET_GFX_INFO(DPC_CLOCK_REG) = area * 2;
 
 			processor->wait_for_timeline(processor->signal_timeline());
 
