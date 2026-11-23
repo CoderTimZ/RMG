@@ -1325,15 +1325,15 @@ static bool init_surface_info(Device &device, WSIPlatform &platform,
 			allow_mailbox = false;
 #endif
 
-		for (auto &mode : present_modes)
-		{
-			if ((allow_immediate && mode == VK_PRESENT_MODE_IMMEDIATE_KHR) ||
-			    (allow_mailbox && mode == VK_PRESENT_MODE_MAILBOX_KHR))
-			{
-				swapchain_present_mode = mode;
-				break;
-			}
-		}
+		// Prefer IMMEDIATE over MAILBOX, whatever order the driver lists them in. NVIDIA on Windows lists MAILBOX first,
+		// and in a window it frees only two images per refresh, capping the frame rate at twice the refresh rate
+		// (e.g. 120 VI/s at 60 Hz with the speed limiter off) however many swapchain images there are.
+		bool has_immediate = std::find(present_modes.begin(), present_modes.end(), VK_PRESENT_MODE_IMMEDIATE_KHR) != present_modes.end();
+		bool has_mailbox = std::find(present_modes.begin(), present_modes.end(), VK_PRESENT_MODE_MAILBOX_KHR) != present_modes.end();
+		if (allow_immediate && has_immediate)
+			swapchain_present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+		else if (allow_mailbox && has_mailbox)
+			swapchain_present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
 	}
 
 	if (swapchain_present_mode == VK_PRESENT_MODE_FIFO_KHR && low_latency_mode_enable)
