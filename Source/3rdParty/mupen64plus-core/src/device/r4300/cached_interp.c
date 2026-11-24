@@ -87,7 +87,11 @@ void cached_interp_##name(void) \
         exec_cached_ops(r4300); \
         cp0_update_count(r4300); \
         r4300->delay_slot=0; \
-        if (take_jump && !r4300->skip_jump) \
+        if (execution_branch_cancelled) \
+        { \
+            execution_branch_cancelled = 0; \
+        } \
+        else if (take_jump && !r4300->skip_jump) \
         { \
             (*r4300_pc_struct(r4300))=r4300->cached_interp.actual->block+((jump_target-r4300->cached_interp.actual->start)>>2); \
         } \
@@ -120,7 +124,11 @@ void cached_interp_##name##_OUT(void) \
         exec_cached_ops(r4300); \
         cp0_update_count(r4300); \
         r4300->delay_slot=0; \
-        if (take_jump && !r4300->skip_jump) \
+        if (execution_branch_cancelled) \
+        { \
+            execution_branch_cancelled = 0; \
+        } \
+        else if (take_jump && !r4300->skip_jump) \
         { \
             generic_jump_to(r4300, jump_target); \
         } \
@@ -221,8 +229,13 @@ Used by dynarec only, check should be unnecessary
         if (!r4300->skip_jump)
         {
             exec_cached_ops(r4300);
-            r4300->cached_interp.actual = blk;
-            (*r4300_pc_struct(r4300)) = inst+1;
+            /* Back to the branch's block, for the branch to find its target in (unless the execution plugin jumped
+             * elsewhere, which cancels the branch) */
+            if (!execution_branch_cancelled)
+            {
+                r4300->cached_interp.actual = blk;
+                (*r4300_pc_struct(r4300)) = inst+1;
+            }
         }
         else
             exec_cached_ops(r4300);

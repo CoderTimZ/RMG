@@ -55,6 +55,9 @@ rsp_plugin_functions rsp;
 execution_plugin_functions execution;
 
 uint8_t execution_addr_mask[1024];
+int execution_branch_cancelled = 0;
+unsigned int execution_sync_exceptions = 0;
+int execution_reload_pending = 0;
 
 /* local data structures and functions */
 static const gfx_plugin_functions dummy_gfx = {
@@ -136,7 +139,9 @@ static const execution_plugin_functions dummy_execution = {
     dummyexecution_Write8,
     dummyexecution_Write16,
     dummyexecution_Write32,
-    dummyexecution_Write64
+    dummyexecution_Write64,
+    dummyexecution_StateLoaded,
+    dummyexecution_Reset
 };
 
 static GFX_INFO gfx_info;
@@ -559,6 +564,8 @@ static void plugin_disconnect_execution(void)
 {
     execution = dummy_execution;
     memset(&execution_addr_mask, 0, sizeof(execution_addr_mask));
+    execution_branch_cancelled = 0;
+    execution_reload_pending = 0;
     l_ExecutionAttached = 0;
 }
 
@@ -567,6 +574,9 @@ static m64p_error plugin_connect_execution(m64p_dynlib_handle plugin_handle)
     /* attach the Execution plugin function pointers */
     if (plugin_handle != NULL)
     {
+        m64p_plugin_type PluginType;
+        int PluginVersion, APIVersion;
+
         if (l_ExecutionAttached)
             return M64ERR_INVALID_STATE;
 
@@ -590,6 +600,21 @@ static m64p_error plugin_connect_execution(m64p_dynlib_handle plugin_handle)
             DebugMessage(M64MSG_ERROR, "broken execution plugin; function(s) not found.");
             plugin_disconnect_execution();
             return M64ERR_INPUT_INVALID;
+        }
+
+        /* optional functions */
+        if (!GET_FUNC(ptr_StateLoaded, execution.stateLoaded, "StateLoaded"))
+            execution.stateLoaded = dummyexecution_StateLoaded;
+        if (!GET_FUNC(ptr_Reset, execution.reset, "Reset"))
+            execution.reset = dummyexecution_Reset;
+
+        /* check the version info */
+        (*execution.getVersion)(&PluginType, &PluginVersion, &APIVersion, NULL, NULL);
+        if (PluginType != M64PLUGIN_EXECUTION || (APIVersion & 0xffff0000) != (EXECUTION_API_VERSION & 0xffff0000))
+        {
+            DebugMessage(M64MSG_ERROR, "incompatible execution plugin");
+            plugin_disconnect_execution();
+            return M64ERR_INCOMPATIBLE;
         }
 
         l_ExecutionAttached = 1;
@@ -669,21 +694,80 @@ m64p_error plugin_check(void)
     return M64ERR_SUCCESS;
 }
 
-void save_state()
+static void save_state(void)
 {
     main_state_save(1, NULL);
+}
+
+/* jump() for the plugin: continues at the address instead of the current instruction (from Execute), or after the
+ * current instruction (from the other callbacks) */
+static void execution_jump(uint32_t address)
+{
+    struct r4300_core* r4300 = &g_dev.r4300;
+
+    /* The interpreters count cycles from how far the PC got since the last branch (cp0.last_addr): count what ran up
+     * to here, then count from the new address, as a branch does. Without this, the next count added the distance
+     * jumped: about a cycle per 4 bytes forward, and about 2^30 cycles for a jump back (the subtraction wrapped). */
+    cp0_update_count(r4300);
+
+    /* In a delay slot, the branch would take the PC away from where the plugin wants it */
+    if (r4300->delay_slot)
+        execution_branch_cancelled = 1;
+
+    generic_jump_to(r4300, address);
+    r4300->cp0.last_addr = *r4300_pc(r4300);
+}
+
+static void invalidate_code(uint32_t addr, uint32_t size)
+{
+    struct r4300_core* r4300 = &g_dev.r4300;
+    uint32_t start, end;
+
+    if (size == 0 || r4300->emumode == EMUMODE_PURE_INTERPRETER)
+        return;
+
+    start = addr & ~UINT32_C(3);
+    end = (addr + size + 3) & ~UINT32_C(3);
+
+    /* KSEG0 and KSEG1, as a game's own writes do (TLB-mapped addresses are invalidated as they are) */
+    if ((start & UINT32_C(0xc0000000)) == UINT32_C(0x80000000))
+    {
+        invalidate_r4300_cached_code(r4300, (start & UINT32_C(0x1fffffff)) | UINT32_C(0x80000000), end - start);
+        invalidate_r4300_cached_code(r4300, (start & UINT32_C(0x1fffffff)) | UINT32_C(0xa0000000), end - start);
+    }
+    else
+    {
+        invalidate_r4300_cached_code(r4300, start, end - start);
+    }
+
+    execution_reload_pending = 1;
+}
+
+EXPORT void CALL ExecutionInvalidateCode(uint32_t addr, uint32_t size)
+{
+    if (!g_EmulatorRunning)
+        return;
+
+    invalidate_code(addr, size);
 }
 
 void initiate_execution_plugin(void)
 {
     memset(&execution_addr_mask, 0, sizeof(execution_addr_mask));
-    
+    execution_branch_cancelled = 0;
+    execution_reload_pending = 0;
+
+    /* Only the interpreters send Execute, ExecuteDone and the reads and writes */
+    if (l_ExecutionAttached && g_dev.r4300.emumode == EMUMODE_DYNAREC)
+        DebugMessage(M64MSG_WARNING, "The execution plugin can't follow the game's code with the dynamic recompiler: "
+                                     "use the cached interpreter or the pure interpreter");
+
     execution_info.window = NULL;
     execution_info.rom_name = ROM_HEADER.Name;
     execution_info.rom_hash = (uint8_t*)ROM_SETTINGS.MD5;
     execution_info.addr_mask = execution_addr_mask;
     execution_info.pc = r4300_pc_g;
-    execution_info.jump = jump;
+    execution_info.jump = execution_jump;
     execution_info.gpr = r4300_regs(&g_dev.r4300);
     execution_info.fpr = (double*)r4300_cp1_regs(&g_dev.r4300.cp1);
     execution_info.rdram = mem_base_u32(g_mem_base, MM_RDRAM_DRAM);
@@ -691,4 +775,17 @@ void initiate_execution_plugin(void)
     execution_info.save_state = save_state;
     execution_info.set_save_state_slot = main_state_set_slot;
     execution.initiateExecution(execution_info);
+}
+
+void execution_state_loaded(void)
+{
+    /* A jump the plugin made in a delay slot belongs to the state before the load */
+    execution_branch_cancelled = 0;
+    execution.stateLoaded();
+}
+
+void execution_reset(int hard)
+{
+    execution_branch_cancelled = 0;
+    execution.reset(hard);
 }

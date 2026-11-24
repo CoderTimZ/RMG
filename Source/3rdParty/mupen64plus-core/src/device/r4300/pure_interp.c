@@ -59,13 +59,14 @@ static void InterpretOpcode(struct r4300_core* r4300);
       { \
         r4300->interp_PC.addr += 4; \
         r4300->delay_slot=1; \
-        const uint32_t pc = r4300->interp_PC.addr; \
-        if (execution_addr_masked(pc)) execution.execute(pc); \
         InterpretOpcode(r4300); \
-        if (execution_addr_masked(pc)) execution.executeDone(pc); \
         cp0_update_count(r4300); \
         r4300->delay_slot=0; \
-        if (take_jump && !r4300->skip_jump) \
+        if (execution_branch_cancelled) \
+        { \
+          execution_branch_cancelled = 0; \
+        } \
+        else if (take_jump && !r4300->skip_jump) \
         { \
           r4300->interp_PC.addr = jump_target; \
         } \
@@ -166,17 +167,18 @@ static void InterpretOpcode(struct r4300_core* r4300);
 
 #include "mips_instructions.def"
 
-int rounding_mode = -1;
-
 void InterpretOpcode(struct r4300_core* r4300)
 {
 	uint32_t pc = *r4300_pc(r4300);
+	unsigned int exceptions;
 
 	if (execution_addr_masked(pc))
 	{
 		execution.execute(pc);
-		if (*r4300_pc(r4300) != pc) return;
+		if (*r4300_pc(r4300) != pc) return; /* the plugin jumped elsewhere */
 	}
+
+	exceptions = execution_sync_exceptions;
 
 	uint32_t* op_address = fast_mem_access(r4300, pc);
 	if (op_address == NULL)
@@ -765,7 +767,8 @@ void InterpretOpcode(struct r4300_core* r4300)
 		break;
 	} /* switch ((op >> 26) & 0x3F) */
 
-	if (execution_addr_masked(pc))
+	/* Not when the instruction raised an exception: it didn't complete (and runs again after the handler) */
+	if (execution_addr_masked(pc) && execution_sync_exceptions == exceptions)
 	{
 		execution.executeDone(pc);
 	}

@@ -248,29 +248,56 @@ unsigned int* r4300_llbit(struct r4300_core* r4300)
     return &r4300->llbit;
 }
 
-uint32_t r4300_pc_g() {
+uint32_t r4300_pc_g(void) {
     return *r4300_pc(&g_dev.r4300);
 }
 
-void jump(uint32_t address) {
-    generic_jump_to(&g_dev.r4300, address);
-}
+/* Runs the cached interpreter's current instruction, with the execution plugin's Execute and ExecuteDone around it */
+void exec_cached_ops(struct r4300_core* r4300)
+{
+    struct precomp_instr* inst = *r4300_pc_struct(r4300);
+    uint32_t pc = inst->addr;
+    unsigned int exceptions;
 
-void exec_cached_ops(struct r4300_core* r4300) {
-	uint32_t pc = *r4300_pc(r4300);
+    /* Most instructions: nothing for the plugin */
+    if (!(execution_addr_masked(pc) | execution_reload_pending))
+    {
+        inst->ops();
+        return;
+    }
 
-	if (execution_addr_masked(pc))
-	{
-		execution.execute(pc);
-		if (*r4300_pc(r4300) != pc) return;
-	}
+    /* FIN_BLOCK isn't an instruction (its address is the next block's first instruction): it moves to the next block
+     * and runs that instruction through here */
+    if (inst->ops == cached_interp_FIN_BLOCK)
+    {
+        inst->ops();
+        return;
+    }
+
+    if (execution_addr_masked(pc))
+    {
+        execution.execute(pc);
+        if (*r4300_pc(r4300) != pc) return; /* the plugin jumped elsewhere */
+    }
+
+    if (execution_reload_pending)
+    {
+        /* The plugin changed code: if that made the current block invalid, load it again (it's decoded from memory as
+         * it runs), so a change just ahead of this instruction, or to it, is seen at once */
+        execution_reload_pending = 0;
+        if (r4300->cached_interp.invalid_code[pc >> 12])
+            generic_jump_to(r4300, pc);
+    }
+
+    exceptions = execution_sync_exceptions;
 
     (*r4300_pc_struct(r4300))->ops();
 
-	if (execution_addr_masked(pc))
-	{
-		execution.executeDone(pc);
-	}
+    /* Not when the instruction raised an exception: it didn't complete (and runs again after the handler) */
+    if (execution_addr_masked(pc) && execution_sync_exceptions == exceptions)
+    {
+        execution.executeDone(pc);
+    }
 }
 
 uint32_t* r4300_pc(struct r4300_core* r4300)

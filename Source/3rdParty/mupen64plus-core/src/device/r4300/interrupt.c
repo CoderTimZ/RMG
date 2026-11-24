@@ -45,6 +45,7 @@
 #include "device/rcp/vi/vi_controller.h"
 #include "main/main.h"
 #include "main/savestates.h"
+#include "plugin/plugin.h"
 
 
 /***************************************************************************
@@ -471,6 +472,8 @@ void nmi_int_handler(void* opaque)
     // set next instruction address to reset vector
     r4300->cp0.last_addr = r4300->start_address;
     generic_jump_to(r4300, r4300->start_address);
+
+    execution_reset(0);
 }
 
 
@@ -523,6 +526,8 @@ void reset_hard_handler(void* opaque)
 #endif
     }
     generic_jump_to(r4300, r4300->cp0.last_addr);
+
+    execution_reset(1);
 }
 
 

@@ -1951,6 +1951,10 @@ m64p_error main_run(void)
                 dd_rom_size,
                 &dd_disk, dd_idisk);
 
+    // the execution plugin's frame count and the VI/s measurement start again for each game
+    l_CurrentVI = 0;
+    l_LastVITime = -1;
+
     initiate_execution_plugin();
 
     // Attach rom to plugins

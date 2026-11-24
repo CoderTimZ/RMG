@@ -26,6 +26,7 @@
 #include "r4300_core.h"
 #include "new_dynarec/new_dynarec.h"
 #include "recomp.h"
+#include "plugin/plugin.h"
 
 #ifdef COMPARE_CORE
 #include "api/debugger.h"
@@ -183,6 +184,10 @@ void cp0_update_count(struct r4300_core* r4300)
 
 static void exception_epilog(struct r4300_core* r4300)
 {
+    /* An exception the current instruction raised (not an interrupt): the execution plugin isn't sent ExecuteDone */
+    if (r4300_cp0_regs(&r4300->cp0)[CP0_CAUSE_REG] & CP0_CAUSE_EXCCODE_MASK)
+        execution_sync_exceptions++;
+
 #ifndef NO_ASM
 #ifndef NEW_DYNAREC
     if (r4300->emumode == EMUMODE_DYNAREC)

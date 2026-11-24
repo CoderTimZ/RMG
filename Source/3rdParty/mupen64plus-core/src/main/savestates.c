@@ -1486,6 +1486,10 @@ int savestates_load(void)
         filepath = NULL;
     }
 
+    // let the execution plugin know (it may have been in the middle of something in the state before)
+    if (ret)
+        execution_state_loaded();
+
     // deliver callback to indicate completion of state loading operation
     StateChanged(M64CORE_STATE_LOADCOMPLETE, ret);
 

@@ -146,6 +146,13 @@ DECLARE_INSTRUCTION(BREAK)
     exception_general(r4300);
 }
 
+/* Execution plugin: whether an address is in RDRAM through KSEG0 or KSEG1, where reading it has no side effects (for
+ * showing the plugin the whole word or doubleword a partial store makes) */
+static int execution_rdram_addr(uint32_t addr)
+{
+    return (addr & UINT32_C(0xc0000000)) == UINT32_C(0x80000000) && (addr & UINT32_C(0x1fffffff)) < UINT32_C(0x00800000);
+}
+
 /* Load instructions */
 
 DECLARE_INSTRUCTION(LB)
@@ -268,6 +275,8 @@ DECLARE_INSTRUCTION(LWL)
     uint32_t value;
 
     if (r4300_read_aligned_word(r4300, lsaddr, &value)) {
+        /* The plugin is shown the whole (aligned) word the bytes come from */
+        if (execution_addr_masked(lsaddr)) execution.read32(&value, PCADDR - 4, lsaddr & ~UINT32_C(3));
         *lsrtp = SE32(((uint32_t)*lsrtp & mask) | ((uint32_t)value << shift));
     }
 }
@@ -287,6 +296,8 @@ DECLARE_INSTRUCTION(LWR)
     uint32_t value;
 
     if (r4300_read_aligned_word(r4300, lsaddr, &value)) {
+        /* The plugin is shown the whole (aligned) word the bytes come from */
+        if (execution_addr_masked(lsaddr)) execution.read32(&value, PCADDR - 4, lsaddr & ~UINT32_C(3));
         *lsrtp = SE32(((uint32_t)*lsrtp & mask) | ((uint32_t)value >> shift));
     }
 }
@@ -297,9 +308,12 @@ DECLARE_INSTRUCTION(LD)
     const uint32_t lsaddr = (uint32_t) irs32 + (uint32_t) iimmediate;
     int64_t *lsrtp = &irt;
     ADD_TO_PC(1);
+    uint64_t value;
 
-    r4300_read_aligned_dword(r4300, lsaddr, (uint64_t*)lsrtp);
-    if (execution_addr_masked(lsaddr)) execution.read64((uint64_t*)lsrtp, PCADDR - 4, lsaddr);
+    if (r4300_read_aligned_dword(r4300, lsaddr, &value)) {
+        if (execution_dword_masked(lsaddr)) execution.read64(&value, PCADDR - 4, lsaddr);
+        *lsrtp = value;
+    }
 }
 
 DECLARE_INSTRUCTION(LDL)
@@ -315,6 +329,8 @@ DECLARE_INSTRUCTION(LDL)
     uint64_t value;
 
     if (r4300_read_aligned_dword(r4300, lsaddr & ~UINT32_C(7), &value)) {
+        /* The plugin is shown the whole (aligned) doubleword the bytes come from */
+        if (execution_dword_masked(lsaddr & ~UINT32_C(7))) execution.read64(&value, PCADDR - 4, lsaddr & ~UINT32_C(7));
         *lsrtp = ((uint64_t)*lsrtp & mask) | (value << shift);
     }
 }
@@ -334,6 +350,8 @@ DECLARE_INSTRUCTION(LDR)
     uint64_t value;
 
     if (r4300_read_aligned_dword(r4300, lsaddr & ~UINT32_C(7), &value)) {
+        /* The plugin is shown the whole (aligned) doubleword the bytes come from */
+        if (execution_dword_masked(lsaddr & ~UINT32_C(7))) execution.read64(&value, PCADDR - 4, lsaddr & ~UINT32_C(7));
         *lsrtp = ((uint64_t)*lsrtp & mask) | (value >> shift);
     }
 }
@@ -413,8 +431,18 @@ DECLARE_INSTRUCTION(SWL)
         ? ~UINT32_C(0)
         : BITS_BELOW_MASK32(8 * (4 - n));
     uint32_t value = (uint32_t)*lsrtp;
+    const uint32_t aligned = lsaddr & ~UINT32_C(0x3);
+    uint32_t word;
 
-    r4300_write_aligned_word(r4300, lsaddr & ~UINT32_C(0x3), value >> shift, mask);
+    /* The plugin is shown the whole word as the store leaves it (and can change all of it) */
+    if (execution_addr_masked(aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_word(r4300, aligned, &word)) {
+        word = (word & ~mask) | ((value >> shift) & mask);
+        execution.write32(&word, PCADDR - 4, aligned);
+        r4300_write_aligned_word(r4300, aligned, word, ~UINT32_C(0));
+        return;
+    }
+
+    r4300_write_aligned_word(r4300, aligned, value >> shift, mask);
 }
 
 DECLARE_INSTRUCTION(SWR)
@@ -428,8 +456,18 @@ DECLARE_INSTRUCTION(SWR)
     unsigned int shift = 8 * (3 - n);
     uint32_t mask = BITS_ABOVE_MASK32(8 * (3 - n));
     uint32_t value = (uint32_t)*lsrtp;
+    const uint32_t aligned = lsaddr & ~UINT32_C(0x3);
+    uint32_t word;
 
-    r4300_write_aligned_word(r4300, lsaddr & ~UINT32_C(0x3), value << shift, mask);
+    /* The plugin is shown the whole word as the store leaves it (and can change all of it) */
+    if (execution_addr_masked(aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_word(r4300, aligned, &word)) {
+        word = (word & ~mask) | ((value << shift) & mask);
+        execution.write32(&word, PCADDR - 4, aligned);
+        r4300_write_aligned_word(r4300, aligned, word, ~UINT32_C(0));
+        return;
+    }
+
+    r4300_write_aligned_word(r4300, aligned, value << shift, mask);
 }
 
 DECLARE_INSTRUCTION(SD)
@@ -439,8 +477,9 @@ DECLARE_INSTRUCTION(SD)
     int64_t *lsrtp = &irt;
     ADD_TO_PC(1);
 
-    if (execution_addr_masked(lsaddr)) execution.write64((uint64_t*)lsrtp, PCADDR - 4, lsaddr);
-    r4300_write_aligned_dword(r4300, lsaddr, (uint64_t)*lsrtp, ~UINT64_C(0));
+    uint64_t v = (uint64_t)*lsrtp; /* a copy: the plugin may change what's written, not the register */
+    if (execution_dword_masked(lsaddr)) execution.write64(&v, PCADDR - 4, lsaddr);
+    r4300_write_aligned_dword(r4300, lsaddr, v, ~UINT64_C(0));
 }
 
 DECLARE_INSTRUCTION(SDL)
@@ -456,8 +495,18 @@ DECLARE_INSTRUCTION(SDL)
         ? ~UINT64_C(0)
         : BITS_BELOW_MASK64(8 * (8 - n));
     uint64_t value = (uint64_t)*lsrtp;
+    const uint32_t aligned = lsaddr & ~UINT32_C(0x7);
+    uint64_t dword;
 
-    r4300_write_aligned_dword(r4300, lsaddr & ~UINT32_C(0x7), value >> shift, mask);
+    /* The plugin is shown the whole doubleword as the store leaves it (and can change all of it) */
+    if (execution_dword_masked(aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_dword(r4300, aligned, &dword)) {
+        dword = (dword & ~mask) | ((value >> shift) & mask);
+        execution.write64(&dword, PCADDR - 4, aligned);
+        r4300_write_aligned_dword(r4300, aligned, dword, ~UINT64_C(0));
+        return;
+    }
+
+    r4300_write_aligned_dword(r4300, aligned, value >> shift, mask);
 }
 
 DECLARE_INSTRUCTION(SDR)
@@ -471,8 +520,18 @@ DECLARE_INSTRUCTION(SDR)
     unsigned int shift = 8 * (7 - n);
     uint64_t mask = BITS_ABOVE_MASK64(8 * (7 - n));
     uint64_t value = (uint64_t)*lsrtp;
+    const uint32_t aligned = lsaddr & ~UINT32_C(0x7);
+    uint64_t dword;
 
-    r4300_write_aligned_dword(r4300, lsaddr & ~UINT32_C(0x7), value << shift, mask);
+    /* The plugin is shown the whole doubleword as the store leaves it (and can change all of it) */
+    if (execution_dword_masked(aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_dword(r4300, aligned, &dword)) {
+        dword = (dword & ~mask) | ((value << shift) & mask);
+        execution.write64(&dword, PCADDR - 4, aligned);
+        r4300_write_aligned_dword(r4300, aligned, dword, ~UINT64_C(0));
+        return;
+    }
+
+    r4300_write_aligned_dword(r4300, aligned, value << shift, mask);
 }
 
 /* Computational instructions */
@@ -1472,10 +1531,14 @@ DECLARE_INSTRUCTION(LWC1)
     DECLARE_R4300
     const unsigned char lslfft = lfft;
     const uint32_t lslfaddr = (uint32_t) r4300_regs(r4300)[lfbase] + lfoffset;
+    uint32_t value;
     if (check_cop1_unusable(r4300)) { return; }
     ADD_TO_PC(1);
 
-    r4300_read_aligned_word(r4300, lslfaddr, (uint32_t*)r4300_cp1_regs_simple(&r4300->cp1)[lslfft]);
+    if (r4300_read_aligned_word(r4300, lslfaddr, &value)) {
+        if (execution_addr_masked(lslfaddr)) execution.read32(&value, PCADDR - 4, lslfaddr);
+        *((uint32_t*)r4300_cp1_regs_simple(&r4300->cp1)[lslfft]) = value;
+    }
 }
 
 DECLARE_INSTRUCTION(LDC1)
@@ -1483,10 +1546,14 @@ DECLARE_INSTRUCTION(LDC1)
     DECLARE_R4300
     const unsigned char lslfft = lfft;
     const uint32_t lslfaddr = (uint32_t) r4300_regs(r4300)[lfbase] + lfoffset;
+    uint64_t value;
     if (check_cop1_unusable(r4300)) { return; }
     ADD_TO_PC(1);
 
-    r4300_read_aligned_dword(r4300, lslfaddr, (uint64_t*)r4300_cp1_regs_double(&r4300->cp1)[lslfft]);
+    if (r4300_read_aligned_dword(r4300, lslfaddr, &value)) {
+        if (execution_dword_masked(lslfaddr)) execution.read64(&value, PCADDR - 4, lslfaddr);
+        *((uint64_t*)r4300_cp1_regs_double(&r4300->cp1)[lslfft]) = value;
+    }
 }
 
 DECLARE_INSTRUCTION(SWC1)
@@ -1494,10 +1561,13 @@ DECLARE_INSTRUCTION(SWC1)
     DECLARE_R4300
     const unsigned char lslfft = lfft;
     const uint32_t lslfaddr = (uint32_t) r4300_regs(r4300)[lfbase] + lfoffset;
+    uint32_t value;
     if (check_cop1_unusable(r4300)) { return; }
     ADD_TO_PC(1);
 
-    r4300_write_aligned_word(r4300, lslfaddr, *((uint32_t*)(r4300_cp1_regs_simple(&r4300->cp1))[lslfft]), ~UINT32_C(0));
+    value = *((uint32_t*)(r4300_cp1_regs_simple(&r4300->cp1))[lslfft]);
+    if (execution_addr_masked(lslfaddr)) execution.write32(&value, PCADDR - 4, lslfaddr);
+    r4300_write_aligned_word(r4300, lslfaddr, value, ~UINT32_C(0));
 }
 
 DECLARE_INSTRUCTION(SDC1)
@@ -1505,10 +1575,13 @@ DECLARE_INSTRUCTION(SDC1)
     DECLARE_R4300
     const unsigned char lslfft = lfft;
     const uint32_t lslfaddr = (uint32_t) r4300_regs(r4300)[lfbase] + lfoffset;
+    uint64_t value;
     if (check_cop1_unusable(r4300)) { return; }
     ADD_TO_PC(1);
 
-    r4300_write_aligned_dword(r4300, lslfaddr, *((uint64_t*)(r4300_cp1_regs_double(&r4300->cp1))[lslfft]), ~UINT64_C(0));
+    value = *((uint64_t*)(r4300_cp1_regs_double(&r4300->cp1))[lslfft]);
+    if (execution_dword_masked(lslfaddr)) execution.write64(&value, PCADDR - 4, lslfaddr);
+    r4300_write_aligned_dword(r4300, lslfaddr, value, ~UINT64_C(0));
 }
 
 DECLARE_INSTRUCTION(MFC1)

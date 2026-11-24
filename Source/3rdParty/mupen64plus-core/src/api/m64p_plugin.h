@@ -322,6 +322,13 @@ typedef void(*ptr_Write8) (uint8_t*  value, uint32_t pc, uint32_t addr);
 typedef void(*ptr_Write16)(uint16_t* value, uint32_t pc, uint32_t addr);
 typedef void(*ptr_Write32)(uint32_t* value, uint32_t pc, uint32_t addr);
 typedef void(*ptr_Write64)(uint64_t* value, uint32_t pc, uint32_t addr);
+/* Optional plugin functions: the core calls them when the plugin exports them */
+typedef void(*ptr_StateLoaded)(void);  /* after a save state was loaded */
+typedef void(*ptr_Reset)(int hard);    /* when the game is reset (hard = 1 for a hard reset) */
+/* Exported by the core (find it with the core's library handle): tells the cached interpreter and the dynarec that the
+ * plugin changed code at the address, so they don't keep running the old instructions. The address is a virtual
+ * address in KSEG0 or KSEG1 (like 0x80001234); both are invalidated. */
+typedef void(*ptr_ExecutionInvalidateCode)(uint32_t addr, uint32_t size);
 #if defined(M64P_PLUGIN_PROTOTYPES)
 EXPORT void CALL InitiateExecution(EXECUTION_INFO ExecutionInfo);
 EXPORT void CALL Input(int port, BUTTONS* buttons);
@@ -336,6 +343,8 @@ EXPORT void CALL Write8 (uint8_t*  value, uint32_t pc, uint32_t addr);
 EXPORT void CALL Write16(uint16_t* value, uint32_t pc, uint32_t addr);
 EXPORT void CALL Write32(uint32_t* value, uint32_t pc, uint32_t addr);
 EXPORT void CALL Write64(uint64_t* value, uint32_t pc, uint32_t addr);
+EXPORT void CALL StateLoaded(void);
+EXPORT void CALL Reset(int hard);
 #endif
 
 #ifdef __cplusplus

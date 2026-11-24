@@ -42,5 +42,7 @@ extern void dummyexecution_Write8(uint8_t* value, uint32_t pc, uint32_t addr);
 extern void dummyexecution_Write16(uint16_t* value, uint32_t pc, uint32_t addr);
 extern void dummyexecution_Write32(uint32_t* value, uint32_t pc, uint32_t addr);
 extern void dummyexecution_Write64(uint64_t* value, uint32_t pc, uint32_t addr);
+extern void dummyexecution_StateLoaded(void);
+extern void dummyexecution_Reset(int hard);
 
 #endif /* DUMMY_EXECUTION_H */

@@ -35,7 +35,7 @@ m64p_error dummyexecution_PluginGetVersion(m64p_plugin_type *PluginType, int *Pl
         *PluginVersion = 0x00010000;
 
     if (APIVersion != NULL)
-        *APIVersion = INPUT_API_VERSION;
+        *APIVersion = EXECUTION_API_VERSION;
 
     if (PluginNamePtr != NULL)
         *PluginNamePtr = "Mupen64Plus-NoExecution";
@@ -104,5 +104,13 @@ void dummyexecution_Write32(uint32_t* value, uint32_t pc, uint32_t addr)
 }
 
 void dummyexecution_Write64(uint64_t* value, uint32_t pc, uint32_t addr)
+{
+}
+
+void dummyexecution_StateLoaded(void)
+{
+}
+
+void dummyexecution_Reset(int hard)
 {
 }
