@@ -751,16 +751,16 @@ EXPORT void CALL ExecutionInvalidateCode(uint32_t addr, uint32_t size)
     invalidate_code(addr, size);
 }
 
+int execution_plugin_attached(void)
+{
+    return l_ExecutionAttached;
+}
+
 void initiate_execution_plugin(void)
 {
     memset(&execution_addr_mask, 0, sizeof(execution_addr_mask));
     execution_branch_cancelled = 0;
     execution_reload_pending = 0;
-
-    /* Only the interpreters send Execute, ExecuteDone and the reads and writes */
-    if (l_ExecutionAttached && g_dev.r4300.emumode == EMUMODE_DYNAREC)
-        DebugMessage(M64MSG_WARNING, "The execution plugin can't follow the game's code with the dynamic recompiler: "
-                                     "use the cached interpreter or the pure interpreter");
 
     execution_info.window = NULL;
     execution_info.rom_name = ROM_HEADER.Name;

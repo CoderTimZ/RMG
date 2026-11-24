@@ -162,6 +162,7 @@ extern unsigned int execution_sync_exceptions;
  * instruction, so a change to code just ahead of the current instruction is seen right away */
 extern int execution_reload_pending;
 
+extern int execution_plugin_attached(void);
 extern void initiate_execution_plugin(void);
 extern void execution_state_loaded(void);
 extern void execution_reset(int hard);
