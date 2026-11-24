@@ -178,6 +178,11 @@ public:
 		return backbuffer_format;
 	}
 
+	inline bool has_swapchain_image() const
+	{
+		return has_acquired_swapchain_index;
+	}
+
 	inline VkColorSpaceKHR get_backbuffer_color_space() const
 	{
 		return swapchain_surface_format.colorSpace;

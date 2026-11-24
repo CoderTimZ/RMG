@@ -269,7 +269,8 @@ void vk_rasterize()
 	processor->set_quirks(quirks);
 
 	auto &device = wsi->get_device();
-	render_frame(device);
+	if (wsi->has_swapchain_image())
+		render_frame(device);
 	(*render_callback)(1);
 	wsi->end_frame();
 	wsi->begin_frame();
