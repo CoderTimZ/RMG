@@ -67,17 +67,29 @@ static __inline float  truncf(float x) { return (float)(int)x; }
 #define FCR31_FLAG_INVALIDOP_BIT UINT32_C(0x000040)
 
 
-extern int rounding_mode;
+#if defined(__x86_64__) || defined(_M_X64)
+#include <xmmintrin.h>
+#endif
 
+/* Sets the host's rounding mode to the N64's. fesetround() is slow, so it's only called when the mode the thread
+ * actually has is different. That's read from the thread itself, not remembered: the rounding mode belongs to each
+ * thread (and each game runs on a new emulation thread), and plugins called on this thread could change it. */
 M64P_FPU_INLINE void set_rounding(uint32_t fcr31)
 {
-    int new_rounding_mode = fcr31 & 3;
-    if (new_rounding_mode == rounding_mode) {
+#if defined(__x86_64__) || defined(_M_X64)
+    /* MXCSR's rounding control (what SSE math uses) for each N64 mode: nearest, toward 0, up, down */
+    static const unsigned int mxcsr_rounding[4] = { 0x0000, 0x6000, 0x4000, 0x2000 };
+    if ((_mm_getcsr() & 0x6000) == mxcsr_rounding[fcr31 & 3]) {
         return;
     }
-    rounding_mode = new_rounding_mode;
+#else
+    static const int fe_rounding[4] = { FE_TONEAREST, FE_TOWARDZERO, FE_UPWARD, FE_DOWNWARD };
+    if (fegetround() == fe_rounding[fcr31 & 3]) {
+        return;
+    }
+#endif
 
-    switch(rounding_mode) {
+    switch(fcr31 & 3) {
     case 0: /* Round to nearest, or to even if equidistant */
         fesetround(FE_TONEAREST);
         break;
