@@ -175,11 +175,13 @@ void CreateNetplaySessionDialog::validateCreateButton(void)
 
 void CreateNetplaySessionDialog::createSession(void)
 {
-    QList<QString> plugins = NetplayCommon::GetPluginNames(this->sessionMD5);
+    QList<QString> plugins = NetplayCommon::GetPluginNames(
+        NetplayCommon::GetGameSettingsSection(this->sessionMD5, this->sessionFile));
 
     QJsonObject jsonFeatures;
     jsonFeatures.insert("rsp_plugin", plugins[0]);
     jsonFeatures.insert("gfx_plugin", plugins[1]);
+    jsonFeatures.insert("execution_plugin", plugins[2]);
 
     QJsonObject json;
     QJsonObject session;

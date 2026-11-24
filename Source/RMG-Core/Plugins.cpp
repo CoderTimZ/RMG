@@ -35,6 +35,8 @@
 static m64p::PluginApi l_Plugins[5];
 static std::string     l_PluginFiles[5];
 static char l_PluginContext[5][20];
+// plugin files the settings asked for that don't exist
+static std::string     l_PluginMissing[5];
 
 //
 // Local Functions
@@ -242,6 +244,8 @@ static bool apply_plugin_settings(const std::array<std::string, 5>& pluginSettin
                 plugin.Unhook();
             }
 
+            l_PluginMissing[i].clear();
+
             if (settingValue == "(None)")
             {
                 l_PluginFiles[i] = settingValue;
@@ -255,6 +259,7 @@ static bool apply_plugin_settings(const std::array<std::string, 5>& pluginSettin
                 // because we've unhooked
                 // the existing one
                 l_PluginFiles[i].clear();
+                l_PluginMissing[i] = settingValue;
                 continue;
             }
 
@@ -449,6 +454,11 @@ CORE_EXPORT std::vector<CorePlugin> CoreGetAllPlugins(void)
 
     std::sort(plugins.begin(), plugins.end(), [](CorePlugin& a, CorePlugin& b)
     {
+        // "(None)" first, before the execution plugins
+        if ((a.File == "(None)") != (b.File == "(None)"))
+        {
+            return a.File == "(None)";
+        }
         return a.Name > b.Name;
     });
 
@@ -478,13 +488,7 @@ CORE_EXPORT bool CoreApplyRomPluginSettings(void)
         return false;
     }
 
-    std::string section;
-    int format = CoreSettingsGetIntValue(SettingsID::Core_SaveFileNameFormat);
-    if (format == 0) {
-        section = romSettings.InternalName;
-    } else {
-        section = romSettings.MD5;
-    }
+    const std::string section = CoreGetRomSettingsSection(romSettings);
 
     const std::array<std::string, 5> settings =
     {
@@ -504,8 +508,19 @@ CORE_EXPORT bool CoreArePluginsReady(void)
 
     for (int i = 0; i < static_cast<int>(CorePluginType::Count); i++)
     {
+        // the execution plugin is optional, but not when
+        // the settings ask for one that doesn't exist
         if ((CorePluginType)(i + 1) == CorePluginType::Execution)
         {
+            if (!l_PluginMissing[i].empty())
+            {
+                error = "CoreArePluginsReady Failed: ";
+                error += "the execution plugin ";
+                error += std::filesystem::path(l_PluginMissing[i]).filename().string();
+                error += " doesn't exist!";
+                CoreSetError(error);
+                return false;
+            }
             continue;
         }
 

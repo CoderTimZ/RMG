@@ -29,8 +29,13 @@ namespace NetplayCommon
     // Adds common json emulator and auth info
     void AddCommonJson(QJsonObject& json);
 
-    // Retrieves RSP and GFX plugin names
-    QList<QString> GetPluginNames(QString md5QString);
+    // Returns the section with the game settings of the ROM file
+    // (or the MD5 when the ROM isn't in the cache)
+    QString GetGameSettingsSection(QString md5, QString file);
+
+    // Retrieves the RSP, GFX and execution plugin names for the
+    // game settings section (see GetGameSettingsSection)
+    QList<QString> GetPluginNames(QString section);
 
     // Adds servers from json to combobox
     void AddServers(QComboBox* comboBox, const QJsonDocument& document);

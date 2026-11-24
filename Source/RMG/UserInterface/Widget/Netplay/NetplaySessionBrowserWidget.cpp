@@ -87,7 +87,8 @@ void NetplaySessionBrowserWidget::StartRefresh(void)
 }
 
 void NetplaySessionBrowserWidget::AddSessionData(QString name, QString game, QString md5, bool password, int port, 
-                                                 QString cpuEmulator, QString rspPlugin, QString gfxPlugin, QUrl address)
+                                                 QString cpuEmulator, QString rspPlugin, QString gfxPlugin,
+                                                 QString executionPlugin, QUrl address)
 {
     const NetplaySessionData sessionData =
     {
@@ -99,6 +100,7 @@ void NetplaySessionBrowserWidget::AddSessionData(QString name, QString game, QSt
         cpuEmulator,
         rspPlugin,
         gfxPlugin,
+        executionPlugin,
         address
     };
 

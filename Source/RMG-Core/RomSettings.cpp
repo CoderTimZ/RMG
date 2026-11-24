@@ -17,6 +17,8 @@
 
 #include "m64p/Api.hpp"
 
+#include <cstring>
+
 //
 // Local Variables
 //
@@ -59,7 +61,10 @@ CORE_EXPORT bool CoreGetCurrentRomSettings(CoreRomSettings& settings)
     }
 
     settings.GoodName = CoreConvertStringEncoding(m64p_settings.goodname, CoreStringEncoding::Shift_JIS);
-    settings.InternalName = CoreConvertStringEncoding((char*)m64p_header.Name, CoreStringEncoding::Shift_JIS);
+    // the core trims the name, but it's only NUL-terminated when it's shorter than 20 characters
+    settings.InternalName = CoreConvertStringEncoding(std::string(reinterpret_cast<char*>(m64p_header.Name),
+                                strnlen(reinterpret_cast<char*>(m64p_header.Name), sizeof(m64p_header.Name))),
+                                CoreStringEncoding::Shift_JIS);
     settings.MD5 = std::string(m64p_settings.MD5);
     settings.SaveType = m64p_settings.savetype;
     settings.DisableExtraMem = m64p_settings.disableextramem;
@@ -164,13 +169,7 @@ CORE_EXPORT bool CoreApplyRomSettingsOverlay(void)
         return false;
     }
 
-    std::string section;
-    int format = CoreSettingsGetIntValue(SettingsID::Core_SaveFileNameFormat);
-    if (format == 0) {
-        section = settings.InternalName;
-    } else {
-        section = settings.MD5;
-    }
+    std::string section = CoreGetRomSettingsSection(settings);
 
     // don't do anything when section doesn't exist
     if (!CoreSettingsSectionExists(section))
@@ -191,4 +190,17 @@ CORE_EXPORT bool CoreApplyRomSettingsOverlay(void)
     settings.SiDMADuration = CoreSettingsGetIntValue(SettingsID::Game_SiDmaDuration, section);
 
     return CoreApplyRomSettings(settings);
+}
+
+CORE_EXPORT std::string CoreGetRomSettingsSection(const CoreRomSettings& settings)
+{
+    // RMG's setting, not the core's copy of it: that one is only
+    // updated when emulation starts, after the plugins are chosen
+    if (CoreSettingsGetIntValue(SettingsID::CoreOverLay_SaveFileNameFormat) == 0 &&
+        !settings.InternalName.empty())
+    {
+        return settings.InternalName;
+    }
+
+    return settings.MD5;
 }

@@ -29,6 +29,7 @@ struct NetplaySessionData
     QString CpuEmulator;
     QString RspPlugin;
     QString GfxPlugin;
+    QString ExecutionPlugin;
     QUrl Address;
 };
 
@@ -49,7 +50,8 @@ class NetplaySessionBrowserWidget : public QStackedWidget
     void StartRefresh(void);
 
     void AddSessionData(QString name, QString game, QString md5, bool password, int port, 
-                        QString cpuEmulator, QString rspPlugin, QString gfxPlugin, QUrl address);
+                        QString cpuEmulator, QString rspPlugin, QString gfxPlugin,
+                        QString executionPlugin, QUrl address);
 
     void RefreshDone(void);
 

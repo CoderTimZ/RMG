@@ -93,12 +93,7 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 
     if (this->showGameSettings)
     {
-        int format = CoreSettingsGetIntValue(SettingsID::Core_SaveFileNameFormat);
-        if (format == 0) {
-            this->gameSection = this->currentGameSettings.InternalName;
-        } else {
-            this->gameSection = this->currentGameSettings.MD5;
-        }
+        this->gameSection = CoreGetRomSettingsSection(this->currentGameSettings);
 
         // no need to show emulation info text,
         // when we're not running/paused

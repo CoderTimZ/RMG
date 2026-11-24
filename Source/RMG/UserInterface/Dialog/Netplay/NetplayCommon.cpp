@@ -19,6 +19,8 @@
 
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Plugins.hpp>
+#include <RMG-Core/RomSettings.hpp>
+#include <RMG-Core/CachedRomHeaderAndSettings.hpp>
 #include <RMG-Core/Version.hpp>
 
 using namespace NetplayCommon;
@@ -37,27 +39,43 @@ void NetplayCommon::AddCommonJson(QJsonObject& json)
     json.insert("netplay_version", 17);
 }
 
-QList<QString> NetplayCommon::GetPluginNames(QString md5QString)
+QString NetplayCommon::GetGameSettingsSection(QString md5, QString file)
 {
-    QList<QString> pluginNames(2);
-    const std::string md5 = md5QString.toStdString();
+    CoreRomSettings settings;
+
+    if (!file.isEmpty() &&
+        CoreGetCachedRomHeaderAndSettings(file.toStdU32String(), nullptr, nullptr, nullptr, &settings))
+    {
+        return QString::fromStdString(CoreGetRomSettingsSection(settings));
+    }
+
+    return md5;
+}
+
+QList<QString> NetplayCommon::GetPluginNames(QString sectionQString)
+{
+    const std::string section = sectionQString.toStdString();
     const std::vector<CorePlugin> pluginList = CoreGetAllPlugins();
+    const CorePluginType pluginTypes[] =
+    {
+        CorePluginType::Rsp, CorePluginType::Gfx, CorePluginType::Execution
+    };
     const SettingsID settingsId[] =
     {
-        SettingsID::Core_RSP_Plugin, SettingsID::Core_GFX_Plugin, 
+        SettingsID::Core_RSP_Plugin, SettingsID::Core_GFX_Plugin, SettingsID::Core_EXECUTION_Plugin
     };
     const SettingsID gameSettingsId[] =
     {
-        SettingsID::Game_RSP_Plugin, SettingsID::Game_GFX_Plugin, 
+        SettingsID::Game_RSP_Plugin, SettingsID::Game_GFX_Plugin, SettingsID::Game_EXECUTION_Plugin
     };
-    QString pluginFileNames[4];
+    constexpr int count = sizeof(pluginTypes) / sizeof(pluginTypes[0]);
+    QList<QString> pluginNames(count);
+    QString pluginFileNames[count];
     QString pluginFileName;
 
-    int index = 0;
-
-    for (int i = 0; i < 2; i++)
+    for (int i = 0; i < count; i++)
     {
-        pluginFileName = QString::fromStdString(CoreSettingsGetStringValue(gameSettingsId[i], md5));
+        pluginFileName = QString::fromStdString(CoreSettingsGetStringValue(gameSettingsId[i], section));
         if (pluginFileName.isEmpty())
         { // fallback to main plugin settings
             pluginFileName = QString::fromStdString(CoreSettingsGetStringValue(settingsId[i]));
@@ -73,12 +91,21 @@ QList<QString> NetplayCommon::GetPluginNames(QString md5QString)
 
     for (const auto &p : pluginList)
     {
-        index = ((int)p.Type - 1);
-
-        if (pluginFileNames[index] == QString::fromStdString(p.File))
+        for (int i = 0; i < count; i++)
         {
-            pluginNames[index] = QString::fromStdString(p.Name);
+            if (p.Type == pluginTypes[i] &&
+                pluginFileNames[i] == QString::fromStdString(p.File))
+            {
+                pluginNames[i] = QString::fromStdString(p.Name);
+            }
         }
+    }
+
+    // no execution plugin (sessions from RMG versions without
+    // execution plugins don't say, which means the same)
+    if (pluginNames[2].isEmpty())
+    {
+        pluginNames[2] = "(None)";
     }
 
     return pluginNames;

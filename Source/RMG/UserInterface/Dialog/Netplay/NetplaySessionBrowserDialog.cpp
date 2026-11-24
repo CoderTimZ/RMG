@@ -272,6 +272,7 @@ void NetplaySessionBrowserDialog::on_webSocket_textMessageReceived(QString messa
                                                             session.value("features").toObject().value("cpu_emulator").toString(),
                                                             session.value("features").toObject().value("rsp_plugin").toString(),
                                                             session.value("features").toObject().value("gfx_plugin").toString(),
+                                                            session.value("features").toObject().value("execution_plugin").toString(),
                                                             this->webSocket->requestUrl());
             }
 
@@ -422,28 +423,9 @@ void NetplaySessionBrowserDialog::accept()
         }
     }
 
-    // ensure features match to what we currently have
-    QList<QString> pluginNames = NetplayCommon::GetPluginNames(sessionData.MD5);
-    QString details;
-    if (sessionData.RspPlugin != pluginNames[0])
-    {
-        details  = "Expected RSP Plugin: " + sessionData.RspPlugin + "\n";
-        details += "Current  RSP Plugin: " + pluginNames[0];
-        QtMessageBox::Error(this, "RSP Plugin Mismatch", details);
-        this->toggleUI(true, true);
-        return;
-    }
-    if (sessionData.GfxPlugin != pluginNames[1])
-    {
-        details  = "Expected GFX Plugin: " + sessionData.GfxPlugin + "\n";
-        details += "Current  GFX Plugin: " + pluginNames[1];
-        QtMessageBox::Error(this, "GFX Plugin Mismatch", details);
-        this->toggleUI(true, true);
-        return;
-    }
-
-
     // attempt to find ROM from the ROM browser data
+    // (not keeping the one from a previous attempt to join)
+    this->sessionFile.clear();
     std::string md5 = sessionData.MD5.toStdString();
     for (auto it = this->romData.begin(); it != this->romData.end(); it++)
     {
@@ -463,6 +445,40 @@ void NetplaySessionBrowserDialog::accept()
             this->toggleUI(true, true);
             return;
         }
+    }
+
+    // ensure features match to what we currently have
+    // (after the ROM is found: its game settings can choose the plugins)
+    QList<QString> pluginNames = NetplayCommon::GetPluginNames(
+        NetplayCommon::GetGameSettingsSection(sessionData.MD5, this->sessionFile));
+    QString sessionExecutionPlugin = sessionData.ExecutionPlugin.isEmpty() ? "(None)" : sessionData.ExecutionPlugin;
+    QString details;
+    if (sessionData.RspPlugin != pluginNames[0])
+    {
+        details  = "Expected RSP Plugin: " + sessionData.RspPlugin + "\n";
+        details += "Current  RSP Plugin: " + pluginNames[0];
+        QtMessageBox::Error(this, "RSP Plugin Mismatch", details);
+        this->sessionFile.clear();
+        this->toggleUI(true, true);
+        return;
+    }
+    if (sessionData.GfxPlugin != pluginNames[1])
+    {
+        details  = "Expected GFX Plugin: " + sessionData.GfxPlugin + "\n";
+        details += "Current  GFX Plugin: " + pluginNames[1];
+        QtMessageBox::Error(this, "GFX Plugin Mismatch", details);
+        this->sessionFile.clear();
+        this->toggleUI(true, true);
+        return;
+    }
+    if (sessionExecutionPlugin != pluginNames[2])
+    { // the execution plugin changes the game, so a different one desyncs
+        details  = "Expected Execution Plugin: " + sessionExecutionPlugin + "\n";
+        details += "Current  Execution Plugin: " + pluginNames[2];
+        QtMessageBox::Error(this, "Execution Plugin Mismatch", details);
+        this->sessionFile.clear();
+        this->toggleUI(true, true);
+        return;
     }
 
     this->sessionData = sessionData;

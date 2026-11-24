@@ -35,6 +35,7 @@ struct CoreRomSettings
     bool operator==(const CoreRomSettings& other) const
     {
         return GoodName == other.GoodName &&
+                InternalName == other.InternalName &&
                 MD5 == other.MD5 &&
                 SaveType == other.SaveType &&
                 DisableExtraMem == other.DisableExtraMem &&
@@ -61,5 +62,9 @@ bool CoreApplyRomSettings(CoreRomSettings settings);
 
 // applies the ROM settings settings if they exist
 bool CoreApplyRomSettingsOverlay(void);
+
+// returns the section that holds the ROM's game settings: its internal name
+// or its MD5, following the save filename format setting
+std::string CoreGetRomSettingsSection(const CoreRomSettings& settings);
 
 #endif // CORE_ROMSETTINGS_HPP
