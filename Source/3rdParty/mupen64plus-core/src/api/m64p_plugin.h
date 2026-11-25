@@ -336,6 +336,15 @@ typedef void(*ptr_Write64)(uint64_t* value, uint32_t pc, uint32_t addr);
 /* Optional plugin functions: the core calls them when the plugin exports them */
 typedef void(*ptr_StateLoaded)(void);  /* after a save state was loaded */
 typedef void(*ptr_Reset)(int hard);    /* when the game is reset (hard = 1 for a hard reset) */
+/* Optional, for the new netplay. Plugins that change the game need the same settings and state on every machine.
+ * Every machine calls NetplayStart(is_host) before InitiateExecution. The host's plugin then starts as usual, and
+ * NetplayExport() hands its settings and state to the core, which sends them to the guests (the data stays valid until
+ * the next call or RomClosed). Each guest's plugin gets them with NetplayImport() before its InitiateExecution, and uses
+ * them instead of its own files. The format is the plugin's own. Both return 0 on success. The plugin stays in netplay
+ * mode until RomClosed (it shouldn't do anything that depends on the machine, like talking to a server). */
+typedef void(*ptr_NetplayStart)(int is_host);
+typedef int (*ptr_NetplayExport)(const void** data, uint32_t* size);
+typedef int (*ptr_NetplayImport)(const void* data, uint32_t size);
 /* Exported by the core (find it with the core's library handle): tells the cached interpreter and the dynarec that the
  * plugin changed code at the address, so they don't keep running the old instructions. The address is a virtual
  * address in KSEG0 or KSEG1 (like 0x80001234); both are invalidated. */
@@ -356,6 +365,9 @@ EXPORT void CALL Write32(uint32_t* value, uint32_t pc, uint32_t addr);
 EXPORT void CALL Write64(uint64_t* value, uint32_t pc, uint32_t addr);
 EXPORT void CALL StateLoaded(void);
 EXPORT void CALL Reset(int hard);
+EXPORT void CALL NetplayStart(int is_host);
+EXPORT int CALL NetplayExport(const void** data, uint32_t* size);
+EXPORT int CALL NetplayImport(const void* data, uint32_t size);
 #endif
 
 #ifdef __cplusplus

@@ -173,6 +173,18 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::Netplay_SelectedServer:
         setting = {SETTING_SECTION_NETPLAY, "SelectedServer", std::string("")};
         break;
+    case SettingsID::Netplay_NewPort:
+        setting = {SETTING_SECTION_NETPLAY, "NewPort", 6420};
+        break;
+    case SettingsID::Netplay_NewAddress:
+        setting = {SETTING_SECTION_NETPLAY, "NewAddress", std::string("")};
+        break;
+    case SettingsID::Netplay_NewGameMD5:
+        setting = {SETTING_SECTION_NETPLAY, "NewGameMD5", std::string("")};
+        break;
+    case SettingsID::Netplay_NewPortMapping:
+        setting = {SETTING_SECTION_NETPLAY, "NewPortMapping", true};
+        break;
 
     case SettingsID::Core_GFX_Plugin:
         setting = {SETTING_SECTION_CORE, "GFX_Plugin", 

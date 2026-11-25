@@ -30,6 +30,7 @@
 #include "device/rcp/ri/ri_controller.h"
 #include "device/rdram/rdram.h"
 #include "main/main.h"
+#include "main/netplay_new.h"
 #if defined(PROFILE)
 #include "main/profile.h"
 #endif
@@ -373,6 +374,8 @@ void do_SP_Task(struct rsp_core* sp)
     if (sp->mi->regs[MI_INTR_REG] & MI_INTR_DP && !dp_bit_set)
     {
         sp->mi->regs[MI_INTR_REG] &= ~MI_INTR_DP;
+        /* an HLE graphics plugin's full sync (an LLE RSP's was seen already) */
+        netplay_new_rdp_full_sync();
         sp->rsp_wait |= WAIT_PENDING_DP_SYNC;
         if (sp->dp->dpc_regs[DPC_STATUS_REG] & DPC_STATUS_FREEZE) {
             sp->dp->do_on_unfreeze |= DELAY_DP_INT;

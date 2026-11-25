@@ -15,6 +15,7 @@
 #include "Settings.hpp"
 #include "Library.hpp"
 #include "Netplay.hpp"
+#include "NetplayNew.hpp"
 #include "Plugins.hpp"
 #include "Cheats.hpp"
 #include "Error.hpp"
@@ -154,6 +155,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
     bool        netplay_ret = false;
     CoreRomType type;
     bool        netplay = !address.empty();
+    bool        netplay_new = CoreHasNetplayNew();
 
     if (!CoreOpenRom(n64rom))
     {
@@ -181,7 +183,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         return false;
     }
 
-    if (netplay)
+    if (netplay || netplay_new)
     { // netplay cheats
         if (!CoreApplyNetplayCheats())
         {
@@ -237,9 +239,17 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
     }
 #endif // NETPLAY
 
+    // hand the new netplay session to the core
+    bool netplay_new_ret = !netplay_new || CoreAttachNetplayNew();
+    if (!netplay_new_ret)
+    {
+        error = CoreGetError();
+        m64p_ret = M64ERR_SYSTEM_FAIL;
+    }
+
     // only start emulation when initializing netplay
     // is successful or if there's no netplay requested
-    if (!netplay || netplay_ret)
+    if ((!netplay || netplay_ret) && netplay_new_ret)
     {
         m64p_ret = m64p::Core.DoCommand(M64CMD_EXECUTE, 0, nullptr);
         if (m64p_ret != M64ERR_SUCCESS)
@@ -247,6 +257,11 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             error = "CoreStartEmulation m64p::Core.DoCommand(M64CMD_EXECUTE) Failed: ";
             error += m64p::Core.ErrorMessage(m64p_ret);
         }
+    }
+
+    if (netplay_new)
+    {
+        CoreDetachNetplayNew();
     }
 
 #ifdef NETPLAY
@@ -309,7 +324,7 @@ CORE_EXPORT bool CorePauseEmulation(void)
         return false;
     }
 
-    if (CoreHasInitNetplay())
+    if (CoreHasInitNetplay() || CoreHasNetplayNew())
     {
         return false;
     }
@@ -343,7 +358,7 @@ CORE_EXPORT bool CoreResumeEmulation(void)
         return false;
     }
 
-    if (CoreHasInitNetplay())
+    if (CoreHasInitNetplay() || CoreHasNetplayNew())
     {
         return false;
     }

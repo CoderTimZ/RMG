@@ -38,6 +38,7 @@ SDL_JoystickID l_iJoyInstanceID[10];
 #include "api/m64p_types.h"
 #include "eventloop.h"
 #include "main.h"
+#include "netplay_new.h"
 #include "plugin/plugin.h"
 #include "sdl_key_converter.h"
 #include "util.h"
@@ -681,6 +682,10 @@ int event_gameshark_active(void)
 
 void event_set_gameshark(int active)
 {
+    // the GameShark button would only change this machine's game during the new netplay
+    if (netplay_new_active())
+        active = 0;
+
     // if boolean value doesn't change then just return
     if (!active == !GamesharkActive)
         return;

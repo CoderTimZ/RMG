@@ -82,6 +82,7 @@
 #include "screenshot.h"
 #include "util.h"
 #include "netplay.h"
+#include "netplay_new.h"
 
 #ifdef DBG
 #include "debugger/dbg_debugger.h"
@@ -477,7 +478,7 @@ int main_set_core_defaults(void)
 
 void main_speeddown(int percent)
 {
-    if (netplay_is_init())
+    if (netplay_is_init() || netplay_new_active())
         return;
 
     if (l_SpeedFactor - percent > 10)  /* 10% minimum speed */
@@ -491,7 +492,7 @@ void main_speeddown(int percent)
 
 void main_speedup(int percent)
 {
-    if (netplay_is_init())
+    if (netplay_is_init() || netplay_new_active())
         return;
 
     if (l_SpeedFactor + percent < 300) /* 300% maximum speed */
@@ -505,7 +506,7 @@ void main_speedup(int percent)
 
 static void main_speedset(int percent)
 {
-    if (netplay_is_init())
+    if (netplay_is_init() || netplay_new_active())
         return;
 
     if (percent < 1 || percent > 1000)
@@ -524,7 +525,7 @@ static void main_speedset(int percent)
 
 void main_set_fastforward(int enable)
 {
-    if (netplay_is_init())
+    if (netplay_is_init() || netplay_new_active())
         return;
 
     static int ff_state = 0;
@@ -557,7 +558,7 @@ void main_set_fastforward(int enable)
 
 static void main_set_speedlimiter(int enable)
 {
-    if (netplay_is_init() && !netplay_lag())
+    if ((netplay_is_init() && !netplay_lag()) || netplay_new_active())
         return;
 
     l_MainSpeedLimit = enable ? 1 : 0;
@@ -565,7 +566,7 @@ static void main_set_speedlimiter(int enable)
 
 void main_speedlimiter_toggle(void)
 {
-    if (netplay_is_init())
+    if (netplay_is_init() || netplay_new_active())
         return;
 
     l_MainSpeedLimit = !l_MainSpeedLimit;
@@ -593,7 +594,7 @@ void main_toggle_pause(void)
     if (!g_EmulatorRunning)
         return;
 
-    if (netplay_is_init())
+    if (netplay_is_init() || netplay_new_active())
         return;
 
     if (g_rom_pause)
@@ -680,7 +681,7 @@ void main_state_inc_slot(void)
 
 void main_state_load(const char *filename)
 {
-    if (netplay_is_init())
+    if (netplay_is_init() || netplay_new_active())
         return;
 
     if (filename == NULL) // Save to slot
@@ -691,7 +692,7 @@ void main_state_load(const char *filename)
 
 void main_state_save(int format, const char *filename)
 {
-    if (netplay_is_init())
+    if (netplay_is_init() || netplay_new_active())
         return;
 
     if (filename == NULL) // Save to slot
@@ -1104,10 +1105,15 @@ void new_vi(void)
 
     gs_apply_cheats(&g_cheat_ctx);
 
-    apply_speed_limiter();
+    /* during the new netplay, the frame ends here; a machine that's behind skips the speed limiter to catch up */
+    if (!netplay_new_active() || !netplay_new_frame_end())
+        apply_speed_limiter();
     main_check_inputs();
 
     pause_loop();
+
+    if (netplay_new_active())
+        netplay_new_frame_start();
 
     netplay_check_sync(&g_dev.r4300.cp0);
 }
@@ -1649,8 +1655,11 @@ m64p_error main_run(void)
             break;
     }
 
+    if (netplay_new_active())
+        netplay_new_start();
+
     /* Seed MPK ID gen using current time */
-    uint64_t mpk_seed = !netplay_is_init() ? (uint64_t)time(NULL) : 0;
+    uint64_t mpk_seed = !(netplay_is_init() || netplay_new_active()) ? (uint64_t)time(NULL) : 0;
     l_mpk_idgen = xoshiro256pp_seed(mpk_seed);
 
     /* take the r4300 emulator mode from the config file at this point and cache it in a global variable */
@@ -1661,7 +1670,7 @@ m64p_error main_run(void)
     savestates_select_slot(ConfigGetParamInt(g_CoreConfig, "CurrentStateSlot"));
     no_compiled_jump = ConfigGetParamBool(g_CoreConfig, "NoCompiledJump");
     //We disable any randomness for netplay
-    randomize_interrupt = !netplay_is_init() ? ConfigGetParamBool(g_CoreConfig, "RandomizeInterrupt") : 0;
+    randomize_interrupt = !(netplay_is_init() || netplay_new_active()) ? ConfigGetParamBool(g_CoreConfig, "RandomizeInterrupt") : 0;
     count_per_op = ConfigGetParamInt(g_CoreConfig, "CountPerOp");
     count_per_op_denom_pot = ConfigGetParamInt(g_CoreConfig, "CountPerOpDenomPot");
 
@@ -1688,6 +1697,54 @@ m64p_error main_run(void)
     {
         DebugMessage(M64MSG_INFO, "Using the cached interpreter instead of the dynamic recompiler for the execution plugin");
         emumode = EMUMODE_INTERPRETER;
+    }
+
+    /* During the new netplay, the host is the source of truth for everything that changes how the game runs */
+    if (netplay_new_active())
+    {
+        m64p_netplay_new_settings netplay_settings;
+        memset(&netplay_settings, 0, sizeof(netplay_settings));
+        netplay_settings.count_per_op = count_per_op;
+        netplay_settings.count_per_op_denom_pot = count_per_op_denom_pot;
+        netplay_settings.disable_extra_mem = disable_extra_mem;
+        netplay_settings.si_dma_duration = si_dma_duration;
+        netplay_settings.emumode = emumode;
+        netplay_settings.no_compiled_jump = no_compiled_jump;
+        netplay_settings.save_type = ROM_SETTINGS.savetype;
+        netplay_settings.ai_dma_modifier = ROM_SETTINGS.aidmamodifier;
+        netplay_settings.rumble = ROM_SETTINGS.rumble;
+        netplay_settings.transferpak = ROM_SETTINGS.transferpak;
+        netplay_settings.mempak = ROM_SETTINGS.mempak;
+        netplay_settings.biopak = ROM_SETTINGS.biopak;
+
+        netplay_new_sync_settings(&netplay_settings);
+
+        count_per_op = netplay_settings.count_per_op;
+        count_per_op_denom_pot = netplay_settings.count_per_op_denom_pot;
+        disable_extra_mem = netplay_settings.disable_extra_mem;
+        si_dma_duration = netplay_settings.si_dma_duration;
+        if (emumode != netplay_settings.emumode && execution_plugin_attached())
+        {
+            DebugMessage(M64MSG_WARNING, "Netplay: the host's CPU emulator is used, so the execution plugin may not see the game's code");
+        }
+        emumode = netplay_settings.emumode;
+        no_compiled_jump = netplay_settings.no_compiled_jump;
+        ROM_SETTINGS.savetype = (unsigned char)netplay_settings.save_type;
+        ROM_SETTINGS.aidmamodifier = netplay_settings.ai_dma_modifier;
+        ROM_SETTINGS.rumble = (unsigned char)netplay_settings.rumble;
+        ROM_SETTINGS.transferpak = (unsigned char)netplay_settings.transferpak;
+        ROM_SETTINGS.mempak = (unsigned char)netplay_settings.mempak;
+        ROM_SETTINGS.biopak = (unsigned char)netplay_settings.biopak;
+
+        eeprom_type = JDT_NONE;
+        switch (ROM_SETTINGS.savetype) {
+            case SAVETYPE_EEPROM_4K:
+                eeprom_type = JDT_EEPROM_4K;
+                break;
+            case SAVETYPE_EEPROM_16K:
+                eeprom_type = JDT_EEPROM_16K;
+                break;
+        }
     }
 
     rdram_size = (disable_extra_mem == 0) ? 0x800000 : 0x400000;
@@ -1748,6 +1805,15 @@ m64p_error main_run(void)
     open_fla_file(&fla);
     open_sra_file(&sra);
 
+    /* During the new netplay, everyone plays with the host's saves */
+    if (netplay_new_active())
+    {
+        netplay_new_sync_data(M64P_NETPLAY_NEW_SYNC_MEMPAK, mpk.data, GAME_CONTROLLERS_COUNT*MEMPAK_SIZE);
+        netplay_new_sync_data(M64P_NETPLAY_NEW_SYNC_EEPROM, eep.data, 0x800 /* EEPROM_MAX_SIZE */);
+        netplay_new_sync_data(M64P_NETPLAY_NEW_SYNC_FLASHRAM, fla.data, FLASHRAM_SIZE);
+        netplay_new_sync_data(M64P_NETPLAY_NEW_SYNC_SRAM, sra.data, SRAM_SIZE);
+    }
+
     /* Load 64DD IPL ROM and Disk */
     const struct clock_backend_interface* dd_rtc_iclock = NULL;
     const struct storage_backend_interface* dd_idisk = NULL;
@@ -1756,7 +1822,7 @@ m64p_error main_run(void)
     /* try to load DD disk first, if that succeeds, pass the region to load_dd_rom */
     if (load_dd_disk(&dd_disk, &dd_idisk))
     {
-        dd_rtc_iclock = &g_iclock_ctime_plus_delta;
+        dd_rtc_iclock = netplay_new_active() ? &g_iclock_netplay_new : &g_iclock_ctime_plus_delta;
         load_dd_rom((uint8_t*)mem_base_u32(g_mem_base, MM_DD_ROM), &dd_rom_size, &dd_disk.region);
     }
     else
@@ -1781,11 +1847,17 @@ m64p_error main_run(void)
 
     netplay_read_registration(cin_compats);
 
+    int netplay_control_ids[GAME_CONTROLLERS_COUNT];
+    if (netplay_new_active())
+        netplay_new_configure_ports(netplay_control_ids);
+
     for (i = 0; i < GAME_CONTROLLERS_COUNT; ++i) {
 
         //During netplay, we "trick" the input plugin
         //by replacing the regular control_id with the ID that is controlling the player during netplay
-        control_ids[i] = netplay_is_init() ? netplay_get_controller(i) : (int)i;
+        control_ids[i] = netplay_is_init() ? netplay_get_controller(i)
+                       : netplay_new_active() ? netplay_control_ids[i]
+                       : (int)i;
 
         /* if input plugin requests RawData let the input plugin do the channel device processing */
         if (Controls[i].RawData) {
@@ -1887,7 +1959,7 @@ m64p_error main_run(void)
                     init_gb_cart(&g_dev.gb_carts[i],
                             &l_gb_carts_data[i], init_gb_rom, release_gb_rom,
                             &l_gb_carts_data[i], init_gb_ram, release_gb_ram,
-                            NULL, &g_iclock_ctime_plus_delta,
+                            NULL, netplay_new_active() ? &g_iclock_netplay_new : &g_iclock_ctime_plus_delta,
                             &l_gb_carts_data[i].control_id, &g_irumble_backend_plugin_compat,
                             l_gb_carts_data[i].gbcam_backend, l_gb_carts_data[i].igbcam_backend);
 
@@ -1947,7 +2019,7 @@ m64p_error main_run(void)
                 rdram_size,
                 joybus_devices, ijoybus_devices,
                 vi_clock_from_tv_standard(ROM_PARAMS.systemtype), vi_expected_refresh_rate_from_tv_standard(ROM_PARAMS.systemtype),
-                NULL, &g_iclock_ctime_plus_delta,
+                NULL, netplay_new_active() ? &g_iclock_netplay_new : &g_iclock_ctime_plus_delta,
                 g_rom_size,
                 eeprom_type,
                 &eep, &g_ifile_storage,
@@ -1962,7 +2034,10 @@ m64p_error main_run(void)
     l_CurrentVI = 0;
     l_LastVITime = -1;
 
-    initiate_execution_plugin();
+    if (netplay_new_active() && execution_plugin_attached())
+        netplay_new_initiate_execution_plugin();
+    else
+        initiate_execution_plugin();
 
     // Attach rom to plugins
     failure_rval = M64ERR_PLUGIN_FAIL;

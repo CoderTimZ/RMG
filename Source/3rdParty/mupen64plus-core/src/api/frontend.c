@@ -50,6 +50,7 @@
 #include "main/workqueue.h"
 #include "main/screenshot.h"
 #include "main/netplay.h"
+#include "main/netplay_new.h"
 #include "plugin/plugin.h"
 #include "vidext.h"
 
@@ -340,13 +341,13 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
                 return M64ERR_INPUT_INVALID;
             return main_read_screen(ParamPtr, ParamInt);
         case M64CMD_RESET:
-            if (!g_EmulatorRunning)
+            if (!g_EmulatorRunning || netplay_new_active())
                 return M64ERR_INVALID_STATE;
             if (ParamInt < 0 || ParamInt > 1)
                 return M64ERR_INPUT_INVALID;
             return main_reset(ParamInt);
         case M64CMD_ADVANCE_FRAME:
-            if (!g_EmulatorRunning)
+            if (!g_EmulatorRunning || netplay_new_active())
                 return M64ERR_INVALID_STATE;
             main_advance_one();
             return M64ERR_SUCCESS;
@@ -379,6 +380,13 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
                 return M64ERR_INCOMPATIBLE;
         case M64CMD_NETPLAY_CLOSE:
             return netplay_stop();
+        case M64CMD_NETPLAY_NEW_SET_CALLBACKS:
+            /* the session can only be attached or detached while no game is running */
+            if (g_EmulatorRunning)
+                return M64ERR_INVALID_STATE;
+            if (ParamPtr != NULL && ParamInt != sizeof(m64p_netplay_new_callbacks))
+                return M64ERR_INPUT_INVALID;
+            return netplay_new_set_callbacks((const m64p_netplay_new_callbacks*)ParamPtr);
         default:
             return M64ERR_INPUT_INVALID;
     }
@@ -398,7 +406,7 @@ EXPORT m64p_error CALL CoreAddCheat(const char *CheatName, m64p_cheat_code *Code
 {
     if (!l_CoreInit)
         return M64ERR_NOT_INIT;
-    if (netplay_is_init())
+    if (netplay_is_init() || netplay_new_active())
         return M64ERR_INVALID_STATE;
     if (CheatName == NULL || CodeList == NULL)
         return M64ERR_INPUT_ASSERT;
@@ -415,7 +423,7 @@ EXPORT m64p_error CALL CoreCheatEnabled(const char *CheatName, int Enabled)
 {
     if (!l_CoreInit)
         return M64ERR_NOT_INIT;
-    if (netplay_is_init())
+    if (netplay_is_init() || netplay_new_active())
         return M64ERR_INVALID_STATE;
     if (CheatName == NULL)
         return M64ERR_INPUT_ASSERT;

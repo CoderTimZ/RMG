@@ -28,6 +28,7 @@
 
 #include "main/main.h"
 #include "main/netplay.h"
+#include "main/netplay_new.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -61,7 +62,22 @@ static m64p_error input_plugin_get_input(void* opaque, uint32_t* input_)
     int pak_change_requested = 0;
 
     /* first poll controller */
-    if (!netplay_is_init())
+    if (netplay_new_active())
+    {
+        /* during the new netplay, every port's input comes from the
+         * session, and so do its pak switches: every machine makes the
+         * switch below on the same frame */
+        uint32_t value;
+        int pak;
+        if (!netplay_new_get_input(cin_compat->control_id, &value, &pak)) {
+            return M64ERR_SYSTEM_FAIL;
+        }
+        if (pak >= 0) {
+            Controls[cin_compat->control_id].Plugin = pak;
+        }
+        keys.Value = value;
+    }
+    else if (!netplay_is_init())
     {
         if (input.getKeys)
             input.getKeys(cin_compat->control_id, &keys);
@@ -174,7 +190,17 @@ static void input_plugin_rumble_exec(void* opaque, enum rumble_action action)
     memset(cmd + 5, rumble_data, 0x20);
     cmd[0x25] = 0; /* dummy data CRC */
 
+    /* during the new netplay, Controls[] holds the session's ports;
+     * the input plugin needs to see its own controller to rumble it */
+    if (netplay_new_active()) {
+        netplay_new_local_controller_begin(control_id);
+    }
+
     input.controllerCommand(control_id, cmd);
+
+    if (netplay_new_active()) {
+        netplay_new_local_controller_end(control_id);
+    }
 }
 
 const struct rumble_backend_interface

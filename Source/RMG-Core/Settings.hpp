@@ -46,6 +46,10 @@ enum class SettingsID
     Netplay_Nickname,
     Netplay_ServerJsonUrl,
     Netplay_SelectedServer,
+    Netplay_NewPort,
+    Netplay_NewAddress,
+    Netplay_NewGameMD5,
+    Netplay_NewPortMapping,
 
     // Core Plugin Settings
     Core_GFX_Plugin,

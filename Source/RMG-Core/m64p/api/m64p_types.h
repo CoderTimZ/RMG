@@ -173,7 +173,8 @@ typedef enum {
   M64CMD_PIF_OPEN,
   M64CMD_ROM_SET_SETTINGS,
   M64CMD_DISK_OPEN,
-  M64CMD_DISK_CLOSE
+  M64CMD_DISK_CLOSE,
+  M64CMD_NETPLAY_NEW_SET_CALLBACKS
 } m64p_command;
 
 typedef struct {
@@ -221,6 +222,104 @@ typedef struct {
    */
   char* (*get_dd_disk)(void* cb_data);
 } m64p_media_loader;
+
+/* ----------------------------------------- */
+/* New netplay                               */
+/* ----------------------------------------- */
+
+/* The frontend runs the session and the network. The core only asks it for
+ * the data that every player has to share (sync), tells it which ports are
+ * plugged in (configure_ports), hands it this machine's controllers once per
+ * frame (sample) and asks it for the input on each port (get_input).
+ *
+ * A frame is one VI. Frame numbers start at 0 when emulation starts.
+ * sample() is called exactly once per frame, at the game's first controller
+ * read during that frame or at the end of the frame if the game doesn't read
+ * the controllers. Frame numbers passed to sample() only ever increase, even
+ * if a later version of the core re-runs earlier frames (rollback). */
+
+#define M64P_NETPLAY_NEW_API_VERSION 0x010300
+
+typedef enum {
+  M64P_NETPLAY_NEW_SYNC_SETTINGS = 1, /* m64p_netplay_new_settings */
+  M64P_NETPLAY_NEW_SYNC_CLOCK,        /* int64_t: seconds since the epoch when emulation started */
+  M64P_NETPLAY_NEW_SYNC_MEMPAK,       /* the four memory paks */
+  M64P_NETPLAY_NEW_SYNC_EEPROM,
+  M64P_NETPLAY_NEW_SYNC_FLASHRAM,
+  M64P_NETPLAY_NEW_SYNC_SRAM,
+  M64P_NETPLAY_NEW_SYNC_EXECUTION_SIZE, /* uint32_t: the size of the next one */
+  M64P_NETPLAY_NEW_SYNC_EXECUTION       /* the execution plugin's settings and state (see NetplayExport) */
+} m64p_netplay_new_sync;
+
+/* Settings that change how the game runs, taken from the host */
+typedef struct {
+  uint32_t count_per_op;
+  uint32_t count_per_op_denom_pot;
+  uint32_t disable_extra_mem;
+  int32_t  si_dma_duration;
+  uint32_t emumode;
+  int32_t  no_compiled_jump;
+  uint32_t save_type;
+  uint32_t ai_dma_modifier;
+  uint32_t rumble;
+  uint32_t transferpak;
+  uint32_t mempak;
+  uint32_t biopak;
+} m64p_netplay_new_settings;
+
+/* A controller's input on one frame */
+typedef struct {
+  uint32_t buttons;     /* a BUTTONS value */
+  int32_t pak;          /* -1, or the pak the controller switches to on this frame
+                         * (PLUGIN_NONE, PLUGIN_MEMPAK, PLUGIN_RUMBLE_PAK, ...) */
+} m64p_netplay_new_input;
+
+typedef struct {
+  int present;          /* whether a controller is plugged into the port */
+  int plugin;           /* the pak in the controller: PLUGIN_NONE, PLUGIN_MEMPAK, ... */
+  int local_controller; /* the controller on this machine that drives the port (for rumble), or -1 */
+} m64p_netplay_new_port;
+
+typedef struct {
+  /* must be M64P_NETPLAY_NEW_API_VERSION */
+  unsigned int api_version;
+  /* passed back to every callback */
+  void* context;
+  /* whether this machine hosts the session; only the host writes save files */
+  int is_host;
+
+  /* On the host, shares data with everyone. Elsewhere, replaces data with the
+   * host's. Returns 0 if the session ended. */
+  int (*sync)(void* context, m64p_netplay_new_sync kind, void* data, unsigned int size);
+
+  /* local: this machine's controllers, as the input plugin set them up.
+   * ports: filled in with the session's controller ports.
+   * Returns 0 if the session ended. */
+  int (*configure_ports)(void* context, const m64p_netplay_new_port local[4], m64p_netplay_new_port ports[4]);
+
+  /* This machine's four controllers at the given frame (no buttons for
+   * controllers that aren't plugged in). A pak switch is reported once,
+   * on the frame the player made it. */
+  void (*sample)(void* context, unsigned int frame, const m64p_netplay_new_input local[4]);
+
+  /* The input on a port at a frame. May block until it's known. Every
+   * machine sees a pak switch on the same frame and makes it then.
+   * Returns 0 if the session ended. */
+  int (*get_input)(void* context, unsigned int frame, int port, m64p_netplay_new_input* input);
+
+  /* Called at the end of each frame, with how long this machine spent
+   * emulating it in microseconds (not counting the time it waited in
+   * get_input, or the speed limiter's sleep) and how long a frame lasts at
+   * full speed (1/60 s, or 1/50 s for PAL). Returns 1 to skip the speed
+   * limiter for this frame (when this machine needs to catch up), 0 to keep
+   * it, or -1 if the session ended. */
+  int (*frame_end)(void* context, unsigned int frame, unsigned int busy_us, unsigned int frame_us);
+
+  /* A hash of the emulated machine at the end of a frame (RDRAM, the CP0
+   * registers and the RSP's memory), for noticing when players' games
+   * drift apart. Called right before frame_end. May be NULL. */
+  void (*frame_hash)(void* context, unsigned int frame, uint64_t hash);
+} m64p_netplay_new_callbacks;
 
 /* ----------------------------------------- */
 /* Structures to hold ROM image information  */

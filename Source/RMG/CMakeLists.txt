@@ -34,6 +34,10 @@ if (NETPLAY)
     add_definitions(-DNETPLAY)
 endif(NETPLAY)
 
+if (NETPLAY_NEW)
+    add_definitions(-DNETPLAY_NEW)
+endif(NETPLAY_NEW)
+
 find_package(SDL3 REQUIRED)
 
 set(RMG_SOURCES
@@ -111,6 +115,13 @@ if (NETPLAY)
     )
 endif(NETPLAY)
 
+if (NETPLAY_NEW)
+    list(APPEND RMG_SOURCES
+        UserInterface/Dialog/NetplayNew/ConnectDialogs.cpp
+        UserInterface/Dialog/NetplayNew/NetplaySessionWindow.cpp
+    )
+endif(NETPLAY_NEW)
+
 set_source_files_properties(${IMGUI_SOURCES} PROPERTIES GENERATED TRUE)
 list(APPEND RMG_SOURCES ${IMGUI_SOURCES})
 
@@ -156,4 +167,8 @@ endif(KCA_DRAG_DROP)
 if (NETPLAY)
     target_link_libraries(RMG Qt6::WebSockets)
 endif(NETPLAY)
+
+if (NETPLAY_NEW)
+    target_link_libraries(RMG RMG-Netplay-New)
+endif(NETPLAY_NEW)
 

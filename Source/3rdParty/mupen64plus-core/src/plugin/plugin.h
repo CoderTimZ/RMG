@@ -144,6 +144,10 @@ typedef struct _execution_plugin_functions
 	/* optional: a plugin without them gets the dummy (no-op) versions */
 	ptr_StateLoaded         stateLoaded;
 	ptr_Reset               reset;
+	/* optional, NULL when the plugin doesn't have them */
+	ptr_NetplayStart        netplayStart;
+	ptr_NetplayExport       netplayExport;
+	ptr_NetplayImport       netplayImport;
 } execution_plugin_functions;
 
 extern execution_plugin_functions execution;
@@ -174,6 +178,11 @@ extern int execution_plugin_attached(void);
 extern void initiate_execution_plugin(void);
 extern void execution_state_loaded(void);
 extern void execution_reset(int hard);
+
+/* the new netplay (see NetplayStart in m64p_plugin.h); the export and import return 0 if the plugin has nothing */
+extern void execution_netplay_start(int is_host);
+extern int execution_netplay_export(const void** data, uint32_t* size);
+extern void execution_netplay_import(const void* data, uint32_t size);
 
 /* Whether the plugin hooked the word at the address for a kind of call (an m64p_execution_hook) */
 static inline int execution_hooked(int kind, uint32_t addr) {

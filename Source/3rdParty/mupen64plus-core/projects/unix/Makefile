@@ -656,6 +656,9 @@ SOURCE += $(SUBDIR)/oglft/OGLFT.cpp
 CXXFLAGS += -I$(SUBDIR)/oglft
 endif
 
+# the new netplay (the session itself lives in the frontend)
+SOURCE += $(SRCDIR)/main/netplay_new.c
+
 # netplay
 ifeq ($(NETPLAY), 1)
 CFLAGS += -DM64P_NETPLAY

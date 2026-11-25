@@ -23,6 +23,9 @@
 #include "Dialog/Netplay/CreateNetplaySessionDialog.hpp"
 #include "Dialog/Netplay/NetplaySessionDialog.hpp"
 #endif // NETPLAY
+#ifdef NETPLAY_NEW
+#include "Dialog/NetplayNew/ConnectDialogs.hpp"
+#endif // NETPLAY_NEW
 #include "UserInterface/EventFilter.hpp"
 #include "Utilities/QtKeyToSdl3Key.hpp"
 #include "Utilities/QtMessageBox.hpp"
@@ -72,6 +75,7 @@
 #include <RMG-Core/SaveState.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Netplay.hpp>
+#include <RMG-Core/NetplayNew.hpp>
 #include <RMG-Core/Version.hpp>
 #include <RMG-Core/Cheats.hpp>
 #include <RMG-Core/Volume.hpp>
@@ -120,8 +124,18 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     this->action_Help_Update->setVisible(false);
 #endif // UPDATER
 
+#ifdef NETPLAY_NEW
+    this->setupNetplayNew();
+#endif // NETPLAY_NEW
+
 #ifndef NETPLAY
+    // the legacy (server based) netplay
+    this->action_Netplay_CreateSession->setVisible(false);
+    this->action_Netplay_BrowseSessions->setVisible(false);
+    this->action_Netplay_ViewSession->setVisible(false);
+#ifndef NETPLAY_NEW
     this->menuNetplay->menuAction()->setVisible(false);
+#endif // NETPLAY_NEW
 #endif // NETPLAY
 
     this->initializeEmulationThread();
@@ -223,6 +237,13 @@ void MainWindow::closeEvent(QCloseEvent *event)
         this->netplaySessionDialog->close();
     }
 #endif // NETPLAY
+#ifdef NETPLAY_NEW
+    if (this->netplaySessionWindow != nullptr)
+    {
+        delete this->netplaySessionWindow;
+        this->netplaySessionWindow = nullptr;
+    }
+#endif // NETPLAY_NEW
 
     this->logDialog.close();
 
@@ -703,6 +724,18 @@ void MainWindow::connectEmulationThreadSignals(void)
             &MainWindow::on_Emulation_Finished);
     connect(this->emulationThread, &Thread::EmulationThread::on_Emulation_Started, this,
             &MainWindow::on_Emulation_Started);
+#ifdef NETPLAY_NEW
+    // on_Emulation_Finished comes while the thread is still running, so a session
+    // window that was left during the game is deleted once the thread is done
+    connect(this->emulationThread, &QThread::finished, this, [this]() {
+        if (this->netplaySessionWindow != nullptr &&
+            this->netplaySessionWindow->HasEnded() &&
+            this->netplaySessionWindow->isHidden())
+        {
+            this->deleteNetplaySessionWindowWhenIdle();
+        }
+    });
+#endif // NETPLAY_NEW
 
     connect(this->emulationThread, &Thread::EmulationThread::on_VidExt_Init, this, &MainWindow::on_VidExt_Init,
             Qt::BlockingQueuedConnection);
@@ -740,6 +773,14 @@ void MainWindow::launchEmulationThread(QString cartRom, QString address, int por
 
 void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool refreshRomListAfterEmulation, int slot, bool netplay, bool dragdrop)
 {
+#ifdef NETPLAY_NEW
+    if (this->netplaySessionWindow != nullptr && !netplay)
+    {
+        this->showErrorMessage("EmulationThread::run Failed", "Cannot start emulation while in a netplay session. Leave the session first.");
+        return;
+    }
+#endif // NETPLAY_NEW
+
 #ifdef NETPLAY
     if (this->netplaySessionDialog != nullptr && !netplay)
     {
@@ -824,43 +865,44 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Shutdown));
     this->action_System_Shutdown->setShortcut(QKeySequence(keyBinding));
     this->action_System_Shutdown->setEnabled(inEmulation);
-    this->menuReset->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->menuReset->setEnabled(inEmulation && !(CoreHasInitNetplay() || CoreHasNetplayNew()));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_SoftReset));
-    this->action_System_SoftReset->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_SoftReset->setEnabled(inEmulation && !(CoreHasInitNetplay() || CoreHasNetplayNew()));
     this->action_System_SoftReset->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_HardReset));
-    this->action_System_HardReset->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_HardReset->setEnabled(inEmulation && !(CoreHasInitNetplay() || CoreHasNetplayNew()));
     this->action_System_HardReset->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Resume));
     this->action_System_Pause->setChecked(isPaused);
-    this->action_System_Pause->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_Pause->setEnabled(inEmulation && !(CoreHasInitNetplay() || CoreHasNetplayNew()));
     this->action_System_Pause->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Screenshot));
     this->action_System_Screenshot->setEnabled(inEmulation);
     this->action_System_Screenshot->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_LimitFPS));
-    this->action_System_LimitFPS->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_LimitFPS->setEnabled(inEmulation && !(CoreHasInitNetplay() || CoreHasNetplayNew()));
     this->action_System_LimitFPS->setShortcut(QKeySequence(keyBinding));
     this->action_System_LimitFPS->setChecked(CoreIsSpeedLimiterEnabled());
-    this->menuSpeedFactor->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->menuSpeedFactor->setEnabled(inEmulation && !(CoreHasInitNetplay() || CoreHasNetplayNew()));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_SaveState));
-    this->action_System_SaveState->setEnabled(inEmulation);
+    // the core ignores savestates during netplay
+    this->action_System_SaveState->setEnabled(inEmulation && !CoreHasNetplayNew());
     this->action_System_SaveState->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_SaveAs));
-    this->action_System_SaveAs->setEnabled(inEmulation);
+    this->action_System_SaveAs->setEnabled(inEmulation && !CoreHasNetplayNew());
     this->action_System_SaveAs->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_LoadState));
-    this->action_System_LoadState->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_LoadState->setEnabled(inEmulation && !(CoreHasInitNetplay() || CoreHasNetplayNew()));
     this->action_System_LoadState->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Load));
-    this->action_System_Load->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_Load->setEnabled(inEmulation && !(CoreHasInitNetplay() || CoreHasNetplayNew()));
     this->action_System_Load->setShortcut(QKeySequence(keyBinding));
     this->menuCurrent_Save_State->setEnabled(inEmulation);
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Cheats));
-    this->action_System_Cheats->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_Cheats->setEnabled(inEmulation && !(CoreHasInitNetplay() || CoreHasNetplayNew()));
     this->action_System_Cheats->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_GSButton));
-    this->action_System_GSButton->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_GSButton->setEnabled(inEmulation && !(CoreHasInitNetplay() || CoreHasNetplayNew()));
     this->action_System_GSButton->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Exit));
     this->action_System_Exit->setShortcut(QKeySequence(keyBinding));
@@ -944,6 +986,14 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_Netplay_BrowseSessions->setEnabled(!inEmulation && this->netplaySessionDialog == nullptr);
     this->action_Netplay_ViewSession->setEnabled(inEmulation && this->netplaySessionDialog != nullptr);
 #endif // NETPLAY
+#ifdef NETPLAY_NEW
+    if (this->action_NetplayNew_HostGame != nullptr)
+    {
+        this->action_NetplayNew_HostGame->setEnabled(!inEmulation && this->netplaySessionWindow == nullptr);
+        this->action_NetplayNew_JoinGame->setEnabled(!inEmulation && this->netplaySessionWindow == nullptr);
+        this->action_NetplayNew_ShowSession->setEnabled(this->netplaySessionWindow != nullptr);
+    }
+#endif // NETPLAY_NEW
 
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_IncreaseVolume));
     this->action_Audio_IncreaseVolume->setShortcut(QKeySequence(keyBinding));
@@ -2148,6 +2198,17 @@ void MainWindow::on_Emulation_Finished(bool ret, QString error)
         this->ui_NoSwitchToRomBrowser = false;
     }
 
+#ifdef NETPLAY_NEW
+    if (this->netplaySessionWindow != nullptr)
+    {
+        this->netplaySessionWindow->OnGameStopped();
+        if (this->netplaySessionWindow->HasEnded() && this->netplaySessionWindow->isHidden())
+        {
+            this->deleteNetplaySessionWindowWhenIdle();
+        }
+    }
+#endif // NETPLAY_NEW
+
 #ifdef NETPLAY
     if (this->netplaySessionDialog != nullptr)
     {
@@ -2916,3 +2977,127 @@ void MainWindow::on_VidExt_Quit(void)
 
     this->ui_VidExtRenderMode = VidExtRenderMode::Invalid;
 }
+
+#ifdef NETPLAY_NEW
+void MainWindow::setupNetplayNew(void)
+{
+    this->action_NetplayNew_HostGame    = new QAction("Host Game...", this);
+    this->action_NetplayNew_JoinGame    = new QAction("Join Game...", this);
+    this->action_NetplayNew_ShowSession = new QAction("Show Session", this);
+
+    QAction* firstAction = this->menuNetplay->actions().isEmpty() ? nullptr : this->menuNetplay->actions().first();
+    this->menuNetplay->insertAction(firstAction, this->action_NetplayNew_HostGame);
+    this->menuNetplay->insertAction(firstAction, this->action_NetplayNew_JoinGame);
+    this->menuNetplay->insertSeparator(firstAction);
+    this->menuNetplay->insertAction(firstAction, this->action_NetplayNew_ShowSession);
+
+#ifdef NETPLAY
+    // both netplays are built (for testing): tell them apart
+    this->menuNetplay->insertSeparator(firstAction);
+    this->action_Netplay_CreateSession->setText("Create Session (Legacy)...");
+    this->action_Netplay_BrowseSessions->setText("Browse Sessions (Legacy)...");
+    this->action_Netplay_ViewSession->setText("View Session (Legacy)");
+#endif // NETPLAY
+
+    connect(this->action_NetplayNew_HostGame, &QAction::triggered, this, &MainWindow::on_Action_NetplayNew_HostGame);
+    connect(this->action_NetplayNew_JoinGame, &QAction::triggered, this, &MainWindow::on_Action_NetplayNew_JoinGame);
+    connect(this->action_NetplayNew_ShowSession, &QAction::triggered, this, &MainWindow::on_Action_NetplayNew_ShowSession);
+
+    this->updateActions(false, false);
+}
+
+void MainWindow::showNetplaySessionWindow(Dialog::NetplaySessionWindow* window)
+{
+    this->netplaySessionWindow = window;
+
+    connect(window, &Dialog::NetplaySessionWindow::PlayGame, this, [this](QString file) {
+        this->launchEmulationThread(file, "", false, -1, true);
+        // when the game couldn't be launched (plugins not ready, ...),
+        // on_Emulation_Finished never comes, so tell the session here
+        if (!this->emulationThread->isRunning() && this->netplaySessionWindow != nullptr)
+        {
+            this->netplaySessionWindow->OnGameStopped();
+        }
+    });
+    connect(window, &Dialog::NetplaySessionWindow::ShowMessage, this, [this](QString message) {
+        if (CoreIsEmulationRunning())
+        {
+            OnScreenDisplaySetMessage(message.toStdString());
+        }
+    });
+    connect(window, &Dialog::NetplaySessionWindow::Left, this, [this]() {
+        this->deleteNetplaySessionWindowWhenIdle();
+    });
+
+    window->show();
+    this->updateActions(CoreIsEmulationRunning(), CoreIsEmulationPaused());
+}
+
+void MainWindow::deleteNetplaySessionWindowWhenIdle(void)
+{
+    // the emulation thread may still be inside the session's callbacks;
+    // on_Emulation_Finished comes back here once it's done
+    if (this->netplaySessionWindow == nullptr || this->emulationThread->isRunning())
+    {
+        return;
+    }
+
+    this->netplaySessionWindow->hide();
+    this->netplaySessionWindow->deleteLater();
+    this->netplaySessionWindow = nullptr;
+    this->updateActions(false, false);
+}
+
+void MainWindow::on_Action_NetplayNew_HostGame(void)
+{
+    QMap<QString, CoreRomSettings> roms = this->ui_Widget_RomBrowser->GetModelData();
+
+    Dialog::HostGameDialog dialog(this, roms);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+
+    QString error;
+    Dialog::NetplaySessionWindow* window = new Dialog::NetplaySessionWindow(nullptr, roms);
+    if (!window->Host(dialog.GetNickname(), dialog.GetRomFile(), dialog.GetGameName(), dialog.GetGameMD5(),
+                      dialog.GetGameInternalName(), dialog.GetPort(), dialog.GetMapPort(), error))
+    {
+        delete window;
+        this->showErrorMessage("Couldn't host the game", error);
+        return;
+    }
+
+    this->showNetplaySessionWindow(window);
+}
+
+void MainWindow::on_Action_NetplayNew_JoinGame(void)
+{
+    Dialog::JoinGameDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+
+    QString error;
+    Dialog::NetplaySessionWindow* window = new Dialog::NetplaySessionWindow(nullptr, this->ui_Widget_RomBrowser->GetModelData());
+    if (!window->Join(dialog.GetNickname(), dialog.GetAddress(), dialog.GetPort(), error))
+    {
+        delete window;
+        this->showErrorMessage("Couldn't join the game", error);
+        return;
+    }
+
+    this->showNetplaySessionWindow(window);
+}
+
+void MainWindow::on_Action_NetplayNew_ShowSession(void)
+{
+    if (this->netplaySessionWindow != nullptr)
+    {
+        this->netplaySessionWindow->show();
+        this->netplaySessionWindow->raise();
+        this->netplaySessionWindow->activateWindow();
+    }
+}
+#endif // NETPLAY_NEW

@@ -38,6 +38,7 @@ set(RMG_CORE_SOURCES
     Archive.cpp
     Library.cpp
     Netplay.cpp
+    NetplayNew.cpp
     Plugins.cpp
     Version.cpp
     Cheats.cpp

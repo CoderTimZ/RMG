@@ -27,6 +27,7 @@
 #include "device/rcp/mi/mi_controller.h"
 #include "device/rcp/rsp/rsp_core.h"
 #include "device/r4300/r4300_core.h"
+#include "main/netplay_new.h"
 #include "plugin/plugin.h"
 
 static void update_dpc_status(struct rdp_core* dp, uint32_t w)
@@ -144,11 +145,13 @@ void write_dpc_regs(void* opaque, uint32_t address, uint32_t value, uint32_t mas
             dp->dpc_regs[DPC_STATUS_REG] &= ~DPC_STATUS_START_VALID;
         }
         unprotect_framebuffers(&dp->fb);
+        netplay_new_rdp_list();
         gfx.processRDPList();
         protect_framebuffers(&dp->fb);
         if (dp->mi->regs[MI_INTR_REG] & MI_INTR_DP)
         {
             dp->mi->regs[MI_INTR_REG] &= ~MI_INTR_DP;
+            netplay_new_rdp_full_sync();
             if (dp->dpc_regs[DPC_STATUS_REG] & DPC_STATUS_FREEZE) {
                 dp->do_on_unfreeze |= DELAY_DP_INT;
             } else {

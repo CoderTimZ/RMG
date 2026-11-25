@@ -40,6 +40,7 @@
 #include "dummy_video.h"
 #include "dummy_execution.h"
 #include "main/main.h"
+#include "main/netplay_new.h"
 #include "main/rom.h"
 #include "main/version.h"
 #include "osal/dynamiclib.h"
@@ -162,6 +163,21 @@ static unsigned int dummy;
 /* local functions */
 static void EmptyFunc(void)
 {
+}
+
+/* An LLE RSP plugin sends the RDP its commands through this, not through the
+ * DPC registers, so it's where a full sync is seen as soon as it's done. */
+static void rsp_process_rdp_list(void)
+{
+    uint32_t dp_bit_set = g_dev.mi.regs[MI_INTR_REG] & MI_INTR_DP;
+
+    netplay_new_rdp_list();
+    gfx.processRDPList();
+
+    if ((g_dev.mi.regs[MI_INTR_REG] & MI_INTR_DP) && !dp_bit_set)
+    {
+        netplay_new_rdp_full_sync();
+    }
 }
 
 // Handy macro to avoid code bloat when loading symbols
@@ -552,7 +568,7 @@ static m64p_error plugin_start_rsp(void)
     rsp_info.CheckInterrupts = EmptyFunc;
     rsp_info.ProcessDlistList = gfx.processDList;
     rsp_info.ProcessAlistList = audio.processAList;
-    rsp_info.ProcessRdpList = gfx.processRDPList;
+    rsp_info.ProcessRdpList = rsp_process_rdp_list;
     rsp_info.ShowCFB = gfx.showCFB;
 
     /* call the RSP plugin  */
@@ -609,6 +625,12 @@ static m64p_error plugin_connect_execution(m64p_dynlib_handle plugin_handle)
             execution.stateLoaded = dummyexecution_StateLoaded;
         if (!GET_FUNC(ptr_Reset, execution.reset, "Reset"))
             execution.reset = dummyexecution_Reset;
+        if (!GET_FUNC(ptr_NetplayStart, execution.netplayStart, "NetplayStart"))
+            execution.netplayStart = NULL;
+        if (!GET_FUNC(ptr_NetplayExport, execution.netplayExport, "NetplayExport"))
+            execution.netplayExport = NULL;
+        if (!GET_FUNC(ptr_NetplayImport, execution.netplayImport, "NetplayImport"))
+            execution.netplayImport = NULL;
 
         /* check the version info */
         (*execution.getVersion)(&PluginType, &PluginVersion, &APIVersion, NULL, NULL);
@@ -815,4 +837,34 @@ void execution_reset(int hard)
 {
     execution_branch_cancelled = 0;
     execution.reset(hard);
+}
+
+void execution_netplay_start(int is_host)
+{
+    if (l_ExecutionAttached && execution.netplayStart != NULL)
+        execution.netplayStart(is_host);
+}
+
+int execution_netplay_export(const void** data, uint32_t* size)
+{
+    *data = NULL;
+    *size = 0;
+    if (!l_ExecutionAttached || execution.netplayExport == NULL)
+        return 0;
+    if (execution.netplayExport(data, size) != 0 || *data == NULL)
+    {
+        DebugMessage(M64MSG_WARNING, "The execution plugin couldn't export its settings for netplay");
+        *data = NULL;
+        *size = 0;
+        return 0;
+    }
+    return 1;
+}
+
+void execution_netplay_import(const void* data, uint32_t size)
+{
+    if (!l_ExecutionAttached || execution.netplayImport == NULL || size == 0)
+        return;
+    if (execution.netplayImport(data, size) != 0)
+        DebugMessage(M64MSG_WARNING, "The execution plugin couldn't import the host's settings for netplay");
 }

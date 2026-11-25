@@ -29,6 +29,7 @@
 #include "device/dd/dd_controller.h"
 #include "main/util.h"
 #include "main/netplay.h"
+#include "main/netplay_new.h"
 
 int open_file_storage(struct file_storage* fstorage, size_t size, const char* filename)
 {
@@ -93,6 +94,10 @@ static size_t file_storage_size(const void* storage)
 static void file_storage_save(void* storage, size_t start, size_t size)
 {
     if (netplay_is_init() && netplay_get_controller(0) == -1)
+        return;
+
+    /* during the new netplay, only the host writes save files */
+    if (!netplay_new_can_write_saves())
         return;
 
     struct file_storage* fstorage = (struct file_storage*)storage;

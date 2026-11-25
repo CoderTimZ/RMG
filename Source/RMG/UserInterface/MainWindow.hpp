@@ -22,6 +22,9 @@
 #ifdef NETPLAY
 #include "Dialog/Netplay/NetplaySessionDialog.hpp"
 #endif // NETPLAY
+#ifdef NETPLAY_NEW
+#include "Dialog/NetplayNew/NetplaySessionWindow.hpp"
+#endif // NETPLAY_NEW
 #include "Dialog/LogDialog.hpp"
 
 #ifdef UPDATER
@@ -122,6 +125,16 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 #ifdef NETPLAY
     Dialog::NetplaySessionDialog* netplaySessionDialog = nullptr;
 #endif // NETPLAY
+#ifdef NETPLAY_NEW
+    Dialog::NetplaySessionWindow* netplaySessionWindow = nullptr;
+    QAction* action_NetplayNew_HostGame = nullptr;
+    QAction* action_NetplayNew_JoinGame = nullptr;
+    QAction* action_NetplayNew_ShowSession = nullptr;
+
+    void setupNetplayNew(void);
+    void showNetplaySessionWindow(Dialog::NetplaySessionWindow* window);
+    void deleteNetplaySessionWindowWhenIdle(void);
+#endif // NETPLAY_NEW
 
     void closeEvent(QCloseEvent *) Q_DECL_OVERRIDE;
 
@@ -243,6 +256,12 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     void on_Netplay_PlayGame(QString file, QString address, int port, int player);
     void on_NetplaySessionDialog_rejected(void);
+
+#ifdef NETPLAY_NEW
+    void on_Action_NetplayNew_HostGame(void);
+    void on_Action_NetplayNew_JoinGame(void);
+    void on_Action_NetplayNew_ShowSession(void);
+#endif // NETPLAY_NEW
 
   public slots:
 
