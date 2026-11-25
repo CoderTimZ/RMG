@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.15)
 
 option(PORTABLE_INSTALL "Portable Installation" ON)
-option(UPDATER          "Enables updater" ${WIN32})
+option(UPDATER          "Enables updater (it checks for releases of upstream RMG, not this fork)" OFF)
 option(APPIMAGE_UPDATER "Enables AppImage updater" OFF)
 option(KCA_DRAG_DROP    "Enables drag and drop using KCoreAddons" OFF) # https://bugreports.qt.io/browse/QTBUG-91357
 option(NETPLAY          "Enables the legacy netplay (server based)" OFF)
@@ -18,14 +18,21 @@ project(RMG)
 
 find_package(Git)
 if (GIT_FOUND)
+    # the version is the commit only, the first 8 characters of its hash, so
+    # every clone of the same commit gets the same version, whatever tags it
+    # has (netplay compares versions exactly). `git rev-parse --short` could
+    # make it longer in a repository where 8 characters were ambiguous.
     execute_process(
-        COMMAND ${GIT_EXECUTABLE} describe --tags --always
+        COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         RESULT_VARIABLE GIT_RESULT
         OUTPUT_VARIABLE GIT_VERSION
         ERROR_QUIET
         OUTPUT_STRIP_TRAILING_WHITESPACE
     )
+    if (${GIT_RESULT} EQUAL 0)
+        string(SUBSTRING "${GIT_VERSION}" 0 8 GIT_VERSION)
+    endif()
 endif(GIT_FOUND)
 if (NOT GIT_FOUND OR NOT ${GIT_RESULT} EQUAL 0)
     if (NOT ${GIT_RESULT} EQUAL 0)
