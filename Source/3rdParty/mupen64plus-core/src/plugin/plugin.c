@@ -54,7 +54,8 @@ input_plugin_functions input;
 rsp_plugin_functions rsp;
 execution_plugin_functions execution;
 
-uint8_t execution_addr_mask[1024];
+uint8_t execution_hooks[EXECUTION_HOOK_MAPS][EXECUTION_HOOK_WORDS / 8];
+uint8_t execution_hook_pages[EXECUTION_HOOK_MAPS][EXECUTION_HOOK_PAGES / 8];
 int execution_branch_cancelled = 0;
 unsigned int execution_sync_exceptions = 0;
 int execution_reload_pending = 0;
@@ -563,7 +564,8 @@ static m64p_error plugin_start_rsp(void)
 static void plugin_disconnect_execution(void)
 {
     execution = dummy_execution;
-    memset(&execution_addr_mask, 0, sizeof(execution_addr_mask));
+    memset(execution_hooks, 0, sizeof(execution_hooks));
+    memset(execution_hook_pages, 0, sizeof(execution_hook_pages));
     execution_branch_cancelled = 0;
     execution_reload_pending = 0;
     l_ExecutionAttached = 0;
@@ -751,6 +753,30 @@ EXPORT void CALL ExecutionInvalidateCode(uint32_t addr, uint32_t size)
     invalidate_code(addr, size);
 }
 
+/* Sets or clears a word's bit in a kind's hook map, and its page's bit (on while any word in the page has one) */
+static void execution_set_hook(uint32_t addr, int kind, int on)
+{
+    uint32_t word = (addr >> 2) & (EXECUTION_HOOK_WORDS - 1);
+    uint32_t page = (addr >> 12) & (EXECUTION_HOOK_PAGES - 1);
+    const uint8_t* page_words;
+    size_t i;
+
+    if (kind < M64HOOK_EXECUTE || kind > M64HOOK_WRITE)
+        return;
+
+    page_words = &execution_hooks[kind][page * (0x1000 / 4 / 8)];
+    if (on)
+        execution_hooks[kind][word >> 3] |= (uint8_t)(1 << (word & 7));
+    else
+        execution_hooks[kind][word >> 3] &= (uint8_t)~(1 << (word & 7));
+
+    for (i = 0; i < 0x1000 / 4 / 8 && !page_words[i]; ++i);
+    if (i < 0x1000 / 4 / 8)
+        execution_hook_pages[kind][page >> 3] |= (uint8_t)(1 << (page & 7));
+    else
+        execution_hook_pages[kind][page >> 3] &= (uint8_t)~(1 << (page & 7));
+}
+
 int execution_plugin_attached(void)
 {
     return l_ExecutionAttached;
@@ -758,14 +784,15 @@ int execution_plugin_attached(void)
 
 void initiate_execution_plugin(void)
 {
-    memset(&execution_addr_mask, 0, sizeof(execution_addr_mask));
+    memset(execution_hooks, 0, sizeof(execution_hooks));
+    memset(execution_hook_pages, 0, sizeof(execution_hook_pages));
     execution_branch_cancelled = 0;
     execution_reload_pending = 0;
 
     execution_info.window = NULL;
     execution_info.rom_name = ROM_HEADER.Name;
     execution_info.rom_hash = (uint8_t*)ROM_SETTINGS.MD5;
-    execution_info.addr_mask = execution_addr_mask;
+    execution_info.set_hook = execution_set_hook;
     execution_info.pc = r4300_pc_g;
     execution_info.jump = execution_jump;
     execution_info.gpr = r4300_regs(&g_dev.r4300);

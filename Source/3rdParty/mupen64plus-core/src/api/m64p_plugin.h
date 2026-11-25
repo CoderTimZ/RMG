@@ -178,11 +178,22 @@ typedef struct {
                                CONTROL Controls[4]; */
 } CONTROL_INFO;
 
+/* The kinds of hook an execution plugin sets with EXECUTION_INFO's set_hook */
+typedef enum {
+    M64HOOK_EXECUTE = 0, /* Execute() before the instruction at the address runs, and ExecuteDone() after it */
+    M64HOOK_READ,        /* Read8..Read64() for loads from the address */
+    M64HOOK_WRITE        /* Write8..Write64() for stores to it */
+} m64p_execution_hook;
+
 typedef struct {
     void* window;
     uint8_t* rom_name;
     uint8_t* rom_hash;
-    uint8_t* addr_mask;
+    /* Turns the core's calls of a kind (m64p_execution_hook) for an address on or off. The core keeps a bit per word of
+     * RDRAM for each kind, which addresses that agree in bits 2..22 share (like a KSEG0 address and its KSEG1 mirror, or
+     * the bytes of a word): the plugin turns it off only once none of them is hooked, and checks the full address in
+     * the calls itself. */
+    void (*set_hook)(uint32_t addr, int kind, int on);
     uint32_t (*pc)();
     void (*jump)(uint32_t addr);
     int64_t* gpr;

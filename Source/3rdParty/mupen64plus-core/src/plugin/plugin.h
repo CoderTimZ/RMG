@@ -148,7 +148,15 @@ typedef struct _execution_plugin_functions
 
 extern execution_plugin_functions execution;
 
-extern uint8_t execution_addr_mask[1024];
+/* The plugin's hooks: a bit per word of RDRAM for each kind (m64p_execution_hook), set by the plugin through set_hook().
+ * Addresses are taken modulo 8 MB, so a KSEG0 address and its KSEG1 mirror share a bit, and the plugin checks the full
+ * address itself. execution_hook_pages has a bit per 4 KB page for the pages with a hook (256 bytes per kind, which
+ * stay in the L1 cache), so most checks never read the 256 KB maps. */
+#define EXECUTION_HOOK_MAPS 3
+#define EXECUTION_HOOK_WORDS (UINT32_C(0x800000) / 4)
+#define EXECUTION_HOOK_PAGES (UINT32_C(0x800000) / 0x1000)
+extern uint8_t execution_hooks[EXECUTION_HOOK_MAPS][EXECUTION_HOOK_WORDS / 8];
+extern uint8_t execution_hook_pages[EXECUTION_HOOK_MAPS][EXECUTION_HOOK_PAGES / 8];
 
 /* Set when the plugin calls jump() during a delay slot: the branch the delay slot belongs to is not taken, so execution
  * continues where the plugin jumped (the interpreters' branch code checks and clears it) */
@@ -167,15 +175,18 @@ extern void initiate_execution_plugin(void);
 extern void execution_state_loaded(void);
 extern void execution_reset(int hard);
 
-/* The plugin's address filter: one bit per word, for bits 2..14 of the address (so it repeats every 32 KB). It's shared
- * by execution, reads and writes, so the plugin checks the full address and the kind of access itself. */
-static inline int execution_addr_masked(uint32_t addr) {
-	return execution_addr_mask[(addr & 0x7FE0) >> 5] & (1 << ((addr & 0x1C) >> 2));
+/* Whether the plugin hooked the word at the address for a kind of call (an m64p_execution_hook) */
+static inline int execution_hooked(int kind, uint32_t addr) {
+	uint32_t page = (addr >> 12) & (EXECUTION_HOOK_PAGES - 1);
+	uint32_t word = (addr >> 2) & (EXECUTION_HOOK_WORDS - 1);
+	if (!(execution_hook_pages[kind][page >> 3] & (1 << (page & 7))))
+		return 0;
+	return execution_hooks[kind][word >> 3] & (1 << (word & 7));
 }
 
-/* Whether either word of an aligned doubleword is in the filter */
-static inline int execution_dword_masked(uint32_t addr) {
-	return execution_addr_masked(addr) || execution_addr_masked(addr + 4);
+/* Whether either word of an aligned doubleword is hooked */
+static inline int execution_dword_hooked(int kind, uint32_t addr) {
+	return execution_hooked(kind, addr) || execution_hooked(kind, addr + 4);
 }
 
 #endif

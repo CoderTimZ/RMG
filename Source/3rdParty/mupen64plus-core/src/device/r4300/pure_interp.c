@@ -172,7 +172,7 @@ void InterpretOpcode(struct r4300_core* r4300)
 	uint32_t pc = *r4300_pc(r4300);
 	unsigned int exceptions;
 
-	if (execution_addr_masked(pc))
+	if (execution_hooked(M64HOOK_EXECUTE, pc))
 	{
 		execution.execute(pc);
 		if (*r4300_pc(r4300) != pc) return; /* the plugin jumped elsewhere */
@@ -768,7 +768,7 @@ void InterpretOpcode(struct r4300_core* r4300)
 	} /* switch ((op >> 26) & 0x3F) */
 
 	/* Not when the instruction raised an exception: it didn't complete (and runs again after the handler) */
-	if (execution_addr_masked(pc) && execution_sync_exceptions == exceptions)
+	if (execution_hooked(M64HOOK_EXECUTE, pc) && execution_sync_exceptions == exceptions)
 	{
 		execution.executeDone(pc);
 	}

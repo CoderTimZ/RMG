@@ -166,7 +166,7 @@ DECLARE_INSTRUCTION(LB)
 
     if (r4300_read_aligned_word(r4300, lsaddr, &value)) {
         uint8_t v = (value >> shift) & 0xff;
-        if (execution_addr_masked(lsaddr)) execution.read8(&v, PCADDR - 4, lsaddr);
+        if (execution_hooked(M64HOOK_READ, lsaddr)) execution.read8(&v, PCADDR - 4, lsaddr);
         *lsrtp = SE8(v);
     }
 }
@@ -182,7 +182,7 @@ DECLARE_INSTRUCTION(LBU)
 
     if (r4300_read_aligned_word(r4300, lsaddr, &value)) {
         uint8_t v = (value >> shift) & 0xff;
-        if (execution_addr_masked(lsaddr)) execution.read8(&v, PCADDR - 4, lsaddr);
+        if (execution_hooked(M64HOOK_READ, lsaddr)) execution.read8(&v, PCADDR - 4, lsaddr);
         *lsrtp = v;
     }
 }
@@ -198,7 +198,7 @@ DECLARE_INSTRUCTION(LH)
 
     if (r4300_read_aligned_word(r4300, lsaddr, &value)) {
         uint16_t v = (value >> shift) & 0xffff;
-        if (execution_addr_masked(lsaddr)) execution.read16(&v, PCADDR - 4, lsaddr);
+        if (execution_hooked(M64HOOK_READ, lsaddr)) execution.read16(&v, PCADDR - 4, lsaddr);
         *lsrtp = SE16(v);
     }
 }
@@ -214,7 +214,7 @@ DECLARE_INSTRUCTION(LHU)
 
     if (r4300_read_aligned_word(r4300, lsaddr, &value)) {
         uint16_t v = (value >> shift) & 0xffff;
-        if (execution_addr_masked(lsaddr)) execution.read16(&v, PCADDR - 4, lsaddr);
+        if (execution_hooked(M64HOOK_READ, lsaddr)) execution.read16(&v, PCADDR - 4, lsaddr);
         *lsrtp = v;
     }
 }
@@ -228,7 +228,7 @@ DECLARE_INSTRUCTION(LL)
     uint32_t value;
 
     if (r4300_read_aligned_word(r4300, lsaddr, &value)) {
-        if (execution_addr_masked(lsaddr)) execution.read32(&value, PCADDR - 4, lsaddr);
+        if (execution_hooked(M64HOOK_READ, lsaddr)) execution.read32(&value, PCADDR - 4, lsaddr);
         *lsrtp = SE32(value);
         r4300->llbit = 1;
     }
@@ -243,7 +243,7 @@ DECLARE_INSTRUCTION(LW)
     uint32_t value;
 
     if (r4300_read_aligned_word(r4300, lsaddr, &value)) {
-        if (execution_addr_masked(lsaddr)) execution.read32(&value, PCADDR - 4, lsaddr);
+        if (execution_hooked(M64HOOK_READ, lsaddr)) execution.read32(&value, PCADDR - 4, lsaddr);
         *lsrtp = SE32(value);
     }
 }
@@ -257,7 +257,7 @@ DECLARE_INSTRUCTION(LWU)
     uint32_t value;
 
     if (r4300_read_aligned_word(r4300, lsaddr, &value)) {
-        if (execution_addr_masked(lsaddr)) execution.read32(&value, PCADDR - 4, lsaddr);
+        if (execution_hooked(M64HOOK_READ, lsaddr)) execution.read32(&value, PCADDR - 4, lsaddr);
         *lsrtp = value;
     }
 }
@@ -276,7 +276,7 @@ DECLARE_INSTRUCTION(LWL)
 
     if (r4300_read_aligned_word(r4300, lsaddr, &value)) {
         /* The plugin is shown the whole (aligned) word the bytes come from */
-        if (execution_addr_masked(lsaddr)) execution.read32(&value, PCADDR - 4, lsaddr & ~UINT32_C(3));
+        if (execution_hooked(M64HOOK_READ, lsaddr)) execution.read32(&value, PCADDR - 4, lsaddr & ~UINT32_C(3));
         *lsrtp = SE32(((uint32_t)*lsrtp & mask) | ((uint32_t)value << shift));
     }
 }
@@ -297,7 +297,7 @@ DECLARE_INSTRUCTION(LWR)
 
     if (r4300_read_aligned_word(r4300, lsaddr, &value)) {
         /* The plugin is shown the whole (aligned) word the bytes come from */
-        if (execution_addr_masked(lsaddr)) execution.read32(&value, PCADDR - 4, lsaddr & ~UINT32_C(3));
+        if (execution_hooked(M64HOOK_READ, lsaddr)) execution.read32(&value, PCADDR - 4, lsaddr & ~UINT32_C(3));
         *lsrtp = SE32(((uint32_t)*lsrtp & mask) | ((uint32_t)value >> shift));
     }
 }
@@ -311,7 +311,7 @@ DECLARE_INSTRUCTION(LD)
     uint64_t value;
 
     if (r4300_read_aligned_dword(r4300, lsaddr, &value)) {
-        if (execution_dword_masked(lsaddr)) execution.read64(&value, PCADDR - 4, lsaddr);
+        if (execution_dword_hooked(M64HOOK_READ, lsaddr)) execution.read64(&value, PCADDR - 4, lsaddr);
         *lsrtp = value;
     }
 }
@@ -330,7 +330,7 @@ DECLARE_INSTRUCTION(LDL)
 
     if (r4300_read_aligned_dword(r4300, lsaddr & ~UINT32_C(7), &value)) {
         /* The plugin is shown the whole (aligned) doubleword the bytes come from */
-        if (execution_dword_masked(lsaddr & ~UINT32_C(7))) execution.read64(&value, PCADDR - 4, lsaddr & ~UINT32_C(7));
+        if (execution_dword_hooked(M64HOOK_READ, lsaddr & ~UINT32_C(7))) execution.read64(&value, PCADDR - 4, lsaddr & ~UINT32_C(7));
         *lsrtp = ((uint64_t)*lsrtp & mask) | (value << shift);
     }
 }
@@ -351,7 +351,7 @@ DECLARE_INSTRUCTION(LDR)
 
     if (r4300_read_aligned_dword(r4300, lsaddr & ~UINT32_C(7), &value)) {
         /* The plugin is shown the whole (aligned) doubleword the bytes come from */
-        if (execution_dword_masked(lsaddr & ~UINT32_C(7))) execution.read64(&value, PCADDR - 4, lsaddr & ~UINT32_C(7));
+        if (execution_dword_hooked(M64HOOK_READ, lsaddr & ~UINT32_C(7))) execution.read64(&value, PCADDR - 4, lsaddr & ~UINT32_C(7));
         *lsrtp = ((uint64_t)*lsrtp & mask) | (value >> shift);
     }
 }
@@ -367,7 +367,7 @@ DECLARE_INSTRUCTION(SB)
     unsigned int shift = bshift(lsaddr);
 
     uint8_t v = (uint8_t)*lsrtp;
-    if (execution_addr_masked(lsaddr)) execution.write8(&v, PCADDR - 4, lsaddr);
+    if (execution_hooked(M64HOOK_WRITE, lsaddr)) execution.write8(&v, PCADDR - 4, lsaddr);
     r4300_write_aligned_word(r4300, lsaddr, (uint32_t)v << shift, UINT32_C(0xff) << shift);
 }
 
@@ -380,7 +380,7 @@ DECLARE_INSTRUCTION(SH)
     unsigned int shift = hshift(lsaddr);
 
     uint16_t v = (uint16_t)*lsrtp;
-    if (execution_addr_masked(lsaddr)) execution.write16(&v, PCADDR - 4, lsaddr);
+    if (execution_hooked(M64HOOK_WRITE, lsaddr)) execution.write16(&v, PCADDR - 4, lsaddr);
     r4300_write_aligned_word(r4300, lsaddr, (uint32_t)v << shift, UINT32_C(0xffff) << shift);
 }
 
@@ -394,7 +394,7 @@ DECLARE_INSTRUCTION(SC)
     if (r4300->llbit)
     {
         uint32_t v = (uint32_t)*lsrtp;
-        if (execution_addr_masked(lsaddr)) execution.write32(&v, PCADDR - 4, lsaddr);
+        if (execution_hooked(M64HOOK_WRITE, lsaddr)) execution.write32(&v, PCADDR - 4, lsaddr);
         if (r4300_write_aligned_word(r4300, lsaddr, v, ~UINT32_C(0))) {
             r4300->llbit = 0;
             *lsrtp = 1;
@@ -414,7 +414,7 @@ DECLARE_INSTRUCTION(SW)
     ADD_TO_PC(1);
 
     uint32_t v = (uint32_t)*lsrtp;
-    if (execution_addr_masked(lsaddr)) execution.write32(&v, PCADDR - 4, lsaddr);
+    if (execution_hooked(M64HOOK_WRITE, lsaddr)) execution.write32(&v, PCADDR - 4, lsaddr);
     r4300_write_aligned_word(r4300, lsaddr, v, ~UINT32_C(0));
 }
 
@@ -435,7 +435,7 @@ DECLARE_INSTRUCTION(SWL)
     uint32_t word;
 
     /* The plugin is shown the whole word as the store leaves it (and can change all of it) */
-    if (execution_addr_masked(aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_word(r4300, aligned, &word)) {
+    if (execution_hooked(M64HOOK_WRITE, aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_word(r4300, aligned, &word)) {
         word = (word & ~mask) | ((value >> shift) & mask);
         execution.write32(&word, PCADDR - 4, aligned);
         r4300_write_aligned_word(r4300, aligned, word, ~UINT32_C(0));
@@ -460,7 +460,7 @@ DECLARE_INSTRUCTION(SWR)
     uint32_t word;
 
     /* The plugin is shown the whole word as the store leaves it (and can change all of it) */
-    if (execution_addr_masked(aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_word(r4300, aligned, &word)) {
+    if (execution_hooked(M64HOOK_WRITE, aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_word(r4300, aligned, &word)) {
         word = (word & ~mask) | ((value << shift) & mask);
         execution.write32(&word, PCADDR - 4, aligned);
         r4300_write_aligned_word(r4300, aligned, word, ~UINT32_C(0));
@@ -478,7 +478,7 @@ DECLARE_INSTRUCTION(SD)
     ADD_TO_PC(1);
 
     uint64_t v = (uint64_t)*lsrtp; /* a copy: the plugin may change what's written, not the register */
-    if (execution_dword_masked(lsaddr)) execution.write64(&v, PCADDR - 4, lsaddr);
+    if (execution_dword_hooked(M64HOOK_WRITE, lsaddr)) execution.write64(&v, PCADDR - 4, lsaddr);
     r4300_write_aligned_dword(r4300, lsaddr, v, ~UINT64_C(0));
 }
 
@@ -499,7 +499,7 @@ DECLARE_INSTRUCTION(SDL)
     uint64_t dword;
 
     /* The plugin is shown the whole doubleword as the store leaves it (and can change all of it) */
-    if (execution_dword_masked(aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_dword(r4300, aligned, &dword)) {
+    if (execution_dword_hooked(M64HOOK_WRITE, aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_dword(r4300, aligned, &dword)) {
         dword = (dword & ~mask) | ((value >> shift) & mask);
         execution.write64(&dword, PCADDR - 4, aligned);
         r4300_write_aligned_dword(r4300, aligned, dword, ~UINT64_C(0));
@@ -524,7 +524,7 @@ DECLARE_INSTRUCTION(SDR)
     uint64_t dword;
 
     /* The plugin is shown the whole doubleword as the store leaves it (and can change all of it) */
-    if (execution_dword_masked(aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_dword(r4300, aligned, &dword)) {
+    if (execution_dword_hooked(M64HOOK_WRITE, aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_dword(r4300, aligned, &dword)) {
         dword = (dword & ~mask) | ((value << shift) & mask);
         execution.write64(&dword, PCADDR - 4, aligned);
         r4300_write_aligned_dword(r4300, aligned, dword, ~UINT64_C(0));
@@ -1536,7 +1536,7 @@ DECLARE_INSTRUCTION(LWC1)
     ADD_TO_PC(1);
 
     if (r4300_read_aligned_word(r4300, lslfaddr, &value)) {
-        if (execution_addr_masked(lslfaddr)) execution.read32(&value, PCADDR - 4, lslfaddr);
+        if (execution_hooked(M64HOOK_READ, lslfaddr)) execution.read32(&value, PCADDR - 4, lslfaddr);
         *((uint32_t*)r4300_cp1_regs_simple(&r4300->cp1)[lslfft]) = value;
     }
 }
@@ -1551,7 +1551,7 @@ DECLARE_INSTRUCTION(LDC1)
     ADD_TO_PC(1);
 
     if (r4300_read_aligned_dword(r4300, lslfaddr, &value)) {
-        if (execution_dword_masked(lslfaddr)) execution.read64(&value, PCADDR - 4, lslfaddr);
+        if (execution_dword_hooked(M64HOOK_READ, lslfaddr)) execution.read64(&value, PCADDR - 4, lslfaddr);
         *((uint64_t*)r4300_cp1_regs_double(&r4300->cp1)[lslfft]) = value;
     }
 }
@@ -1566,7 +1566,7 @@ DECLARE_INSTRUCTION(SWC1)
     ADD_TO_PC(1);
 
     value = *((uint32_t*)(r4300_cp1_regs_simple(&r4300->cp1))[lslfft]);
-    if (execution_addr_masked(lslfaddr)) execution.write32(&value, PCADDR - 4, lslfaddr);
+    if (execution_hooked(M64HOOK_WRITE, lslfaddr)) execution.write32(&value, PCADDR - 4, lslfaddr);
     r4300_write_aligned_word(r4300, lslfaddr, value, ~UINT32_C(0));
 }
 
@@ -1580,7 +1580,7 @@ DECLARE_INSTRUCTION(SDC1)
     ADD_TO_PC(1);
 
     value = *((uint64_t*)(r4300_cp1_regs_double(&r4300->cp1))[lslfft]);
-    if (execution_dword_masked(lslfaddr)) execution.write64(&value, PCADDR - 4, lslfaddr);
+    if (execution_dword_hooked(M64HOOK_WRITE, lslfaddr)) execution.write64(&value, PCADDR - 4, lslfaddr);
     r4300_write_aligned_dword(r4300, lslfaddr, value, ~UINT64_C(0));
 }
 
