@@ -389,6 +389,14 @@ EXPORT void CALL SetRenderingCallback(void (*callback)(int))
 
 EXPORT void CALL ResizeVideoOutput(int width, int height)
 {
+    // the frontend can ask for the size the window already has (RMG checks
+    // the size every 2 seconds against ReadScreen2's, which is the frame's,
+    // not the window's), and recreating the swapchain for it is wasted work
+    if (static_cast<uint32_t>(width) == window_width && static_cast<uint32_t>(height) == window_height)
+    {
+        return;
+    }
+
     window_width = width;
     window_height = height;
     vk_resize();
