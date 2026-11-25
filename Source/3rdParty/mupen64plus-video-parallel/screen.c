@@ -48,6 +48,11 @@ bool screen_set_mode(bool fullscreen)
     return CoreVideo_SetVideoMode(window_width, window_height, 0, fullscreen ? M64VIDEO_FULLSCREEN : M64VIDEO_WINDOWED, M64VIDEOFLAG_SUPPORT_RESIZING) == M64ERR_SUCCESS;
 }
 
+void screen_resize_window(uint32_t width, uint32_t height)
+{
+    CoreVideo_ResizeWindow((int)width, (int)height);
+}
+
 void screen_close()
 {
     CoreVideo_Quit();

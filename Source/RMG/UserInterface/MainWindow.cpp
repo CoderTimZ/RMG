@@ -51,6 +51,7 @@
 #include <QMenuBar>
 #include <QString>
 #include <QTimer>
+#include <QScreen>
 #include <QDir>
 #include <QUrl>
 
@@ -58,6 +59,7 @@
 #include <KUrlMimeData>
 #endif
 
+#include <algorithm>
 #include <cstdlib>
 #include <cmath>
 
@@ -1394,26 +1396,22 @@ void MainWindow::timerEvent(QTimerEvent *event)
             return;
         }
 
-        int expectedWidth  = 0;
-        int expectedHeight = 0;
+        // the render widget's size in device pixels, rounded
+        // the way Qt rounds it for the native window
+        QSize expectedSize;
         if (this->ui_VidExtRenderMode == VidExtRenderMode::OpenGL)
         {
-            expectedWidth  = this->ui_Widget_OpenGL->GetWidget()->width()  * this->devicePixelRatio();
-            expectedHeight = this->ui_Widget_OpenGL->GetWidget()->height() * this->devicePixelRatio();
+            expectedSize = this->ui_Widget_OpenGL->GetWidget()->size() * this->devicePixelRatio();
         }
         else if (this->ui_VidExtRenderMode == VidExtRenderMode::Vulkan)
         {
-            expectedWidth  = this->ui_Widget_Vulkan->GetWidget()->width()  * this->devicePixelRatio();
-            expectedHeight = this->ui_Widget_Vulkan->GetWidget()->height() * this->devicePixelRatio();
+            expectedSize = this->ui_Widget_Vulkan->GetWidget()->size() * this->devicePixelRatio();
         }
 
-        expectedWidth  &= ~0x1;
-        expectedHeight &= ~0x1;
-
-        if (width  != expectedWidth ||
-            height != expectedHeight)
+        if (width  != expectedSize.width() ||
+            height != expectedSize.height())
         {
-            CoreSetVideoSize(expectedWidth, expectedHeight);
+            CoreSetVideoSize(expectedSize.width(), expectedSize.height());
         }
     }
     else if (timerId == this->ui_LoadSaveStateSlotTimerId)
@@ -2520,16 +2518,30 @@ void MainWindow::on_VidExt_SetFullscreenMode(int width, int height, int bps, int
 
 void MainWindow::on_VidExt_ResizeWindow(int width, int height)
 {
-    // account for HiDPI scaling
+    // a fullscreen window keeps the screen's size
+    if (this->isFullScreen())
+    {
+        return;
+    }
+
+    // account for HiDPI scaling: the requested size is in device pixels,
+    // window sizes are in scaled units, so round up to at least the requested
+    // size (it can come out a pixel larger, which the video plugin can center in)
+    int renderWidth  = width;
+    int renderHeight = height;
     if (this->devicePixelRatio() != 1)
     {
-        width  = static_cast<int>(std::ceil(static_cast<double>(static_cast<double>(width)  / this->devicePixelRatio())));
-        height = static_cast<int>(std::ceil(static_cast<double>(static_cast<double>(height) / this->devicePixelRatio())));
+        renderWidth  = static_cast<int>(std::ceil(static_cast<double>(width)  / this->devicePixelRatio()));
+        renderHeight = static_cast<int>(std::ceil(static_cast<double>(height) / this->devicePixelRatio()));
     }
+
+    // the space the menubar, toolbar and statusbar take up
+    int barsWidth  = 0;
+    int barsHeight = 0;
 
     if (!this->menuBar()->isHidden())
     {
-        height += this->menuBar()->height();
+        barsHeight += this->menuBar()->height();
     }
 
     if (!this->toolBar->isHidden())
@@ -2545,19 +2557,41 @@ void MainWindow::on_VidExt_ResizeWindow(int width, int height)
         if (area == Qt::ToolBarArea::TopToolBarArea ||
             area == Qt::ToolBarArea::BottomToolBarArea)
         {
-            height += this->toolBar->height();
+            barsHeight += this->toolBar->height();
         }
         else if (area == Qt::ToolBarArea::LeftToolBarArea ||
                  area == Qt::ToolBarArea::RightToolBarArea)
         {
-            width += this->toolBar->width();
+            barsWidth += this->toolBar->width();
         }
     }
 
     if (!this->statusBar()->isHidden())
     {
-        height += this->statusBar()->height();
+        barsHeight += this->statusBar()->height();
     }
+
+    // when the window wouldn't fit on the screen, shrink
+    // the render area to fit, keeping its shape
+    QScreen* screen = this->screen();
+    if (screen != nullptr)
+    {
+        QSize frameSize = this->frameGeometry().size() - this->geometry().size();
+        int availableWidth  = screen->availableGeometry().width()  - frameSize.width()  - barsWidth;
+        int availableHeight = screen->availableGeometry().height() - frameSize.height() - barsHeight;
+
+        if (availableWidth > 0 && availableHeight > 0 &&
+            (renderWidth > availableWidth || renderHeight > availableHeight))
+        {
+            double scale = std::min(static_cast<double>(availableWidth)  / renderWidth,
+                                    static_cast<double>(availableHeight) / renderHeight);
+            renderWidth  = std::max(1, static_cast<int>(renderWidth  * scale));
+            renderHeight = std::max(1, static_cast<int>(renderHeight * scale));
+        }
+    }
+
+    width  = renderWidth  + barsWidth;
+    height = renderHeight + barsHeight;
 
     if (!this->ui_VidExtForceSetMode)
     {

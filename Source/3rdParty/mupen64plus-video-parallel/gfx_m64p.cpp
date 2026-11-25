@@ -175,8 +175,7 @@ EXPORT m64p_error CALL PluginStartup(m64p_dynlib_handle _CoreLibHandle, void *Co
     ConfigOpenSection("Video-Parallel", &configVideoParallel);
     ConfigSetDefaultInt(configVideoParallel, KEY_UPSCALING, 1, "Amount of rescaling: 1=None, 2=2x, 4=4x, 8=8x");
     ConfigSetDefaultBool(configVideoParallel, KEY_VSYNC, 0, "Enable VSync");
-    ConfigSetDefaultInt(configVideoParallel, KEY_SCREEN_WIDTH, 640, "Screen width");
-    ConfigSetDefaultInt(configVideoParallel, KEY_SCREEN_HEIGHT, 480, "Screen height");
+    ConfigSetDefaultInt(configVideoParallel, KEY_WINDOW_SCALE, 1, "Window size as a multiple of the game's resolution (such as 320x240, less any overscan crop) times the upscale: 1 shows each pixel 1:1, 2 doubles it");
     ConfigSetDefaultBool(configVideoParallel, KEY_WIDESCREEN, 0, "Widescreen mode (stretched)");
     ConfigSetDefaultBool(configVideoParallel, KEY_DEINTERLACE, 0, "Deinterlacing method. False=Bob, True=Weave");
     ConfigSetDefaultBool(configVideoParallel, KEY_SSREADBACKS, 0, "Enable superscaling of readbacks when upsampling");
@@ -294,8 +293,7 @@ EXPORT void CALL ProcessRDPList(void)
 EXPORT int CALL RomOpen(void)
 {
     window_fullscreen = false;
-    window_width = ConfigGetParamInt(configVideoParallel, KEY_SCREEN_WIDTH);
-    window_height = ConfigGetParamInt(configVideoParallel, KEY_SCREEN_HEIGHT);
+    vk_window_scale = ConfigGetParamInt(configVideoParallel, KEY_WINDOW_SCALE);
     window_widescreen = ConfigGetParamBool(configVideoParallel, KEY_WIDESCREEN);
     window_vsync = ConfigGetParamBool(configVideoParallel, KEY_VSYNC);
     vk_rescaling = ConfigGetParamInt(configVideoParallel, KEY_UPSCALING);
@@ -374,8 +372,10 @@ EXPORT void CALL ChangeWindow(void)
 
 EXPORT void CALL ReadScreen2(void *dest, int *width, int *height, int front)
 {
-    *width = window_width;
-    *height = window_height;
+    uint32_t screen_width, screen_height;
+    vk_get_screen_size(&screen_width, &screen_height);
+    *width = screen_width;
+    *height = screen_height;
     if (dest)
     {
         vk_read_screen((unsigned char*)dest);

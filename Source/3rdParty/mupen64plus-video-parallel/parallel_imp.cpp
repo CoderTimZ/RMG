@@ -36,6 +36,24 @@ bool vk_native_tex_rect;
 bool vk_divot_filter, vk_gamma_dither;
 bool vk_vi_aa, vk_vi_scale, vk_dither_filter;
 bool vk_interlacing;
+int32_t vk_window_scale;
+
+// Whether the VI puts out a PAL (576-line) picture rather than an NTSC (480-line) one: guessed from the ROM header
+// until the VI's registers say
+static bool output_is_pal;
+
+// The VI's horizontal scale (2.10 fixed point: framebuffer pixels per pixel of its 640-wide output), which gives the
+// game's horizontal resolution: 0x200 for 320-wide games (the usual case, assumed until the VI says), 0x400 for 640
+static uint32_t output_x_scale;
+
+// A change to output_is_pal or output_x_scale seen in the VI's registers, and for how many frames in a row, so the
+// window isn't resized for a frame or two of a passing mode
+static bool pending_is_pal;
+static uint32_t pending_x_scale;
+static uint32_t pending_frames;
+
+// Where the last frame was drawn on the swapchain, so screenshots leave out the letterbox or pillarbox around it
+static VkRect2D frame_rect;
 
 static const unsigned cmd_len_lut[64] = {
 	1, 1, 1, 1, 1, 1, 1, 1, 4, 6, 12, 14, 12, 14, 20, 22,
@@ -152,29 +170,157 @@ static const uint32_t fragment_spirv[] =
 		 0x0003003e,0x00000009,0x00000014,0x000100fd,
 		 0x00010038};
 
-static void calculate_viewport(float* x, float* y, float* width, float* height)
+static RDP::ScanoutOptions::CropRect get_crop_rect()
 {
-    int32_t display_width = (window_widescreen ? 854 : 640) * vk_rescaling;
-    int32_t display_height = 480 * vk_rescaling;
+	RDP::ScanoutOptions::CropRect crop;
+	crop.left = vk_overscan_left;
+	crop.right = vk_overscan_right;
+	crop.top = vk_overscan_top;
+	crop.bottom = vk_overscan_bottom;
+	crop.enable = vk_overscan_enable;
+	if (vk_vertical_stretch) {
+		crop.top = vk_vertical_stretch;
+		crop.bottom = vk_vertical_stretch;
+		crop.enable = true;
+	}
+	return crop;
+}
 
-    *width = window_width;
-    *height = window_height;
-    *x = 0;
-    *y = 0;
-    int32_t hw = display_height * *width;
-    int32_t wh = display_width * *height;
+// The size of the frame on screen at 1x, before any widescreen stretch: the VI's 640-pixel-wide picture with 480
+// (NTSC) or 576 (PAL) lines, less the crop, whose top and bottom count 240p lines (so two lines each here)
+static void get_frame_size(uint32_t *width, uint32_t *height)
+{
+	RDP::ScanoutOptions::CropRect crop = get_crop_rect();
+	*width = RDP::VI_SCANOUT_WIDTH;
+	*height = output_is_pal ? RDP::VI_V_RES_PAL : RDP::VI_V_RES_NTSC;
 
-    // add letterboxes or pillarboxes if the window has a different aspect ratio
-    // than the current display mode
-    if (hw > wh) {
-        int32_t w_max = wh / display_height;
-        *x += (*width - w_max) / 2;
-        *width = w_max;
-    } else if (hw < wh) {
-        int32_t h_max = hw / display_width;
-        *y += (*height - h_max) / 2;
-        *height = h_max;
-    }
+	// parallel-rdp skips a crop that would leave nothing
+	if (crop.enable && crop.left + crop.right < *width && (crop.top + crop.bottom) * 2 < *height) {
+		*width -= crop.left + crop.right;
+		*height -= (crop.top + crop.bottom) * 2;
+	}
+}
+
+// The frame's size in the game's own pixels, before upscaling: its width from the VI's horizontal scale (320 for
+// most games, less the crop), its height from the frame's shape on a TV (so 240 lines for a 320x240 game)
+static void get_pixel_size(uint32_t *width, uint32_t *height)
+{
+	uint32_t frame_width, frame_height;
+	get_frame_size(&frame_width, &frame_height);
+
+	*width = (frame_width * output_x_scale + 0x200) / 0x400;
+	if (*width == 0)
+		*width = 1;
+
+	*height = (*width * frame_height + frame_width / 2) / frame_width;
+	if (*height == 0)
+		*height = 1;
+}
+
+// The window size that shows the game's pixels 1:1 at its upscaled resolution, times the window scale (so at 1x with
+// no upscaling, a 320x240 game gets a 320x240 window). Widescreen stretches it to 4/3 its width.
+static void get_window_size(uint32_t *width, uint32_t *height)
+{
+	uint32_t pixel_width, pixel_height;
+	get_pixel_size(&pixel_width, &pixel_height);
+
+	uint32_t upscale = vk_rescaling > 0 ? uint32_t(vk_rescaling) : 1;
+	uint32_t scale = (vk_window_scale > 0 ? uint32_t(vk_window_scale) : 1) * upscale;
+	*width = window_widescreen ? (pixel_width * scale * 4 + 1) / 3 : pixel_width * scale;
+	*height = pixel_height * scale;
+}
+
+// Whether the ROM is for a PAL console, from the country code at byte 0x3E of its header. The core keeps the ROM as
+// native-endian 32-bit words, so on a little-endian host that byte sits at 0x3E ^ 3.
+static bool rom_is_pal()
+{
+	if (gfx.HEADER == NULL)
+		return false;
+
+	switch (gfx.HEADER[0x3E ^ 3])
+	{
+	case 'D': case 'F': case 'I': case 'P': case 'S': case 'U': case 'X': case 'Y':
+		return true;
+	default:
+		return false;
+	}
+}
+
+static uint32_t distance(uint32_t a, uint32_t b)
+{
+	return a > b ? a - b : b - a;
+}
+
+// Fits the frame into the surface (the viewport passed in), centered with letterboxes or pillarboxes as needed.
+// Outside widescreen, the frame snaps to a whole multiple of its size in the game's pixels when the surface is within
+// a couple of pixels of one, so it isn't scaled by a fraction of a pixel: at fractional display scaling (125%, 150%)
+// the window is sized in scaled units and can come out a pixel larger than asked for. Offsets are whole pixels so the
+// frame stays on the pixel grid. Returns whether it snapped.
+static bool calculate_viewport(float* x, float* y, float* width, float* height)
+{
+	uint32_t frame_width, frame_height;
+	get_frame_size(&frame_width, &frame_height);
+
+	uint32_t pixel_width, pixel_height;
+	get_pixel_size(&pixel_width, &pixel_height);
+	bool snapped = false;
+
+	// the shape the frame is shown at
+	uint64_t display_width = window_widescreen ? uint64_t(frame_width) * 4 : frame_width;
+	uint64_t display_height = window_widescreen ? uint64_t(frame_height) * 3 : frame_height;
+
+	uint32_t surface_width = uint32_t(*width);
+	uint32_t surface_height = uint32_t(*height);
+	uint32_t w = surface_width;
+	uint32_t h = surface_height;
+
+	if (surface_width * display_height > surface_height * display_width)
+		w = uint32_t(surface_height * display_width / display_height);
+	else
+		h = uint32_t(surface_width * display_height / display_width);
+
+	if (!window_widescreen) {
+		uint32_t multiple = (w + pixel_width / 2) / pixel_width;
+		if (multiple == 0)
+			multiple = 1;
+
+		uint32_t snapped_w = pixel_width * multiple;
+		uint32_t snapped_h = pixel_height * multiple;
+		if (snapped_w <= surface_width && snapped_h <= surface_height &&
+		    distance(w, snapped_w) <= 2 && distance(h, snapped_h) <= 2) {
+			w = snapped_w;
+			h = snapped_h;
+			snapped = true;
+		}
+	}
+
+	*x += float((surface_width - w) / 2);
+	*y += float((surface_height - h) / 2);
+	*width = float(w);
+	*height = float(h);
+	return snapped;
+}
+
+// When the scanout image is a whole number of times the viewport's size along an axis (a 320-wide game comes out of
+// the VI at 640, doubled), shifts the viewport so nearest sampling lands on the first of each run of image pixels:
+// the game's own pixel, rather than the VI's blend of it with the next. A viewport pixel's center at i + 0.5 samples
+// the image at (i + 0.5 - offset) * ratio, which is the center of image pixel i * ratio when offset = 0.5 - 0.5 / ratio.
+// Returns whether the image fits the viewport in whole pixels along this axis (a whole ratio either way).
+static bool align_to_image(float *offset, float viewport_size, uint32_t image_size)
+{
+	uint32_t size = uint32_t(viewport_size);
+	if (size == 0)
+		return false;
+
+	if (image_size >= size) {
+		if (image_size % size != 0)
+			return false;
+
+		*offset += 0.5f - 0.5f / float(image_size / size);
+		return true;
+	}
+
+	return size % image_size == 0;
 }
 
 static void render_frame(Vulkan::Device &device)
@@ -189,16 +335,7 @@ static void render_frame(Vulkan::Device &device)
 	opts.blend_previous_frame = vk_interlacing;
 	opts.upscale_deinterlacing = !vk_interlacing;
 	opts.downscale_steps = vk_downscaling_steps;
-	opts.crop_rect.left = vk_overscan_left;
-	opts.crop_rect.right = vk_overscan_right;
-	opts.crop_rect.top = vk_overscan_top;
-	opts.crop_rect.bottom = vk_overscan_bottom;
-	opts.crop_rect.enable = vk_overscan_enable;
-	if (vk_vertical_stretch) {
-		opts.crop_rect.top = vk_vertical_stretch;
-		opts.crop_rect.bottom = vk_vertical_stretch;
-		opts.crop_rect.enable = true;
-	}
+	opts.crop_rect = get_crop_rect();
 	Vulkan::ImageHandle image = processor->scanout(opts);
 
 	// Normally reflection is automated.
@@ -221,9 +358,20 @@ static void render_frame(Vulkan::Device &device)
 		if (image.get() != NULL)
 		{
 			VkViewport vp = cmd->get_viewport();
-			calculate_viewport(&vp.x, &vp.y, &vp.width, &vp.height);
+			bool snapped = calculate_viewport(&vp.x, &vp.y, &vp.width, &vp.height);
+			frame_rect = { { int32_t(vp.x), int32_t(vp.y) }, { uint32_t(vp.width), uint32_t(vp.height) } };
 
-			auto sampler = vk_rescaling >= 4
+			// At a whole multiple of the game's pixels, sample them 1:1 (or repeat them) with nearest sampling.
+			// Otherwise the frame is scaled by a fraction: widescreen stretches it by 4/3, which whole pixels can't
+			// do, and a large upscale shrunk into a small window looks better blended.
+			bool whole_pixels = false;
+			if (snapped) {
+				bool whole_x = align_to_image(&vp.x, vp.width, image->get_width());
+				bool whole_y = align_to_image(&vp.y, vp.height, image->get_height());
+				whole_pixels = whole_x && whole_y;
+			}
+
+			auto sampler = !whole_pixels && (window_widescreen || vk_rescaling >= 4)
 				? Vulkan::StockSampler::LinearClamp
 				: Vulkan::StockSampler::NearestClamp;
 
@@ -263,6 +411,36 @@ void vk_rasterize()
 	processor->set_vi_register(RDP::VIRegister::XScale, *GET_GFX_INFO(VI_X_SCALE_REG));
 	processor->set_vi_register(RDP::VIRegister::YScale, *GET_GFX_INFO(VI_Y_SCALE_REG));
 
+	// Follow the VI between NTSC and PAL timings (the check parallel-rdp makes) and between horizontal resolutions,
+	// resizing the window to fit the frame once a change has held for a few frames. A register of 0 means the game
+	// hasn't set that part of the VI up yet.
+	uint32_t v_sync = *GET_GFX_INFO(VI_V_SYNC_REG) & 0x3ff;
+	uint32_t x_scale = *GET_GFX_INFO(VI_X_SCALE_REG) & 0xfff;
+	bool pal = v_sync != 0 ? v_sync > RDP::VI_V_SYNC_NTSC + 25 : output_is_pal;
+	if (x_scale == 0)
+		x_scale = output_x_scale;
+
+	if (pal == output_is_pal && x_scale == output_x_scale)
+	{
+		pending_frames = 0;
+	}
+	else if (pending_frames == 0 || pal != pending_is_pal || x_scale != pending_x_scale)
+	{
+		pending_is_pal = pal;
+		pending_x_scale = x_scale;
+		pending_frames = 1;
+	}
+	else if (++pending_frames >= 10)
+	{
+		output_is_pal = pal;
+		output_x_scale = x_scale;
+		pending_frames = 0;
+
+		uint32_t width, height;
+		get_window_size(&width, &height);
+		screen_resize_window(width, height);
+	}
+
 	RDP::Quirks quirks;
 	quirks.set_native_texture_lod(vk_native_texture_lod);
 	quirks.set_native_resolution_tex_rect(vk_native_tex_rect);
@@ -276,20 +454,53 @@ void vk_rasterize()
 	wsi->begin_frame();
 }
 
+// The part of the swapchain image to take screenshots of: where the last frame was drawn, or the whole image before
+// any frame was, or if the swapchain has since shrunk past it
+static VkRect2D get_screenshot_rect()
+{
+	Vulkan::ImageView* image = &wsi->get_device().get_swapchain_view();
+	uint32_t image_width = image->get_image().get_width();
+	uint32_t image_height = image->get_image().get_height();
+
+	if (frame_rect.extent.width == 0 || frame_rect.extent.height == 0 ||
+	    uint32_t(frame_rect.offset.x) + frame_rect.extent.width > image_width ||
+	    uint32_t(frame_rect.offset.y) + frame_rect.extent.height > image_height)
+		return { { 0, 0 }, { image_width, image_height } };
+
+	return frame_rect;
+}
+
+void vk_get_screen_size(uint32_t* width, uint32_t* height)
+{
+	if (!wsi)
+	{
+		*width = window_width;
+		*height = window_height;
+		return;
+	}
+
+	VkRect2D rect = get_screenshot_rect();
+	*width = rect.extent.width;
+	*height = rect.extent.height;
+}
+
 void vk_read_screen(unsigned char* dest)
 {
 	Vulkan::Fence fence;
 	Vulkan::BufferHandle buffer;
 	Vulkan::BufferCreateInfo info = {};
 	Vulkan::ImageView* image = &wsi->get_device().get_swapchain_view();
-	info.size = window_width * window_height * sizeof(uint32_t);
+	VkRect2D rect = get_screenshot_rect();
+	uint32_t width = rect.extent.width;
+	uint32_t height = rect.extent.height;
+	info.size = width * height * sizeof(uint32_t);
 	info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 	info.domain = Vulkan::BufferDomain::CachedHost;
 	if (!buffer || buffer->get_create_info().size < info.size)
 		buffer = wsi->get_device().create_buffer(info);
 
 	auto cmd = wsi->get_device().request_command_buffer();
-	cmd->copy_image_to_buffer(*buffer, image->get_image(), 0, {}, { window_width, window_height, 1 }, 0, 0, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 });
+	cmd->copy_image_to_buffer(*buffer, image->get_image(), 0, { rect.offset.x, rect.offset.y, 0 }, { width, height, 1 }, 0, 0, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 });
 	cmd->barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
 	             VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
 
@@ -300,10 +511,10 @@ void vk_read_screen(unsigned char* dest)
 	unsigned char *image_buffer = (unsigned char*)wsi->get_device().map_host_buffer(*buffer, Vulkan::MEMORY_ACCESS_READ_BIT);
 
 	image_buffer = image_buffer + info.size;
-	for (int i = 0; i < window_height; ++i)
+	for (int i = 0; i < height; ++i)
 	{
-		image_buffer -= window_width * 4;
-		for (int j = 0; j < window_width; ++j)
+		image_buffer -= width * 4;
+		for (int j = 0; j < width; ++j)
 		{
 			auto image_format = image->get_format();
 			switch (image_format) {
@@ -346,7 +557,7 @@ void vk_read_screen(unsigned char* dest)
 			dest += 3;
 			image_buffer += 4;
 		}
-		image_buffer -= window_width * 4;
+		image_buffer -= width * 4;
 	}
 	wsi->get_device().unmap_host_buffer(*buffer, Vulkan::MEMORY_ACCESS_READ_BIT);
 }
@@ -513,6 +724,13 @@ bool vk_init()
 {
 	if (!screen_init())
 		return false;
+
+	/* start the window at the frame's size, so it's shown 1:1 at the window scale */
+	frame_rect = {};
+	output_is_pal = rom_is_pal();
+	output_x_scale = 0x200;
+	pending_frames = 0;
+	get_window_size(&window_width, &window_height);
 
 	/* we have to create a window before we initialize Vulkan */
 	if (!screen_set_mode(window_fullscreen))

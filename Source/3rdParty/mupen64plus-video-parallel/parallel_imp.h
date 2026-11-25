@@ -26,12 +26,14 @@ extern "C"
     extern bool vk_vi_aa, vk_vi_scale, vk_dither_filter;
     extern bool vk_interlacing;
     extern bool vk_synchronous;
+    extern int32_t vk_window_scale;
 
     void vk_rasterize();
     void vk_process_commands();
     bool vk_init();
     void vk_destroy();
     void vk_resize();
+    void vk_get_screen_size(uint32_t* width, uint32_t* height);
     void vk_read_screen(unsigned char* dest);
 
 #ifdef __cplusplus

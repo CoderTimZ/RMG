@@ -12,7 +12,7 @@
 #include "m64p_config.h"
 #include "../gfx_m64p.h"
 
-#include <QRegularExpression>
+#include <algorithm>
 
 using namespace UserInterface;
 
@@ -20,24 +20,9 @@ MainDialog::MainDialog(QWidget* parent) : QDialog(parent)
 {
     this->setupUi(this);
 
-    // set screen size combobox
-    int width  = ConfigGetParamInt(configVideoParallel, KEY_SCREEN_WIDTH);
-    int height = ConfigGetParamInt(configVideoParallel, KEY_SCREEN_HEIGHT);
-
-    // taken from GLideN64's GLideNUI
-    QRegularExpression windowedRegExp("([3-9][0-9]{2}|[1-7][0-9]{3}) ?x ?([2-9][0-9]{2}|[1-3][0-9]{3})");
-    QValidator *windowedValidator = new QRegularExpressionValidator(windowedRegExp, this);
-    this->screenSizeComboBox->setValidator(windowedValidator);
-
-    QString resolutionString = QString::number(width) + " x " + QString::number(height);
-
-    // add resolution if it doesnt exist
-    if (this->screenSizeComboBox->findText(resolutionString) == -1)
-    {
-        this->screenSizeComboBox->addItem(resolutionString);
-    }
-    // set resolution as current item
-    this->screenSizeComboBox->setCurrentText(resolutionString);
+    // window scale combobox: 1x to 4x
+    int windowScale = ConfigGetParamInt(configVideoParallel, KEY_WINDOW_SCALE);
+    this->windowScaleComboBox->setCurrentIndex(std::clamp(windowScale, 1, 4) - 1);
 
     // set upscaling combobox
     int upscaleAmount = ConfigGetParamInt(configVideoParallel, KEY_UPSCALING);
@@ -97,11 +82,9 @@ void MainDialog::on_buttonBox_clicked(QAbstractButton* button)
 
     if (pushButton == okButton)
     {
-        // screen size
-        int width  = this->screenSizeComboBox->currentText().split(" x ").at(0).toInt();
-        int height = this->screenSizeComboBox->currentText().split(" x ").at(1).toInt();
-        ConfigSetParameter(configVideoParallel, KEY_SCREEN_WIDTH, M64TYPE_INT, &width);
-        ConfigSetParameter(configVideoParallel, KEY_SCREEN_HEIGHT, M64TYPE_INT, &height);
+        // window scale
+        int windowScaleValue = this->windowScaleComboBox->currentIndex() + 1;
+        ConfigSetParameter(configVideoParallel, KEY_WINDOW_SCALE, M64TYPE_INT, &windowScaleValue);
 
         // upscaling
         int upscalingIndex = this->resolutionUpscaleComboBox->currentIndex();
@@ -169,7 +152,7 @@ void MainDialog::on_buttonBox_clicked(QAbstractButton* button)
     }
     else if (pushButton == defaultButton)
     {
-        this->screenSizeComboBox->setCurrentText("640 x 480");
+        this->windowScaleComboBox->setCurrentIndex(0);
         this->resolutionUpscaleComboBox->setCurrentText("None");
         this->deinterlacerComboBox->setCurrentIndex(0);
         this->downscalerComboBox->setCurrentIndex(0);
