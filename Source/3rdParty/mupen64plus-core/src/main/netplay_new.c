@@ -214,6 +214,8 @@ static struct
 static unsigned int l_selftest_checked = 0;
 static unsigned int l_selftest_failed = 0;
 static unsigned int l_selftest_last = 0;
+/* RMG_NETPLAY_NEW_ROLLBACK_TEST_FROM: the first frame it goes back from (64) */
+static unsigned int l_selftest_from = 64;
 /* RMG_NETPLAY_NEW_ROLLBACK_TEST_CHECK=0: the self-test only measures. It
  * checks nothing (no hashing, no extra GPU waits), goes back 1, 2, 4 and 8
  * frames in turn, and logs what a live frame and a rollback of each depth
@@ -355,6 +357,10 @@ void netplay_new_start(void)
         {
             const char* check = getenv("RMG_NETPLAY_NEW_ROLLBACK_TEST_CHECK");
             l_selftest_check = check == NULL || atoi(check) != 0;
+        }
+        {
+            const char* from = getenv("RMG_NETPLAY_NEW_ROLLBACK_TEST_FROM");
+            l_selftest_from = from != NULL ? (unsigned int)atoi(from) : 64;
         }
         l_selftest_turn = 0;
         l_time_episode_start = 0;
@@ -1305,7 +1311,7 @@ static void rollback_boundary(void)
     if (l_selftest > 0 && l_rollback_possible && target < 0)
     {
         snapshot = 1;
-        if (l_frame >= 64 && l_frame % (unsigned int)l_selftest == 0 && l_frame > l_selftest_last)
+        if (l_frame >= l_selftest_from && l_frame % (unsigned int)l_selftest == 0 && l_frame > l_selftest_last)
         {
             struct snapshot* back = NULL;
             unsigned int depth = l_selftest_check ? 4 : l_selftest_depths[l_selftest_turn % 4];

@@ -85,6 +85,33 @@ static void note_rdp_command(uint32_t command, const uint32_t *words)
 	}
 }
 
+// The RDP's settings at power on, as commands of all zeros (a renderer that's
+// just been made has the same settings, give or take a 1-pixel-wide color
+// image, so these are given to it right away too). The settings a game hasn't
+// set yet then go back to these when an earlier state is loaded, instead of
+// keeping what later frames set (a game's first display list can rely on the
+// scissor being 0, for example).
+static void reset_rdp_commands()
+{
+	static const uint32_t settings[] = { 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x37, 0x38, 0x39, 0x3a, 0x3b,
+	                                     0x3c, 0x3d, 0x3e, 0x3f };
+	memset(&rdp_commands, 0, sizeof(rdp_commands));
+	for (uint32_t command : settings)
+	{
+		rdp_commands.commands[command][0] = command << 24;
+		rdp_commands.has_command[command] = 1;
+	}
+	for (uint32_t tile = 0; tile < 8; tile++)
+	{
+		rdp_commands.tiles[tile][0] = 0x35u << 24;
+		rdp_commands.tiles[tile][1] = tile << 24;
+		rdp_commands.has_tile[tile] = 1;
+		rdp_commands.tile_sizes[tile][0] = 0x32u << 24;
+		rdp_commands.tile_sizes[tile][1] = tile << 24;
+		rdp_commands.has_tile_size[tile] = 1;
+	}
+}
+
 static void replay_rdp_commands()
 {
 	// images first, then the modes and colors, then the tiles
@@ -889,7 +916,7 @@ void vk_destroy()
 
 bool vk_init()
 {
-	memset(&rdp_commands, 0, sizeof(rdp_commands));
+	reset_rdp_commands();
 	if (!screen_init())
 		return false;
 
@@ -973,6 +1000,7 @@ bool vk_init()
 	quirks.set_native_texture_lod(vk_native_texture_lod);
 	quirks.set_native_resolution_tex_rect(vk_native_tex_rect);
 	processor->set_quirks(quirks);
+	replay_rdp_commands();
 
 	wsi->begin_frame();
 	return true;
