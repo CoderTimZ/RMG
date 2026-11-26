@@ -175,11 +175,23 @@ void Config::validate()
 	// and after a rollback (which doesn't touch the GPU's buffers) re-run
 	// frames would copy different pixels than the first time. So nothing is
 	// copied (depth is rendered in software, which is exact).
+	// The settings that change what's written into RDRAM are also the same
+	// for every player: frame buffer emulation is on and depth is always
+	// rendered in software (with either off, nothing or something else is
+	// written); fills are always written (with the color copy from RDRAM on,
+	// they weren't, and that copy clears RDRAM); and the "adjust" aspect
+	// modes, which clip by the window's shape and so move the
+	// software-rendered depth by a pixel, become the plain ones.
 	if (Config_netplayNewGame != nullptr && Config_netplayNewGame() != 0) {
+		frameBufferEmulation.enable = 1;
 		frameBufferEmulation.copyToRDRAM = ctDisable;
 		frameBufferEmulation.copyAuxToRDRAM = 0;
-		if (frameBufferEmulation.copyDepthToRDRAM == cdCopyFromVRam)
-			frameBufferEmulation.copyDepthToRDRAM = cdSoftwareRender;
+		frameBufferEmulation.copyDepthToRDRAM = cdSoftwareRender;
+		frameBufferEmulation.copyFromRDRAM = 0;
+		if (frameBufferEmulation.aspect == aAdjust43)
+			frameBufferEmulation.aspect = a43;
+		else if (frameBufferEmulation.aspect == aAdjust169)
+			frameBufferEmulation.aspect = a169;
 		generalEmulation.hacks &= ~hack_subscreen;
 	}
 

@@ -162,6 +162,7 @@ void DisplayWindow::updateScale()
 void DisplayWindow::_setBufferSize()
 {
 	m_bAdjustScreen = false;
+	m_adjustScale = 1.0f; // (only the "adjust" modes change it: switching away from one left its scale)
 	switch (config.frameBufferEmulation.aspect) {
 	case Config::aStretch: // stretch
 		m_width = m_screenWidth;
