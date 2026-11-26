@@ -402,6 +402,39 @@ EXPORT void CALL ResizeVideoOutput(int width, int height)
     vk_resize();
 }
 
+// optional, for the core's new netplay (see plugin_wait_rdp_idle in its plugin.c);
+// not in m64p_plugin.h, so it needs C linkage here
+extern "C" EXPORT void CALL WaitRdpIdle(void)
+{
+    if (vk_initialized)
+    {
+        vk_wait_idle();
+    }
+}
+
+// optional, for the core's new netplay: the RDP's state outside RDRAM (its
+// hidden bits and TMEM), which rollback saves and restores with the machine
+extern "C" EXPORT unsigned int CALL RdpStateSize(void)
+{
+    return vk_initialized ? vk_state_size() : 0;
+}
+
+extern "C" EXPORT void CALL SaveRdpState(void *data)
+{
+    if (vk_initialized)
+    {
+        vk_save_state(data);
+    }
+}
+
+extern "C" EXPORT void CALL LoadRdpState(const void *data)
+{
+    if (vk_initialized)
+    {
+        vk_load_state(data);
+    }
+}
+
 EXPORT void CALL FBWrite(unsigned int addr, unsigned int size)
 {
 }

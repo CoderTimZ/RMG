@@ -28,6 +28,7 @@
 #include "device/r4300/r4300_core.h"
 #include "device/rcp/mi/mi_controller.h"
 #include "main/main.h"
+#include "main/netplay_new.h"
 #include "plugin/plugin.h"
 
 unsigned int vi_clock_from_tv_standard(m64p_system_type tv_standard)
@@ -165,7 +166,7 @@ void vi_vertical_interrupt_event(void* opaque)
     struct vi_controller* vi = (struct vi_controller*)opaque;
     if (vi->dp->do_on_unfreeze & DELAY_DP_INT)
         vi->dp->do_on_unfreeze |= DELAY_UPDATESCREEN;
-    else
+    else if (!netplay_new_rerunning()) /* re-run frames aren't shown */
         gfx.updateScreen();
 
     /* allow main module to do things on VI event */

@@ -27,6 +27,7 @@
 #include "device/memory/memory.h"
 #include "device/r4300/r4300_core.h"
 #include "device/rcp/mi/mi_controller.h"
+#include "main/netplay_new.h"
 #include "device/rcp/ri/ri_controller.h"
 #include "device/rcp/vi/vi_controller.h"
 #include "device/rdram/rdram.h"
@@ -72,8 +73,9 @@ static unsigned int get_dma_duration(struct ai_controller* ai)
 
 static void do_dma(struct ai_controller* ai, struct ai_dma* dma)
 {
-    /* lazy initialization of sample format */
-    if (ai->samples_format_changed)
+    /* lazy initialization of sample format (not from frames re-run after a
+     * rollback, which aren't played) */
+    if (ai->samples_format_changed && !netplay_new_rerunning())
     {
         unsigned int frequency = (ai->regs[AI_DACRATE_REG] == 0)
             ? 44100 /* default sample rate */
@@ -176,7 +178,8 @@ void read_ai_regs(void* opaque, uint32_t address, uint32_t* value)
         {
             unsigned int diff = ai->fifo[0].length - ai->last_read;
             unsigned char *p = (unsigned char*)&ai->ri->rdram->dram[ai->fifo[0].address/4];
-            ai->iaout->push_samples(ai->aout, p + diff, ai->last_read - *value);
+            if (!netplay_new_rerunning())
+                ai->iaout->push_samples(ai->aout, p + diff, ai->last_read - *value);
             ai->last_read = *value;
         }
     }
@@ -230,7 +233,8 @@ void ai_end_of_dma_event(void* opaque)
     {
         unsigned int diff = ai->fifo[0].length - ai->last_read;
         unsigned char *p = (unsigned char*)&ai->ri->rdram->dram[ai->fifo[0].address/4];
-        ai->iaout->push_samples(ai->aout, p + diff, ai->last_read);
+        if (!netplay_new_rerunning())
+            ai->iaout->push_samples(ai->aout, p + diff, ai->last_read);
         ai->last_read = 0;
     }
 

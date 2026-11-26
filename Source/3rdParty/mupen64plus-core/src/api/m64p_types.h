@@ -236,9 +236,21 @@ typedef struct {
  * sample() is called exactly once per frame, at the game's first controller
  * read during that frame or at the end of the frame if the game doesn't read
  * the controllers. Frame numbers passed to sample() only ever increase, even
- * if a later version of the core re-runs earlier frames (rollback). */
+ * when the core re-runs earlier frames (rollback).
+ *
+ * Rollback: when the frontend provides rollback() and snapshot(), it can
+ * answer get_input() for a frame whose input hasn't arrived with a guess.
+ * The core saves the machine's state at the start of frames the frontend
+ * asks for (snapshot), and when a guess turns out wrong, the frontend names
+ * one of those frames, the core goes back to it and re-runs the frames from
+ * there to where it was, quickly and without showing or playing them. */
 
-#define M64P_NETPLAY_NEW_API_VERSION 0x010300
+#define M64P_NETPLAY_NEW_API_VERSION 0x010400
+
+/* frame_end's flags and return value */
+#define M64P_NETPLAY_NEW_RERUN        1 /* (flag) the frame was re-run after a rollback */
+#define M64P_NETPLAY_NEW_SKIP_LIMITER 1 /* (returned) don't wait for the speed limiter after this frame */
+#define M64P_NETPLAY_NEW_SLOW_DOWN    2 /* (returned) this machine runs ahead of the others; hold it back a little */
 
 typedef enum {
   M64P_NETPLAY_NEW_SYNC_SETTINGS = 1, /* m64p_netplay_new_settings */
@@ -309,16 +321,32 @@ typedef struct {
 
   /* Called at the end of each frame, with how long this machine spent
    * emulating it in microseconds (not counting the time it waited in
-   * get_input, or the speed limiter's sleep) and how long a frame lasts at
-   * full speed (1/60 s, or 1/50 s for PAL). Returns 1 to skip the speed
-   * limiter for this frame (when this machine needs to catch up), 0 to keep
-   * it, or -1 if the session ended. */
-  int (*frame_end)(void* context, unsigned int frame, unsigned int busy_us, unsigned int frame_us);
+   * get_input, or the speed limiter's sleep), how long a frame lasts at
+   * full speed (1/60 s, or 1/50 s for PAL) and M64P_NETPLAY_NEW_RERUN if
+   * the frame was re-run after a rollback. Returns M64P_NETPLAY_NEW_SKIP_LIMITER
+   * (when this machine needs to catch up) and M64P_NETPLAY_NEW_SLOW_DOWN, or
+   * -1 if the session ended. */
+  int (*frame_end)(void* context, unsigned int frame, unsigned int busy_us, unsigned int frame_us, int flags);
 
-  /* A hash of the emulated machine at the end of a frame (RDRAM, the CP0
+  /* A hash of the emulated machine for the end of a frame (RDRAM, the CP0
    * registers and the RSP's memory), for noticing when players' games
-   * drift apart. Called right before frame_end. May be NULL. */
-  void (*frame_hash)(void* context, unsigned int frame, uint64_t hash);
+   * drift apart. The hash is taken during frame taken_in (at the end of
+   * the frame, or at a later full sync of the RDP), so it depends on the
+   * input up to that frame. Called before frame_end. May be NULL. */
+  void (*frame_hash)(void* context, unsigned int frame, uint64_t hash, unsigned int taken_in);
+
+  /* Rollback (may be NULL, together with snapshot). Called at every frame
+   * boundary, also while re-running frames, with the frame that starts
+   * next. Sets *confirmed to the first frame whose input isn't final yet
+   * (everything before it is), and *snapshot to 1 if the core should save
+   * the machine's state at the start of next_frame. Returns -1 to go on,
+   * or a frame to go back to: one the core saved (see snapshot) and hasn't
+   * dropped. The frontend forgets the core's saves after that frame. */
+  int (*rollback)(void* context, unsigned int next_frame, unsigned int* confirmed, int* snapshot);
+
+  /* The core saved the machine's state at the start of frame (kept = 1),
+   * or dropped that save (kept = 0) */
+  void (*snapshot)(void* context, unsigned int frame, int kept);
 } m64p_netplay_new_callbacks;
 
 /* ----------------------------------------- */

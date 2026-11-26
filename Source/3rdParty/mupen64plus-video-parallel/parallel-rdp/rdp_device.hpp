@@ -144,6 +144,17 @@ public:
 	void end_write_hidden_rdram();
 	size_t get_rdram_size() const;
 	size_t get_hidden_rdram_size() const;
+
+	// The RDP's state outside RDRAM (the hidden 9th bits and TMEM), for
+	// saving and restoring the emulated machine. Both wait for the GPU.
+	// The upscaled copies of RDRAM aren't included.
+	size_t get_hidden_state_size() const;
+	void save_hidden_state(void *data);
+	void load_hidden_state(const void *data);
+	// the count the RDP's noise is seeded from (see Renderer); only valid
+	// while nothing is waiting to be drawn (after save/load_hidden_state)
+	uint32_t get_noise_index() const { return renderer.get_base_primitive_index(); }
+	void set_noise_index(uint32_t index) { renderer.set_base_primitive_index(index); }
 	void *get_tmem();
 
 	// Sets VI register
@@ -201,6 +212,9 @@ private:
 	Vulkan::BufferHandle rdram;
 	Vulkan::BufferHandle hidden_rdram;
 	Vulkan::BufferHandle tmem;
+	// staging for save_hidden_state / load_hidden_state
+	Vulkan::BufferHandle hidden_state;
+	void ensure_hidden_state_buffer();
 	size_t rdram_offset;
 	size_t rdram_size;
 	CommandProcessorFlags flags;

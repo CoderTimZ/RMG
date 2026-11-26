@@ -96,8 +96,11 @@ static void file_storage_save(void* storage, size_t start, size_t size)
     if (netplay_is_init() && netplay_get_controller(0) == -1)
         return;
 
-    /* during the new netplay, only the host writes save files */
+    /* during the new netplay, only the host writes save files, and only
+     * once the frames that changed them are final */
     if (!netplay_new_can_write_saves())
+        return;
+    if (netplay_new_defer_save(storage))
         return;
 
     struct file_storage* fstorage = (struct file_storage*)storage;
@@ -124,6 +127,16 @@ static void file_storage_save(void* storage, size_t start, size_t size)
         break;
     default:
         break;
+    }
+}
+
+void file_storage_write_all(struct file_storage* fstorage, const uint8_t* data)
+{
+    file_status_t err = write_to_file(fstorage->filename, data, fstorage->size);
+    fstorage->first_access = 0;
+
+    if (err != file_ok) {
+        DebugMessage(M64MSG_WARNING, "couldn't write storage file '%s'", fstorage->filename);
     }
 }
 

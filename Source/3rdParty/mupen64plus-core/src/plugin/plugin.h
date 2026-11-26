@@ -175,6 +175,21 @@ extern unsigned int execution_sync_exceptions;
 extern int execution_reload_pending;
 
 extern int execution_plugin_attached(void);
+
+/* waits until the video plugin's RDP has written everything to RDRAM (for
+ * plugins that write it asynchronously; others are done already) */
+extern void plugin_wait_rdp_idle(void);
+
+/* the video plugin's RDP state outside RDRAM (0 if it has none to hand over) */
+extern unsigned int plugin_rdp_state_size(void);
+extern void plugin_save_rdp_state(void* data);
+extern void plugin_load_rdp_state(const void* data);
+
+/* the RSP plugin's registers, which carry over between tasks (0 if it has
+ * none to hand over) */
+extern unsigned int plugin_rsp_state_size(void);
+extern void plugin_save_rsp_state(void* data);
+extern void plugin_load_rsp_state(const void* data);
 extern void initiate_execution_plugin(void);
 extern void execution_state_loaded(void);
 extern void execution_reset(int hard);

@@ -49,6 +49,10 @@ int netplay_new_can_write_saves(void);
 /* called when emulation starts, before any other function below */
 void netplay_new_start(void);
 
+/* called when emulation stops: writes save files that waited for their
+ * frames to be final */
+void netplay_new_stop(void);
+
 /* replace the values with the host's */
 void netplay_new_sync_settings(m64p_netplay_new_settings* settings);
 void netplay_new_sync_data(m64p_netplay_new_sync kind, void* data, size_t size);
@@ -80,6 +84,30 @@ void netplay_new_frame_start(void);
  * sync, when its writes to RDRAM are complete. */
 void netplay_new_rdp_list(void);
 void netplay_new_rdp_full_sync(void);
+
+/* Rollback: called at the end of gen_interrupt, where the machine's state is
+ * whole (the same place savestates are saved). Saves the state for the
+ * frame that just started, or goes back to a saved frame. */
+void netplay_new_interrupt_end(void);
+
+/* Whether the frame being emulated is re-run after a rollback: it isn't
+ * shown, played or rumbled, and nothing waits for it. */
+int netplay_new_rerunning(void);
+
+/* The save files (EEPROM, SRAM, FlashRAM, memory paks), which rollback
+ * keeps with each saved state. Writing them to disk waits until the game
+ * that wrote them is final (see netplay_new_defer_save). */
+struct file_storage;
+void netplay_new_set_storages(struct file_storage* eep, struct file_storage* sra,
+                              struct file_storage* fla, struct file_storage* mpk);
+
+/* Called instead of writing one of those files during the new netplay;
+ * returns 0 for any other file, which is written as usual */
+int netplay_new_defer_save(struct file_storage* storage);
+
+/* More of the emulated machine's state that savestates don't hold (pak
+ * switching, for one), which rollback saves and restores as it is */
+void netplay_new_track_state(void* data, size_t size);
 
 /* the session clock: the host's start time plus emulated time */
 extern const struct clock_backend_interface g_iclock_netplay_new;

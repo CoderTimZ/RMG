@@ -47,7 +47,7 @@ static void update_dpc_status(struct rdp_core* dp, uint32_t w)
 
             clear_rsp_wait(dp->sp, WAIT_PENDING_DP_SYNC);
         }
-        if (dp->do_on_unfreeze & DELAY_UPDATESCREEN)
+        if ((dp->do_on_unfreeze & DELAY_UPDATESCREEN) && !netplay_new_rerunning())
             gfx.updateScreen();
         dp->do_on_unfreeze = 0;
     }

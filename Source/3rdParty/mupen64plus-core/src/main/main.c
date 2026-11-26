@@ -984,6 +984,10 @@ void new_frame(void)
     }
 }
 
+/* milliseconds the speed limiter waits longer than it would, once (the new
+ * netplay holds back a machine that runs ahead of the others this way) */
+static unsigned int l_SpeedLimiterHoldBack = 0;
+
 static void apply_speed_limiter(void)
 {
     static unsigned long totalVIs = 0;
@@ -1009,6 +1013,10 @@ static void apply_speed_limiter(void)
     {
         ++totalVIs;
     }
+
+    /* moving the start later makes every frame from now on wait that much longer */
+    StartFPSTime += l_SpeedLimiterHoldBack;
+    l_SpeedLimiterHoldBack = 0;
 
     lastSpeedFactor = l_SpeedFactor;
 
@@ -1088,26 +1096,44 @@ static void pause_loop(void)
  * Allow the core to perform various things */
 void new_vi(void)
 {
-    new_frame();
+    /* the new netplay re-runs frames after a rollback quickly, without
+     * showing them to the frontend or counting them */
+    int rerun = netplay_new_rerunning();
+    int netplay_flags = 0;
+
+    if (!rerun)
+        new_frame();
 #if defined(PROFILE)
     timed_sections_refresh();
 #endif
 
     execution.frame(l_CurrentVI);
 
-    if (l_CurrentVI % 30 == 0) {
-        if (l_LastVITime != -1) {
-            StateChanged(M64CORE_SPEED_UDPATE, SDL_GetTicks() - l_LastVITime);
+    if (!rerun) {
+        if (l_CurrentVI % 30 == 0) {
+            if (l_LastVITime != -1) {
+                StateChanged(M64CORE_SPEED_UDPATE, SDL_GetTicks() - l_LastVITime);
+            }
+            l_LastVITime = SDL_GetTicks();
         }
-        l_LastVITime = SDL_GetTicks();
+        l_CurrentVI++;
     }
-    l_CurrentVI++;
 
     gs_apply_cheats(&g_cheat_ctx);
 
-    /* during the new netplay, the frame ends here; a machine that's behind skips the speed limiter to catch up */
-    if (!netplay_new_active() || !netplay_new_frame_end())
+    /* during the new netplay, the frame ends here; a machine that's behind
+     * skips the speed limiter to catch up, and one that's ahead waits a
+     * little longer */
+    if (netplay_new_active())
+        netplay_flags = netplay_new_frame_end();
+    if (netplay_flags & M64P_NETPLAY_NEW_SLOW_DOWN)
+        l_SpeedLimiterHoldBack += 1;
+    if (!(netplay_flags & M64P_NETPLAY_NEW_SKIP_LIMITER))
         apply_speed_limiter();
+
+    if (rerun)
+        return;
+
     main_check_inputs();
 
     pause_loop();
@@ -1812,6 +1838,9 @@ m64p_error main_run(void)
         netplay_new_sync_data(M64P_NETPLAY_NEW_SYNC_EEPROM, eep.data, 0x800 /* EEPROM_MAX_SIZE */);
         netplay_new_sync_data(M64P_NETPLAY_NEW_SYNC_FLASHRAM, fla.data, FLASHRAM_SIZE);
         netplay_new_sync_data(M64P_NETPLAY_NEW_SYNC_SRAM, sra.data, SRAM_SIZE);
+
+        /* rollback keeps them with each saved state, and they're written once final */
+        netplay_new_set_storages(&eep, &sra, &fla, &mpk);
     }
 
     /* Load 64DD IPL ROM and Disk */
@@ -2091,9 +2120,20 @@ m64p_error main_run(void)
     g_EmulatorRunning = 1;
     StateChanged(M64CORE_EMU_STATE, M64EMU_RUNNING);
 
+    /* the pak switching state, which rollback saves and restores with the machine */
+    if (netplay_new_active())
+    {
+        netplay_new_track_state(cin_compats, sizeof(cin_compats));
+        netplay_new_track_state(l_paks_idx, sizeof(l_paks_idx));
+    }
+
     poweron_device(&g_dev);
     pif_bootrom_hle_execute(&g_dev.r4300);
     run_device(&g_dev);
+
+    /* save files that waited for their frames to be final */
+    if (netplay_new_active())
+        netplay_new_stop();
 
     /* now begin to shut down */
 #ifdef WITH_LIRC

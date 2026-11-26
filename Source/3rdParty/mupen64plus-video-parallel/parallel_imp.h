@@ -30,6 +30,10 @@ extern "C"
 
     void vk_rasterize();
     void vk_process_commands();
+    void vk_wait_idle();
+    unsigned vk_state_size();
+    void vk_save_state(void *data);
+    void vk_load_state(const void *data);
     bool vk_init();
     void vk_destroy();
     void vk_resize();

@@ -26,6 +26,7 @@
 #include <QMessageBox>
 #include <QPointer>
 #include <QSignalBlocker>
+#include <QStandardItemModel>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -198,6 +199,8 @@ NetplaySessionWindow::NetplaySessionWindow(QWidget* parent, const QMap<QString, 
 
     this->modeComboBox = new QComboBox(this);
     this->modeComboBox->setToolTip("Lockstep: everyone sends their own input, and one player lagging lags everyone.\n"
+                                   "Rollback: like Lockstep, but other players' input is guessed instead of waited for, and the\n"
+                                   "game goes back to correct a wrong guess, so there's less input delay. Not with execution plugins.\n"
                                    "Authority: one player sends everyone's input; only players who lag fall behind.\n"
                                    "Golf: like Authority, but whoever starts playing becomes the authority.");
     this->pauseButton = new QPushButton("Pause", this);
@@ -292,6 +295,8 @@ NetplayNew::LocalInfo NetplaySessionWindow::localInfo(QString nickname, QString 
     {
         info.executionPlugin.clear();
     }
+
+    info.rollbackProblem = CoreGetNetplayNewRollbackProblem(info.gfxPlugin);
     return info;
 }
 
@@ -622,9 +627,9 @@ void NetplaySessionWindow::refresh(void)
                 lagItem->setFlags(Qt::ItemIsEnabled);
                 this->playerTable->setItem(row, ColumnLag, lagItem);
             }
-            bool lagMatters = player.ports != 0 && info.mode == NetplayNew::Mode::Lockstep;
+            bool lagMatters = player.ports != 0 && NetplayNew::OwnersWrite(info.mode);
             lagItem->setText(lagMatters ? QString::number(player.lag) : QString("-"));
-            lagItem->setToolTip(info.mode == NetplayNew::Mode::Lockstep ? QString() : "Lag is only used in Lockstep mode");
+            lagItem->setToolTip(NetplayNew::OwnersWrite(info.mode) ? QString() : "Lag is only used in Lockstep and Rollback modes");
         }
 
         QTableWidgetItem* pingItem = this->playerTable->item(row, ColumnPing);
@@ -708,6 +713,22 @@ void NetplaySessionWindow::refresh(void)
         QSignalBlocker blocker(this->modeComboBox);
         this->modeComboBox->clear();
         this->modeComboBox->addItem("Lockstep", QVariant::fromValue(QPair<int, int>(int(NetplayNew::Mode::Lockstep), NetplayNew::HostPlayer)));
+        this->modeComboBox->addItem("Rollback", QVariant::fromValue(QPair<int, int>(int(NetplayNew::Mode::Rollback), NetplayNew::HostPlayer)));
+        {
+            // (unavailable, with the reason, when a player's setup can't roll back)
+            std::string rollbackReason;
+            if (!this->session->CanRollback(rollbackReason))
+            {
+                int index = this->modeComboBox->count() - 1;
+                QStandardItemModel* model = qobject_cast<QStandardItemModel*>(this->modeComboBox->model());
+                if (model != nullptr && info.mode != NetplayNew::Mode::Rollback)
+                {
+                    model->item(index)->setEnabled(false);
+                }
+                this->modeComboBox->setItemText(index, "Rollback (unavailable)");
+                this->modeComboBox->setItemData(index, QString::fromStdString(rollbackReason), Qt::ToolTipRole);
+            }
+        }
         this->modeComboBox->addItem("Golf", QVariant::fromValue(QPair<int, int>(int(NetplayNew::Mode::Golf), NetplayNew::HostPlayer)));
         for (const NetplayNew::PlayerInfo& player : info.players)
         {
@@ -742,7 +763,12 @@ void NetplaySessionWindow::refresh(void)
     }
     else if (info.playing)
     {
-        this->startReasonLabel->setText(info.paused ? "Paused by " + QString::fromStdString(info.pausedBy) + "." : QString("Playing."));
+        QString text = info.paused ? "Paused by " + QString::fromStdString(info.pausedBy) + "." : QString("Playing.");
+        if (info.mode == NetplayNew::Mode::Rollback && info.rollback.rollbacks > 0)
+        {
+            text += QString(" Rolled back %1 times (up to %2 frames).").arg(info.rollback.rollbacks).arg(info.rollback.deepest);
+        }
+        this->startReasonLabel->setText(text);
     }
     else if (info.isHost)
     {
@@ -782,7 +808,11 @@ void NetplaySessionWindow::leave(void)
 void NetplaySessionWindow::on_modeComboBox_activated(int index)
 {
     auto [mode, player] = this->modeComboBox->itemData(index).value<QPair<int, int>>();
-    this->session->SetMode(static_cast<NetplayNew::Mode>(mode), static_cast<uint8_t>(player));
+    std::string error;
+    if (!this->session->SetMode(static_cast<NetplayNew::Mode>(mode), static_cast<uint8_t>(player), error))
+    {
+        this->log(QString::fromStdString(error));
+    }
     this->refresh();
 }
 

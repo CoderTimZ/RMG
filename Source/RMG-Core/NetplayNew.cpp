@@ -12,8 +12,11 @@
 #include "Library.hpp"
 #include "Error.hpp"
 
+#include "Settings.hpp"
 #include "m64p/Api.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cstring>
 
 //
@@ -50,6 +53,37 @@ CORE_EXPORT bool CoreSetNetplayNewCallbacks(const m64p_netplay_new_callbacks* ca
 CORE_EXPORT bool CoreHasNetplayNew(void)
 {
     return l_HasCallbacks;
+}
+
+CORE_EXPORT std::string CoreGetNetplayNewRollbackProblem(std::string gfxPlugin)
+{
+    std::transform(gfxPlugin.begin(), gfxPlugin.end(), gfxPlugin.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    // GLideN64 copies its frame buffers to RDRAM one or two frames late in
+    // its double and triple buffer modes (2, 3). A rollback restores RDRAM
+    // but can't take back a copy that's still on its way, which would then
+    // land in the corrected game.
+    if (gfxPlugin.find("glide") != std::string::npos &&
+        CoreSettingsGetBoolValue("Video-GLideN64", "EnableFBEmulation", true) &&
+        CoreSettingsGetIntValue("Video-GLideN64", "EnableCopyColorToRDRAM", 1) >= 2)
+    {
+        return "GLideN64 copies frame buffers to RDRAM asynchronously (set \"Copy color buffer to RDRAM\" to synchronous or off)";
+    }
+
+    // Parallel's upscaling keeps an upscaled copy of RDRAM on the GPU, which
+    // rollback doesn't save. That's fine while the game only reads native
+    // RDRAM (at worst a frame after a rollback shows upscaled pixels from the
+    // abandoned frames), but superscaled reads give the game pixels made
+    // from that copy.
+    if (gfxPlugin.find("parallel") != std::string::npos &&
+        CoreSettingsGetIntValue("Video-Parallel", "Upscaling", 1) > 1 &&
+        CoreSettingsGetBoolValue("Video-Parallel", "SuperscaledReads", false))
+    {
+        return "Parallel's superscaled reads are on (turn them off, or set Upscaling to 1x, native)";
+    }
+
+    return std::string();
 }
 
 //

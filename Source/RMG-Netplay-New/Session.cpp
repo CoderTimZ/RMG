@@ -27,7 +27,7 @@ namespace
 {
 enum MessageType : uint8_t
 {
-    // guest -> host: u32 protocol, string name, version, rsp, gfx, execution plugin
+    // guest -> host: u32 protocol, string name, version, rsp, gfx, execution plugin, rollback problem
     MsgHello = 1,
     // host -> guest: u8 your player id
     MsgWelcome,
@@ -35,7 +35,7 @@ enum MessageType : uint8_t
     MsgReject,
     // host -> all: the session (see BuildStateLocked)
     MsgState,
-    // guest -> host: u8 has game, string rsp, gfx, execution plugin (for that game)
+    // guest -> host: u8 has game, string rsp, gfx, execution plugin, rollback problem (for that game)
     MsgStatus,
     // host -> all: bytes cheats, u8 mode, u8 owner[4], u8 streams, streams * (u8 player, u8 authority)
     MsgStart,
@@ -157,6 +157,8 @@ Session::Session(EventHandler handler) : handler(std::move(handler))
     this->callbacks.get_input       = &Session::CoreGetInput;
     this->callbacks.frame_end       = &Session::CoreFrameEnd;
     this->callbacks.frame_hash      = &Session::CoreFrameHash;
+    this->callbacks.rollback        = &Session::CoreRollback;
+    this->callbacks.snapshot        = &Session::CoreSnapshot;
     std::memset(this->portTable, 0, sizeof(this->portTable));
 }
 
@@ -195,6 +197,7 @@ bool Session::Host(uint16_t port, const LocalInfo& local, const std::string& gam
         host.rspPlugin       = local.rspPlugin;
         host.gfxPlugin       = local.gfxPlugin;
         host.executionPlugin = local.executionPlugin;
+        host.rollbackProblem = local.rollbackProblem;
         this->info.players.push_back(host);
 
         this->callbacks.is_host = 1;
@@ -340,7 +343,8 @@ void Session::SetHasGame(bool hasGame, const LocalInfo& plugins)
         .U8(hasGame ? 1 : 0)
         .String(plugins.rspPlugin)
         .String(plugins.gfxPlugin)
-        .String(plugins.executionPlugin);
+        .String(plugins.executionPlugin)
+        .String(plugins.rollbackProblem);
     this->transport.Send(this->hostPeer, Channel::Control, message.Data());
 }
 
@@ -474,6 +478,12 @@ void Session::AdjustLagLocked(uint64_t now)
         }
         uint8_t needed = static_cast<uint8_t>(std::min(60.0, std::ceil(frames)));
 
+        // Rollback covers the first few frames of the delay by guessing
+        if (this->info.mode == Mode::Rollback)
+        {
+            needed = needed > RollbackHide ? static_cast<uint8_t>(needed - RollbackHide) : 0;
+        }
+
         uint8_t lag = player.lag;
         if (!this->gameRunning)
         {
@@ -511,11 +521,51 @@ void Session::AdjustLagLocked(uint64_t now)
 
 void Session::SetMode(Mode mode, uint8_t authorityPlayer)
 {
+    std::string error;
+    if (!this->SetMode(mode, authorityPlayer, error))
+    {
+        this->Emit(EventType::Message, error);
+    }
+}
+
+bool Session::CanRollback(std::string& reason)
+{
+    std::lock_guard<std::mutex> lock(this->mutex);
+    return this->CanRollbackLocked(reason);
+}
+
+bool Session::CanRollbackLocked(std::string& reason)
+{
+    for (const PlayerInfo& player : this->info.players)
+    {
+        // an execution plugin keeps state of its own, which rollback can't restore
+        if (!player.executionPlugin.empty())
+        {
+            reason = "Rollback isn't available with an execution plugin (" + player.name + " uses " +
+                     player.executionPlugin + "). Use Lockstep.";
+            return false;
+        }
+        if (!player.rollbackProblem.empty())
+        {
+            reason = "Rollback isn't available: " + player.name + "'s " + player.rollbackProblem;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Session::SetMode(Mode mode, uint8_t authorityPlayer, std::string& error)
+{
     {
         std::lock_guard<std::mutex> lock(this->mutex);
         if (!this->info.isHost)
         {
-            return;
+            error = "Only the host can change the mode";
+            return false;
+        }
+        if (mode == Mode::Rollback && !this->CanRollbackLocked(error))
+        {
+            return false;
         }
 
         if (this->FindPlayerLocked(authorityPlayer) == nullptr)
@@ -551,6 +601,7 @@ void Session::SetMode(Mode mode, uint8_t authorityPlayer)
     }
     this->condition.notify_all();
     this->Emit(EventType::StateChanged);
+    return true;
 }
 
 bool Session::CanStart(std::string& reason)
@@ -598,6 +649,11 @@ bool Session::CanStart(std::string& reason)
         return false;
     }
 
+    if (this->info.mode == Mode::Rollback && !this->CanRollbackLocked(reason))
+    {
+        return false;
+    }
+
     return true;
 }
 
@@ -632,6 +688,7 @@ bool Session::Start(const std::vector<uint8_t>& cheats, std::string& error)
             switch (this->info.mode)
             {
             case Mode::Lockstep:
+            case Mode::Rollback:
                 authorities[owners[i]] = owners[i];
                 break;
             case Mode::Authority:
@@ -759,7 +816,8 @@ void Session::OnConnected(PeerId peer)
         .String(this->local.version)
         .String(this->local.rspPlugin)
         .String(this->local.gfxPlugin)
-        .String(this->local.executionPlugin);
+        .String(this->local.executionPlugin)
+        .String(this->local.rollbackProblem);
     this->transport.Send(peer, Channel::Control, message.Data());
 }
 
@@ -916,6 +974,7 @@ void Session::HandleHostMessage(PeerId peer, uint8_t type, PacketReader& reader,
         player.rspPlugin       = reader.String();
         player.gfxPlugin       = reader.String();
         player.executionPlugin = reader.String();
+        player.rollbackProblem = reader.String();
 
         if (this->info.playing)
         {
@@ -985,6 +1044,7 @@ void Session::HandleHostMessage(PeerId peer, uint8_t type, PacketReader& reader,
         player->rspPlugin       = reader.String();
         player->gfxPlugin       = reader.String();
         player->executionPlugin = reader.String();
+        player->rollbackProblem = reader.String();
         this->BroadcastLocked(this->BuildStateLocked());
         events.push_back({EventType::StateChanged, "", {}});
         break;
@@ -1124,6 +1184,7 @@ void Session::HandleGuestMessage(uint8_t type, PacketReader& reader, std::vector
             player.rspPlugin       = reader.String();
             player.gfxPlugin       = reader.String();
             player.executionPlugin = reader.String();
+            player.rollbackProblem = reader.String();
             state.players.push_back(player);
         }
 
@@ -1133,6 +1194,7 @@ void Session::HandleGuestMessage(uint8_t type, PacketReader& reader, std::vector
         state.paused   = this->info.paused;
         state.pausedBy = this->info.pausedBy;
         state.desyncs  = this->info.desyncs;
+        state.rollback = this->info.rollback;
 
         // a player who left keeps their controller plugged in, idle
         if (this->gameRunning)
@@ -1357,6 +1419,22 @@ void Session::HandleFrames(PeerId peer, PacketReader& reader)
             uint32_t have  = reader.U32();
             uint32_t& ack  = this->acks[sender][player];
             ack = std::max(ack, have);
+        }
+
+        uint8_t frameCount = reader.U8();
+        for (uint8_t i = 0; i < frameCount; i++)
+        {
+            uint8_t player = reader.U8();
+            uint32_t frame = reader.U32();
+            if (player == this->info.myId)
+            {
+                continue;
+            }
+            auto it = this->remoteFrames.find(player);
+            if (it == this->remoteFrames.end() || frame > it->second.frame)
+            {
+                this->remoteFrames[player] = {frame, now_ms()};
+            }
         }
 
         // the host passes new frames on right away
@@ -1641,7 +1719,8 @@ std::vector<uint8_t> Session::BuildStateLocked(void)
             .String(player.version)
             .String(player.rspPlugin)
             .String(player.gfxPlugin)
-            .String(player.executionPlugin);
+            .String(player.executionPlugin)
+            .String(player.rollbackProblem);
     }
     return message.Data();
 }
@@ -1697,6 +1776,12 @@ void Session::StartGameLocked(Mode mode, const uint8_t owners[4], const std::map
     this->otherHashes.clear();
     this->hashesSentThrough = 0;
     this->info.desyncs.clear();
+    this->snapshots.clear();
+    this->mismatch = -1;
+    this->provisionalHashes.clear();
+    this->remoteFrames.clear();
+    this->lead = 0.0;
+    this->info.rollback = RollbackStats();
     std::memset(this->portTable, 0, sizeof(this->portTable));
 
     for (int i = 0; i < 4; i++)
@@ -1774,6 +1859,29 @@ std::vector<uint8_t> Session::BuildFramesLocked(uint8_t recipient)
         message.U8(player).U32(stream.count);
     }
 
+    // the frame each player is at, as far as this machine knows (its own,
+    // and on the host everyone's), for Rollback's time sync
+    std::vector<std::pair<uint8_t, uint32_t>> frames;
+    if (this->lastSampled >= 0)
+    {
+        frames.push_back({this->info.myId, static_cast<uint32_t>(this->lastSampled)});
+    }
+    if (this->info.isHost)
+    {
+        for (auto& [player, remote] : this->remoteFrames)
+        {
+            if (player != recipient)
+            {
+                frames.push_back({player, remote.frame});
+            }
+        }
+    }
+    message.U8(static_cast<uint8_t>(frames.size()));
+    for (auto& [player, frame] : frames)
+    {
+        message.U8(player).U32(frame);
+    }
+
     return message.Data();
 }
 
@@ -1836,8 +1944,9 @@ int64_t Session::BusyLocked(void)
 uint32_t Session::LagLocked(const Stream& stream)
 {
     // the lag only exists to give the other players' frames time to arrive in
-    // Lockstep; an authority waits for no one, so its frames apply at once
-    if (this->info.mode != Mode::Lockstep)
+    // Lockstep and Rollback; an authority waits for no one, so its frames
+    // apply at once
+    if (!OwnersWrite(this->info.mode))
     {
         return 0;
     }
@@ -1862,9 +1971,15 @@ void Session::SetFrameLocked(Stream& stream, uint32_t frame, const std::vector<u
     }
     stream.known[frame] = 1;
 
+    uint32_t before = stream.count;
     while (stream.count < stream.known.size() && stream.known[stream.count])
     {
         stream.count++;
+    }
+
+    if (stream.count != before && !stream.used.empty())
+    {
+        this->CheckUsedLocked(stream, before, stream.count);
     }
 }
 
@@ -2063,6 +2178,7 @@ uint8_t Session::DesiredAuthorityLocked(const Stream& stream)
     switch (this->info.mode)
     {
     case Mode::Lockstep:
+    case Mode::Rollback:
         return present(stream.player) ? stream.player : HostPlayer;
     case Mode::Authority:
         return present(this->info.authorityPlayer) ? this->info.authorityPlayer : HostPlayer;
@@ -2138,17 +2254,27 @@ int Session::CoreGetInput(void* context, unsigned int frame, int port, m64p_netp
     return static_cast<Session*>(context)->GetInput(frame, port, input);
 }
 
-int Session::CoreFrameEnd(void* context, unsigned int frame, unsigned int busyUs, unsigned int frameUs)
+int Session::CoreFrameEnd(void* context, unsigned int frame, unsigned int busyUs, unsigned int frameUs, int flags)
 {
-    return static_cast<Session*>(context)->FrameEnd(frame, busyUs, frameUs);
+    return static_cast<Session*>(context)->FrameEnd(frame, busyUs, frameUs, flags);
 }
 
-void Session::CoreFrameHash(void* context, unsigned int frame, uint64_t hash)
+void Session::CoreFrameHash(void* context, unsigned int frame, uint64_t hash, unsigned int takenIn)
 {
-    static_cast<Session*>(context)->FrameHash(frame, hash);
+    static_cast<Session*>(context)->FrameHash(frame, hash, takenIn);
 }
 
-void Session::FrameHash(unsigned int frame, uint64_t hash)
+int Session::CoreRollback(void* context, unsigned int nextFrame, unsigned int* confirmed, int* snapshot)
+{
+    return static_cast<Session*>(context)->Rollback(nextFrame, confirmed, snapshot);
+}
+
+void Session::CoreSnapshot(void* context, unsigned int frame, int kept)
+{
+    static_cast<Session*>(context)->Snapshot(frame, kept);
+}
+
+void Session::FrameHash(unsigned int frame, uint64_t hash, unsigned int takenIn)
 {
     std::vector<Event> events;
     {
@@ -2158,6 +2284,32 @@ void Session::FrameHash(unsigned int frame, uint64_t hash)
             return;
         }
 
+        // A hash is only shared once the input it depends on (up to the
+        // frame it was taken in) is final: a guessed game may be undone
+        this->provisionalHashes[frame] = {hash, takenIn};
+        this->FinalizeHashesLocked(events);
+    }
+    this->Emit(events);
+}
+
+void Session::FinalizeHashesLocked(std::vector<Event>& events)
+{
+    uint32_t confirmed = this->ConfirmedLocked();
+    while (!this->provisionalHashes.empty())
+    {
+        auto it = this->provisionalHashes.begin();
+        if (it->second.takenIn >= confirmed || (this->mismatch >= 0 && it->second.takenIn >= this->mismatch))
+        {
+            break;
+        }
+        this->RecordHashLocked(it->first, it->second.hash, events);
+        this->provisionalHashes.erase(it);
+    }
+}
+
+void Session::RecordHashLocked(uint32_t frame, uint64_t hash, std::vector<Event>& events)
+{
+    {
         this->myHashes[frame] = hash;
         while (!this->myHashes.empty() && this->myHashes.begin()->first + HashWindow < frame)
         {
@@ -2207,7 +2359,6 @@ void Session::FrameHash(unsigned int frame, uint64_t hash)
             this->hashesSentThrough = frame + 1;
         }
     }
-    this->Emit(events);
 }
 
 int Session::Sync(m64p_netplay_new_sync kind, void* data, unsigned int size)
@@ -2429,6 +2580,21 @@ int Session::GetInput(unsigned int frame, int port, m64p_netplay_new_input* inpu
     }
     Stream& stream = it->second;
 
+    size_t k = std::find(stream.ports.begin(), stream.ports.end(), port) - stream.ports.begin();
+    auto answer = [&](const std::vector<uint32_t>& values, const std::vector<uint8_t>& events) {
+        input->buttons = values[k];
+        input->pak     = events[k] != 0 ? events[k] : -1;
+        return 1;
+    };
+
+    // a frame this machine already used and that isn't final yet: the same
+    // input for every read during this run of the frame
+    auto used = stream.used.find(frame);
+    if (used != stream.used.end())
+    {
+        return answer(used->second.values, used->second.events);
+    }
+
     // the lock is let go while waiting; if the game ended and another one
     // started meanwhile, the streams were replaced, so stream isn't valid
     const uint32_t game = this->gameNumber;
@@ -2437,7 +2603,8 @@ int Session::GetInput(unsigned int frame, int port, m64p_netplay_new_input* inpu
     uint64_t waitStart = now_ms();
     bool noticed = false;
 
-    while (sameGame() && stream.count <= frame)
+    // Rollback guesses instead, as long as it can go back far enough
+    while (sameGame() && stream.count <= frame && !this->CanGuessLocked(frame))
     {
         this->condition.wait_for(lock, std::chrono::milliseconds(50));
 
@@ -2469,16 +2636,33 @@ int Session::GetInput(unsigned int frame, int port, m64p_netplay_new_input* inpu
         return 0;
     }
 
-    size_t k = std::find(stream.ports.begin(), stream.ports.end(), port) - stream.ports.begin();
-    size_t index = static_cast<size_t>(frame) * stream.ports.size() + k;
-    input->buttons = stream.frames[index];
-    input->pak     = stream.events[index] != 0 ? stream.events[index] : -1;
-    return 1;
+    if (stream.count <= frame)
+    {
+        Stream::Used guess = this->GuessLocked(stream, frame);
+        this->info.rollback.guessedFrames++;
+        auto it = stream.used.emplace(frame, std::move(guess)).first;
+        return answer(it->second.values, it->second.events);
+    }
+
+    std::vector<uint32_t> values(stream.ports.size());
+    std::vector<uint8_t> events(stream.ports.size());
+    for (size_t i = 0; i < stream.ports.size(); i++)
+    {
+        values[i] = stream.frames[static_cast<size_t>(frame) * stream.ports.size() + i];
+        events[i] = stream.events[static_cast<size_t>(frame) * stream.ports.size() + i];
+    }
+    return answer(values, events);
 }
 
-int Session::FrameEnd(unsigned int frame, unsigned int busyUs, unsigned int frameUs)
+int Session::FrameEnd(unsigned int frame, unsigned int busyUs, unsigned int frameUs, int flags)
 {
     std::unique_lock<std::mutex> lock(this->mutex);
+
+    // a frame re-run after a rollback: nothing waits for it, and it isn't timed
+    if (flags & M64P_NETPLAY_NEW_RERUN)
+    {
+        return (this->ended || !this->gameRunning) ? -1 : 0;
+    }
 
     if (frameUs >= 10000 && frameUs <= 50000)
     {
@@ -2533,9 +2717,247 @@ int Session::FrameEnd(unsigned int frame, unsigned int busyUs, unsigned int fram
         leastAhead = std::min(leastAhead, ahead);
     }
 
-    if (leastAhead == INT64_MAX)
+    int result = 0;
+    if (leastAhead != INT64_MAX && (writesAny ? (leastAhead >= 2) : (leastAhead >= 4)))
     {
-        return 0;
+        result |= M64P_NETPLAY_NEW_SKIP_LIMITER;
     }
-    return writesAny ? (leastAhead >= 2) : (leastAhead >= 4);
+    if (this->AheadLocked(frame))
+    {
+        result |= M64P_NETPLAY_NEW_SLOW_DOWN;
+    }
+    return result;
+}
+
+//
+// Rollback
+//
+
+uint32_t Session::ConfirmedLocked(void)
+{
+    // the first frame some stream doesn't have yet
+    uint32_t confirmed = UINT32_MAX;
+    for (auto& [player, stream] : this->streams)
+    {
+        confirmed = std::min(confirmed, stream.count);
+    }
+    return confirmed;
+}
+
+bool Session::CanGuessLocked(uint32_t frame)
+{
+    // spectators have no input to feel late, so they wait
+    if (this->info.mode != Mode::Rollback || this->streams.count(this->info.myId) == 0)
+    {
+        return false;
+    }
+
+    // The core must be able to go back to a frame at or before the first
+    // one that isn't final, and not too far: a rollback re-runs every frame
+    // from there. (A frame whose input had all arrived gets no snapshot, so
+    // the newest one can be old, from before the game was last in Rollback.)
+    uint32_t confirmed = this->ConfirmedLocked();
+    auto newest = this->snapshots.upper_bound(confirmed);
+    if (newest == this->snapshots.begin())
+    {
+        return false;
+    }
+    return frame < *std::prev(newest) + RollbackWindow;
+}
+
+Session::Stream::Used Session::GuessLocked(const Stream& stream, uint32_t frame)
+{
+    // the frame itself if it arrived (it isn't final while frames before it
+    // are missing), otherwise the player's latest input; never a pak switch
+    size_t width = stream.ports.size();
+    Stream::Used guess;
+    guess.values.assign(width, 0);
+    guess.events.assign(width, 0);
+
+    int64_t from = -1;
+    if (frame < stream.known.size() && stream.known[frame])
+    {
+        from = frame;
+    }
+    else
+    {
+        for (int64_t f = std::min<int64_t>(frame, stream.known.size()) - 1; f >= 0; f--)
+        {
+            if (stream.known[static_cast<size_t>(f)])
+            {
+                from = f;
+                break;
+            }
+        }
+    }
+
+    if (from >= 0)
+    {
+        for (size_t k = 0; k < width; k++)
+        {
+            guess.values[k] = stream.frames[static_cast<size_t>(from) * width + k];
+            if (from == frame)
+            {
+                guess.events[k] = stream.events[static_cast<size_t>(from) * width + k];
+            }
+        }
+    }
+    return guess;
+}
+
+void Session::CheckUsedLocked(Stream& stream, uint32_t from, uint32_t to)
+{
+    // frames from..to-1 became final: was the input used for them right?
+    size_t width = stream.ports.size();
+    auto it = stream.used.lower_bound(from);
+    while (it != stream.used.end() && it->first < to)
+    {
+        uint32_t frame = it->first;
+        bool same = true;
+        for (size_t k = 0; k < width; k++)
+        {
+            same = same && it->second.values[k] == stream.frames[static_cast<size_t>(frame) * width + k] &&
+                   it->second.events[k] == stream.events[static_cast<size_t>(frame) * width + k];
+        }
+        if (!same && (this->mismatch < 0 || frame < this->mismatch))
+        {
+            this->mismatch = frame;
+        }
+        it = stream.used.erase(it);
+    }
+}
+
+double Session::OneWayMsLocked(uint8_t a, uint8_t b)
+{
+    // guests reach each other through the host
+    double ms = 0.0;
+    for (uint8_t id : {a, b})
+    {
+        const PlayerInfo* player = this->info.Find(id);
+        if (id != HostPlayer && player != nullptr)
+        {
+            ms += player->ping / 2.0;
+        }
+    }
+    return ms;
+}
+
+bool Session::AheadLocked(uint32_t frame)
+{
+    // Rollback's time sync. Nothing makes a machine wait for the others
+    // while it can guess, so a slightly faster one drifts ahead and ends up
+    // guessing all the time (and rolling back the most). Each machine works
+    // out where the others are now from the frames they last reported, how
+    // long ago that was and the delay to them; one that runs more than a
+    // frame ahead (on average) holds itself back a little until it's level.
+    if (this->info.mode != Mode::Rollback || this->streams.count(this->info.myId) == 0)
+    {
+        this->lead = 0.0;
+        return false;
+    }
+
+    uint64_t now = now_ms();
+    double frameMs = this->frameUs / 1000.0;
+    bool any = false;
+    double worst = 0.0;
+    for (auto& [player, remote] : this->remoteFrames)
+    {
+        const PlayerInfo* other = this->info.Find(player);
+        if (other == nullptr || other->ports == 0 || this->streams.count(player) == 0)
+        {
+            continue;
+        }
+        double estimate = remote.frame + (now - remote.at + this->OneWayMsLocked(this->info.myId, player)) / frameMs;
+        double ahead = static_cast<double>(frame) - estimate;
+        worst = any ? std::max(worst, ahead) : ahead;
+        any = true;
+    }
+    if (!any)
+    {
+        return false;
+    }
+
+    this->lead = this->lead * 0.9 + worst * 0.1;
+    return this->lead > 1.0;
+}
+
+int Session::Rollback(unsigned int nextFrame, unsigned int* confirmed, int* snapshot)
+{
+    std::vector<Event> events;
+    int target = -1;
+    {
+        std::lock_guard<std::mutex> lock(this->mutex);
+        *snapshot = 0;
+        *confirmed = nextFrame;
+        if (this->ended || !this->gameRunning)
+        {
+            return -1;
+        }
+
+        *confirmed = std::min<uint32_t>(this->ConfirmedLocked(), nextFrame);
+
+        if (this->mismatch >= 0)
+        {
+            // back to the newest saved frame at or before the wrong one
+            auto it = this->snapshots.upper_bound(static_cast<uint32_t>(this->mismatch));
+            if (it == this->snapshots.begin())
+            {
+                // (can't happen: nothing is guessed without a saved frame before it)
+                events.push_back({EventType::Message, "Couldn't go back to frame " + std::to_string(this->mismatch) +
+                                                      " to correct a wrong guess", {}});
+            }
+            else
+            {
+                target = static_cast<int>(*std::prev(it));
+                uint32_t to = static_cast<uint32_t>(target);
+
+                // what happened after it is undone: the core's saves, the
+                // input used and the hashes taken
+                this->snapshots.erase(this->snapshots.upper_bound(to), this->snapshots.end());
+                for (auto& [player, stream] : this->streams)
+                {
+                    stream.used.erase(stream.used.lower_bound(to), stream.used.end());
+                }
+                for (auto hash = this->provisionalHashes.begin(); hash != this->provisionalHashes.end();)
+                {
+                    hash = hash->second.takenIn >= to ? this->provisionalHashes.erase(hash) : std::next(hash);
+                }
+
+                RollbackStats& stats = this->info.rollback;
+                stats.rollbacks++;
+                stats.framesRerun += nextFrame - to;
+                stats.deepest = std::max(stats.deepest, nextFrame - to);
+            }
+            this->mismatch = -1;
+        }
+
+        // a frame that may be guessed needs a saved state to go back to
+        if (target < 0 && this->info.mode == Mode::Rollback && this->streams.count(this->info.myId) != 0)
+        {
+            for (auto& [player, stream] : this->streams)
+            {
+                if (stream.count <= nextFrame)
+                {
+                    *snapshot = 1;
+                }
+            }
+        }
+
+        this->FinalizeHashesLocked(events);
+    }
+    this->Emit(events);
+    return target;
+}
+
+void Session::Snapshot(unsigned int frame, int kept)
+{
+    std::lock_guard<std::mutex> lock(this->mutex);
+    if (kept)
+    {
+        this->snapshots.insert(frame);
+    }
+    else
+    {
+        this->snapshots.erase(frame);
+    }
 }

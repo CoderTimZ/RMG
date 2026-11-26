@@ -25,6 +25,8 @@
 #ifndef __SAVESTAVES_H__
 #define __SAVESTAVES_H__
 
+#include <stddef.h>
+
 typedef enum _savestates_job
 {
     savestates_job_nothing,
@@ -47,6 +49,14 @@ void savestates_deinit(void);
 
 int savestates_load(void);
 int savestates_save(void);
+
+/* In-memory states for the new netplay's rollback, in the m64p format
+ * without compression and without the TLB lookup tables. Saving and loading
+ * happen where savestates do, at the end of gen_interrupt. Loading copies
+ * and invalidates only the parts of RDRAM that changed. */
+size_t savestates_rollback_size(void);
+void savestates_rollback_save(unsigned char* buffer);
+void savestates_rollback_load(unsigned char* buffer);
 
 void savestates_select_slot(unsigned int s);
 unsigned int savestates_get_slot(void);

@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -110,7 +111,22 @@ class Transport
     std::vector<ENetAddress> candidates;
     bool everConnected = false;
 
+    // for testing on one machine: RMG_NETPLAY_NEW_DELAY_MS=N holds every
+    // outgoing message back N milliseconds (in order), as a slower network
+    // would, and the round trip times include it
+    uint32_t delayMs = 0;
+    struct DelayedMessage
+    {
+        uint64_t due;
+        PeerId peer;
+        Channel channel;
+        std::vector<uint8_t> data;
+    };
+    std::deque<DelayedMessage> delayed;
+
     bool Start(ENetHost* host, Handlers handlers);
+    void SendNow(PeerId peer, Channel channel, const std::vector<uint8_t>& data);
+    void SendDelayed(void);
     void Run(void);
     PeerId GetId(ENetPeer* peer);
     ENetPeer* GetPeer(PeerId id);

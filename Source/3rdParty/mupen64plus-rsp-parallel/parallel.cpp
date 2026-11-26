@@ -49,6 +49,29 @@ extern "C"
 	}
 #endif
 
+	// Optional, for the core's new netplay: the RSP's registers, which carry
+	// over from one task to the next (a microcode can read what the last task
+	// left in them), so rollback saves and restores them with the machine.
+	// The rest of the CPU state is set up again when a task starts.
+	EXPORT unsigned int CALL RspStateSize(void)
+	{
+		return sizeof(uint32_t) * 32 + sizeof(RSP::CP2);
+	}
+
+	EXPORT void CALL SaveRspState(void *data)
+	{
+		auto *bytes = static_cast<uint8_t *>(data);
+		memcpy(bytes, RSP::cpu.get_state().sr, sizeof(uint32_t) * 32);
+		memcpy(bytes + sizeof(uint32_t) * 32, &RSP::cpu.get_state().cp2, sizeof(RSP::CP2));
+	}
+
+	EXPORT void CALL LoadRspState(const void *data)
+	{
+		auto *bytes = static_cast<const uint8_t *>(data);
+		memcpy(RSP::cpu.get_state().sr, bytes, sizeof(uint32_t) * 32);
+		memcpy(&RSP::cpu.get_state().cp2, bytes + sizeof(uint32_t) * 32, sizeof(RSP::CP2));
+	}
+
 	EXPORT unsigned int CALL DoRspCycles(unsigned int cycles)
 	{
 		// We don't know if Mupen from the outside invalidated our IMEM.

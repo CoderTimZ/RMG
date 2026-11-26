@@ -12,6 +12,8 @@
 
 #include "m64p/api/m64p_types.h"
 
+#include <string>
+
 // attaches a new netplay session to the games that
 // CoreStartEmulation starts from now on; nullptr detaches it.
 // The callbacks are handed to the core when a game starts and
@@ -20,6 +22,10 @@ bool CoreSetNetplayNewCallbacks(const m64p_netplay_new_callbacks* callbacks);
 
 // returns whether a new netplay session is attached
 bool CoreHasNetplayNew(void);
+
+// returns why the new netplay's Rollback mode can't be used with this video
+// plugin and its settings, or an empty string
+std::string CoreGetNetplayNewRollbackProblem(std::string gfxPlugin);
 
 #ifdef CORE_INTERNAL
 // hands the callbacks to the core, right before a game starts

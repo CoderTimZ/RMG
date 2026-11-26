@@ -39,6 +39,21 @@ enum {
  */
 static int DPH = SP_DIV_PRECISION_SINGLE;
 
+/* the divide unit's state, for saving and restoring the RSP (see module.c) */
+void get_divide_state(s32 state[3])
+{
+    state[0] = DivIn;
+    state[1] = DivOut;
+    state[2] = DPH;
+}
+
+void set_divide_state(const s32 state[3])
+{
+    DivIn = state[0];
+    DivOut = state[1];
+    DPH = state[2];
+}
+
 /*
  * 11-bit vector divide result look-up table
  * Thanks to MAME / MESS for organizing.

@@ -1,5 +1,6 @@
 // Adapted from https://github.com/Themaister/parallel-rdp/blob/master/integration_example.cpp
 #include "vulkan_headers.hpp"
+#include <cstring>
 #include "parallel_imp.h"
 #include "screen.h"
 #include <memory>
@@ -16,8 +17,93 @@ static int cmd_ptr;
 static uint32_t last_scissor_area;
 static uint32_t scissor_area_since_sync;
 static uint32_t cmd_data[0x00040000 >> 2];
-
 static std::unique_ptr<RDP::CommandProcessor> processor;
+
+// The RDP's settings, as the latest command that set each of them: the
+// modes, the combiner, the scissor, the colors, the images and the eight tile
+// descriptors (a load sets its tile's size, kept as a SetTileSize). The new
+// netplay's rollback saves them with the machine and gives them back to the
+// RDP when it restores it, since frames drawn again rely on them.
+struct RdpCommandState
+{
+	uint32_t commands[64][2];
+	uint8_t has_command[64];
+	uint32_t tiles[8][2];
+	uint8_t has_tile[8];
+	uint32_t tile_sizes[8][2];
+	uint8_t has_tile_size[8];
+};
+static RdpCommandState rdp_commands;
+
+static void note_rdp_command(uint32_t command, const uint32_t *words)
+{
+	switch (command)
+	{
+	case 0x2a: // SetKeyGB
+	case 0x2b: // SetKeyR
+	case 0x2c: // SetConvert
+	case 0x2d: // SetScissor
+	case 0x2e: // SetPrimDepth
+	case 0x2f: // SetOtherModes
+	case 0x37: // SetFillColor
+	case 0x38: // SetFogColor
+	case 0x39: // SetBlendColor
+	case 0x3a: // SetPrimColor
+	case 0x3b: // SetEnvColor
+	case 0x3c: // SetCombine
+	case 0x3d: // SetTextureImage
+	case 0x3e: // SetMaskImage
+	case 0x3f: // SetColorImage
+		rdp_commands.commands[command][0] = words[0];
+		rdp_commands.commands[command][1] = words[1];
+		rdp_commands.has_command[command] = 1;
+		break;
+
+	case 0x35: // SetTile
+	{
+		uint32_t tile = (words[1] >> 24) & 7;
+		rdp_commands.tiles[tile][0] = words[0];
+		rdp_commands.tiles[tile][1] = words[1];
+		rdp_commands.has_tile[tile] = 1;
+		break;
+	}
+
+	case 0x30: // LoadTLUT
+	case 0x32: // SetTileSize
+	case 0x33: // LoadBlock
+	case 0x34: // LoadTile
+	{
+		uint32_t tile = (words[1] >> 24) & 7;
+		rdp_commands.tile_sizes[tile][0] = (words[0] & ~(0x3fu << 24)) | (0x32u << 24);
+		rdp_commands.tile_sizes[tile][1] = words[1];
+		rdp_commands.has_tile_size[tile] = 1;
+		break;
+	}
+
+	default:
+		break;
+	}
+}
+
+static void replay_rdp_commands()
+{
+	// images first, then the modes and colors, then the tiles
+	static const uint32_t order[] = { 0x3f, 0x3e, 0x3d, 0x2f, 0x3c, 0x2d, 0x2e, 0x2c, 0x2a, 0x2b,
+	                                  0x37, 0x38, 0x39, 0x3a, 0x3b };
+	for (uint32_t command : order)
+	{
+		if (rdp_commands.has_command[command])
+			processor->enqueue_command(2, rdp_commands.commands[command]);
+	}
+	for (unsigned tile = 0; tile < 8; tile++)
+	{
+		if (rdp_commands.has_tile[tile])
+			processor->enqueue_command(2, rdp_commands.tiles[tile]);
+		if (rdp_commands.has_tile_size[tile])
+			processor->enqueue_command(2, rdp_commands.tile_sizes[tile]);
+	}
+}
+
 static std::unique_ptr<Vulkan::WSI> wsi;
 static std::unique_ptr<MupenWSIPlatform> wsi_platform;
 
@@ -668,7 +754,10 @@ void vk_process_commands()
 		}
 
 		if (command >= 8)
+		{
 			processor->enqueue_command(cmd_length * 2, &cmd_data[2 * cmd_cur]);
+			note_rdp_command(command, &cmd_data[2 * cmd_cur]);
+		}
 
 		if (RDP::Op(command) == RDP::Op::SetScissor)
 		{
@@ -707,8 +796,77 @@ void vk_process_commands()
 
 	cmd_ptr = 0;
 	cmd_cur = 0;
+
 	*GET_GFX_INFO(DPC_CURRENT_REG) = *GET_GFX_INFO(DPC_END_REG);
 	*GET_GFX_INFO(DPC_STATUS_REG) |= DP_STATUS_CBUF_READY;
+}
+
+// Waits until the GPU has written everything it was given into RDRAM. It
+// writes RDRAM asynchronously between full syncs; the new netplay's rollback
+// saves and restores RDRAM, which must not change under it.
+void vk_wait_idle()
+{
+	if (processor)
+		processor->wait_for_timeline(processor->signal_timeline());
+}
+
+// The RDP's state outside RDRAM, saved and restored with the rest of the
+// machine by the new netplay's rollback
+// (the part of a command list not processed yet, the area drawn since the
+// last full sync, which sets how long the RDP takes, and the count the RDP's
+// noise is seeded from)
+struct ParserState
+{
+	int32_t cmd_cur;
+	int32_t cmd_ptr;
+	uint32_t last_scissor_area;
+	uint32_t scissor_area_since_sync;
+	uint32_t noise_index;
+};
+
+unsigned vk_state_size()
+{
+	if (!processor)
+		return 0;
+	return unsigned(sizeof(ParserState) + sizeof(rdp_commands) + sizeof(cmd_data) + processor->get_hidden_state_size());
+}
+
+void vk_save_state(void *data)
+{
+	if (!processor)
+		return;
+	auto *bytes = static_cast<uint8_t *>(data);
+	// (this waits for the GPU, so everything queued is drawn and counted first)
+	processor->save_hidden_state(bytes + sizeof(ParserState) + sizeof(rdp_commands) + sizeof(cmd_data));
+	ParserState parser = { cmd_cur, cmd_ptr, last_scissor_area, scissor_area_since_sync, processor->get_noise_index() };
+	memcpy(bytes, &parser, sizeof(parser));
+	bytes += sizeof(parser);
+	memcpy(bytes, &rdp_commands, sizeof(rdp_commands));
+	bytes += sizeof(rdp_commands);
+	memcpy(bytes, cmd_data, sizeof(cmd_data));
+}
+
+void vk_load_state(const void *data)
+{
+	if (!processor)
+		return;
+	auto *bytes = static_cast<const uint8_t *>(data);
+	ParserState parser;
+	memcpy(&parser, bytes, sizeof(parser));
+	cmd_cur = parser.cmd_cur;
+	cmd_ptr = parser.cmd_ptr;
+	last_scissor_area = parser.last_scissor_area;
+	scissor_area_since_sync = parser.scissor_area_since_sync;
+	bytes += sizeof(parser);
+	memcpy(&rdp_commands, bytes, sizeof(rdp_commands));
+	bytes += sizeof(rdp_commands);
+	memcpy(cmd_data, bytes, sizeof(cmd_data));
+	bytes += sizeof(cmd_data);
+	processor->load_hidden_state(bytes);
+	processor->set_noise_index(parser.noise_index);
+
+	// the RDP's settings as they were
+	replay_rdp_commands();
 }
 
 void vk_resize()
@@ -731,6 +889,7 @@ void vk_destroy()
 
 bool vk_init()
 {
+	memset(&rdp_commands, 0, sizeof(rdp_commands));
 	if (!screen_init())
 		return false;
 

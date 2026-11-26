@@ -35,4 +35,8 @@ VECTOR_EXTERN
 VECTOR_EXTERN
     VNOP   (v16 vs, v16 vt);
 
+/* the divide unit's state (the buffered input, the result and the precision) */
+extern void get_divide_state(s32 state[3]);
+extern void set_divide_state(const s32 state[3]);
+
 #endif

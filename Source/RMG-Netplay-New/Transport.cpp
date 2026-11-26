@@ -237,8 +237,20 @@ bool Transport::ConnectNextCandidate(void)
     return false;
 }
 
+namespace
+{
+uint64_t transport_now_ms(void)
+{
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+} // namespace
+
 bool Transport::Start(ENetHost* host, Handlers handlers)
 {
+    const char* delay = std::getenv("RMG_NETPLAY_NEW_DELAY_MS");
+    this->delayMs  = delay != nullptr ? static_cast<uint32_t>(std::max(0, std::atoi(delay))) : 0;
+    this->delayed.clear();
     this->host     = host;
     this->handlers = std::move(handlers);
     this->running  = true;
@@ -329,6 +341,36 @@ void Transport::Send(PeerId id, Channel channel, const std::vector<uint8_t>& dat
         return;
     }
 
+    if (this->delayMs > 0)
+    {
+        this->delayed.push_back({transport_now_ms() + this->delayMs, id, channel, data});
+        return;
+    }
+
+    this->SendNow(id, channel, data);
+}
+
+void Transport::SendDelayed(void)
+{
+    std::lock_guard<std::recursive_mutex> lock(this->mutex);
+
+    uint64_t now = transport_now_ms();
+    while (!this->delayed.empty() && this->delayed.front().due <= now)
+    {
+        DelayedMessage message = std::move(this->delayed.front());
+        this->delayed.pop_front();
+        this->SendNow(message.peer, message.channel, message.data);
+    }
+}
+
+void Transport::SendNow(PeerId id, Channel channel, const std::vector<uint8_t>& data)
+{
+    ENetPeer* peer = this->GetPeer(id);
+    if (peer == nullptr || peer->state != ENET_PEER_STATE_CONNECTED)
+    {
+        return;
+    }
+
     enet_uint32 flags = (channel == Channel::Control) ? ENET_PACKET_FLAG_RELIABLE : ENET_PACKET_FLAG_UNSEQUENCED;
     ENetPacket* packet = enet_packet_create(data.data(), data.size(), flags);
     if (packet == nullptr)
@@ -367,7 +409,8 @@ uint32_t Transport::GetRoundTripTime(PeerId id)
     {
         return 0;
     }
-    return peer->roundTripTime;
+    // (with the test delay, both ways)
+    return peer->roundTripTime + 2 * this->delayMs;
 }
 
 uint32_t Transport::GetRoundTripTimeVariance(PeerId id)
@@ -505,9 +548,16 @@ void Transport::Run(void)
             this->handlers.tick();
         }
 
+        this->SendDelayed();
+        bool delaying;
+        {
+            std::lock_guard<std::recursive_mutex> lock(this->mutex);
+            delaying = !this->delayed.empty();
+        }
+
         // wait for the next packet (this wakes up as soon as one arrives)
         enet_uint32 condition = ENET_SOCKET_WAIT_RECEIVE;
-        enet_socket_wait(this->host->socket, &condition, 5);
+        enet_socket_wait(this->host->socket, &condition, delaying ? 1 : 5);
     }
 }
 

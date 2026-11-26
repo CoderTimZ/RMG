@@ -79,6 +79,9 @@ void poweron_rdram(struct rdram* rdram);
 void read_rdram_regs(void* opaque, uint32_t address, uint32_t* value);
 void write_rdram_regs(void* opaque, uint32_t address, uint32_t value, uint32_t mask);
 
+/* maps RDRAM as calibrated or not, from the mode registers (after restoring a state) */
+void rdram_update_corrupt_handler(struct rdram* rdram);
+
 void read_rdram_dram(void* opaque, uint32_t address, uint32_t* value);
 void write_rdram_dram(void* opaque, uint32_t address, uint32_t value, uint32_t mask);
 

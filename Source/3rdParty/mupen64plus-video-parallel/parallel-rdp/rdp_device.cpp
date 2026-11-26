@@ -1026,6 +1026,82 @@ size_t CommandProcessor::get_rdram_size() const
 		return rdram->get_create_info().size / 2;
 }
 
+size_t CommandProcessor::get_hidden_state_size() const
+{
+	return hidden_rdram->get_create_info().size + tmem->get_create_info().size;
+}
+
+void CommandProcessor::ensure_hidden_state_buffer()
+{
+	if (hidden_state)
+		return;
+	Vulkan::BufferCreateInfo info = {};
+	info.size = get_hidden_state_size();
+	info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+	info.domain = Vulkan::BufferDomain::CachedHost;
+	hidden_state = device.create_buffer(info);
+}
+
+void CommandProcessor::save_hidden_state(void *data)
+{
+	VkDeviceSize hidden_size = hidden_rdram->get_create_info().size;
+	VkDeviceSize tmem_size = tmem->get_create_info().size;
+
+	// everything given to the RDP so far is drawn first
+	wait_for_timeline(signal_timeline());
+	ensure_hidden_state_buffer();
+
+	// The command thread submits work of its own when it's idle (more of it
+	// when upscaling); it mustn't use the device at the same time as this
+	// thread, which hangs it. (The same as scanout does.)
+	drain_command_ring();
+	renderer.lock_command_processing();
+	{
+		auto cmd = device.request_command_buffer();
+		cmd->copy_buffer(*hidden_state, 0, *hidden_rdram, 0, hidden_size);
+		cmd->copy_buffer(*hidden_state, hidden_size, *tmem, 0, tmem_size);
+		cmd->barrier(VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+		             VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
+		Fence fence;
+		device.submit(cmd, &fence);
+		fence->wait();
+	}
+	renderer.unlock_command_processing();
+
+	auto *mapped = static_cast<const uint8_t *>(device.map_host_buffer(*hidden_state, MEMORY_ACCESS_READ_BIT));
+	memcpy(data, mapped, hidden_size + tmem_size);
+	device.unmap_host_buffer(*hidden_state, MEMORY_ACCESS_READ_BIT);
+}
+
+void CommandProcessor::load_hidden_state(const void *data)
+{
+	VkDeviceSize hidden_size = hidden_rdram->get_create_info().size;
+	VkDeviceSize tmem_size = tmem->get_create_info().size;
+
+	// nothing still being drawn may land on top of it
+	wait_for_timeline(signal_timeline());
+	ensure_hidden_state_buffer();
+
+	auto *mapped = static_cast<uint8_t *>(device.map_host_buffer(*hidden_state, MEMORY_ACCESS_WRITE_BIT));
+	memcpy(mapped, data, hidden_size + tmem_size);
+	device.unmap_host_buffer(*hidden_state, MEMORY_ACCESS_WRITE_BIT);
+
+	// (see save_hidden_state)
+	drain_command_ring();
+	renderer.lock_command_processing();
+	{
+		auto cmd = device.request_command_buffer();
+		cmd->copy_buffer(*hidden_rdram, 0, *hidden_state, 0, hidden_size);
+		cmd->copy_buffer(*tmem, 0, *hidden_state, hidden_size, tmem_size);
+		cmd->barrier(VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+		             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+		Fence fence;
+		device.submit(cmd, &fence);
+		fence->wait();
+	}
+	renderer.unlock_command_processing();
+}
+
 size_t CommandProcessor::get_hidden_rdram_size() const
 {
 	return hidden_rdram->get_create_info().size;

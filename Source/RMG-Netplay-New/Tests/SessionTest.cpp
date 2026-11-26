@@ -2,10 +2,14 @@
 // guest spectator in one process, each driving the core callbacks the way
 // mupen64plus-core does, with jitter. Every scenario checks that all
 // machines see exactly the same input on every port at every frame (the
-// game would desync otherwise), plus what that scenario is about.
+// game would desync otherwise), plus what that scenario is about. In
+// Rollback mode the stand-in core saves its state, goes back and re-runs
+// frames like mupen64plus-core, and what counts is the input every frame
+// ended up with.
 //
 //   RMG_NETPLAY_NEW_TEST_ADDRESS  address to join (default 127.0.0.1; try ::1 or localhost)
 //   RMG_NETPLAY_NEW_DROP_PERCENT  drop this many percent of input packets
+//   RMG_NETPLAY_NEW_TEST_ONLY     run only the scenarios whose names contain this
 #include <RMG-Netplay-New/Session.hpp>
 #include <RMG-Core/m64p/api/m64p_plugin.h>
 
@@ -15,6 +19,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <memory>
@@ -64,7 +69,29 @@ struct Machine
     unsigned desyncAt = 0;
     // pak switches as the core gets them: (frame fetched, port, pak)
     std::vector<std::array<int, 3>> paks;
+    // rollback, as the stand-in core saw it
+    unsigned rollbacks = 0;
+    unsigned deepest = 0;
+    unsigned slowDowns = 0;
+    // frames below this were final when the machine stopped
+    unsigned finalFrames = 0;
 };
+
+static void set_env(const char* name, const char* value)
+{
+#ifdef _WIN32
+    _putenv_s(name, value != nullptr ? value : "");
+#else
+    if (value != nullptr)
+    {
+        setenv(name, value, 1);
+    }
+    else
+    {
+        unsetenv(name);
+    }
+#endif
+}
 
 // Pak switches the players make: (player is the host?, frame, pak). The
 // player's come in a burst, one of them on a frame the game doesn't read.
@@ -134,22 +161,134 @@ static void emulate(Machine& m, bool isHost, InputFunction inputOf)
 
     m.seen.assign(Frames, {NotRead, NotRead, NotRead, NotRead});
     uint8_t lastAuthority = NoPlayer;
+
+    // a machine that fails stops the game for everyone, or they'd wait for it forever
+    struct StopOnFailure
+    {
+        Machine& m;
+        ~StopOnFailure()
+        {
+            if (!m.ok)
+            {
+                m.session->GameStopped();
+            }
+        }
+    } stopOnFailure{m};
     // stands in for the emulated machine's state: a running hash of all the input it saw
     uint64_t state = 0xcbf29ce484222325ull;
 
-    for (unsigned frame = 0; frame < Frames; frame++)
+    // Rollback, as mupen64plus-core does it: snapshots of the state at the
+    // start of frames the session asks for, going back to one when it says
+    // so, and re-running the frames from there (never sampling them again)
+    struct Snapshot
     {
-        if (m.leaveAt != 0 && frame == m.leaveAt)
+        unsigned frame;
+        uint64_t state;
+        size_t paks;
+    };
+    std::vector<Snapshot> snapshots;
+    unsigned nextSample = 0;
+    unsigned rerunUntil = 0;
+    unsigned confirmed = 0;
+
+    // at a frame boundary; returns true if the game went back (frame is the
+    // frame to run next)
+    auto boundary = [&](unsigned& frame) -> bool {
+        int want = 0;
+        int target = cb->rollback(cb->context, frame, &confirmed, &want);
+
+        if (target >= 0)
         {
+            auto it = std::find_if(snapshots.begin(), snapshots.end(), [&](const Snapshot& snapshot) { return snapshot.frame == unsigned(target); });
+            if (it == snapshots.end())
+            {
+                std::printf("  [%s] FAIL: told to go back to frame %d, which wasn't saved\n", m.label, target);
+                m.ok = false;
+                return false;
+            }
+            state = it->state;
+            m.paks.resize(it->paks);
+            snapshots.erase(std::remove_if(snapshots.begin(), snapshots.end(), [&](const Snapshot& snapshot) { return snapshot.frame > unsigned(target); }),
+                            snapshots.end());
+            rerunUntil = std::max(rerunUntil, frame);
+            m.rollbacks++;
+            m.deepest = std::max(m.deepest, frame - unsigned(target));
+            frame = unsigned(target);
+            return true;
+        }
+
+        // the newest snapshot of a final frame is as far back as a rollback goes
+        const Snapshot* base = nullptr;
+        for (const Snapshot& snapshot : snapshots)
+        {
+            if (snapshot.frame <= confirmed && (base == nullptr || snapshot.frame > base->frame))
+            {
+                base = &snapshot;
+            }
+        }
+        if (base != nullptr)
+        {
+            unsigned keep = base->frame;
+            for (auto it = snapshots.begin(); it != snapshots.end();)
+            {
+                if (it->frame < keep)
+                {
+                    cb->snapshot(cb->context, it->frame, 0);
+                    it = snapshots.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+
+        // like the core, a frame sometimes can't be saved before the game
+        // reads its input (an RSP task was running); it gets no snapshot
+        if (want && frame % 11 != 5)
+        {
+            snapshots.push_back({frame, state, m.paks.size()});
+            cb->snapshot(cb->context, frame, 1);
+        }
+        return false;
+    };
+
+    unsigned frame = 0;
+    while (m.ok)
+    {
+        if (frame == Frames)
+        {
+            // the game is over, but some of its last frames may still turn
+            // out to have been guessed wrong
+            if (confirmed >= Frames)
+            {
+                break;
+            }
+            if (!boundary(frame))
+            {
+                std::this_thread::sleep_for(2ms);
+            }
+            continue;
+        }
+
+        bool rerun = frame < rerunUntil;
+        if (m.leaveAt != 0 && frame == m.leaveAt && !rerun)
+        {
+            m.finalFrames = confirmed;
             m.session->Leave();
             return;
         }
 
-        // the game reads the controllers on most frames; sampling happens on the first read
+        // the game reads the controllers on most frames; sampling happens on
+        // the first read, once per frame, even if the frame is re-run
         bool reads = (frame % 7) != 3;
-        m64p_netplay_new_input localInput[4] = {{inputOf(m.id, frame), pak_switch_of(isHost, frame)},
-                                                {0, -1}, {0, -1}, {0, -1}};
-        cb->sample(cb->context, frame, localInput);
+        if (frame >= nextSample)
+        {
+            m64p_netplay_new_input localInput[4] = {{inputOf(m.id, frame), pak_switch_of(isHost, frame)},
+                                                    {0, -1}, {0, -1}, {0, -1}};
+            cb->sample(cb->context, frame, localInput);
+            nextSample = frame + 1;
+        }
 
         // like the core: every frame's pak switch is taken once per port, at
         // the first read or at the end of the frame when the game doesn't read
@@ -201,36 +340,47 @@ static void emulate(Machine& m, bool isHost, InputFunction inputOf)
         {
             state ^= 1;
         }
-        cb->frame_hash(cb->context, frame, state);
+        cb->frame_hash(cb->context, frame, state, frame);
 
-        int r = cb->frame_end(cb->context, frame, m.busyUs, 1000000 / 60);
+        int r = cb->frame_end(cb->context, frame, m.busyUs, 1000000 / 60, rerun ? M64P_NETPLAY_NEW_RERUN : 0);
         if (r < 0)
         {
             std::printf("  [%s] frame_end says the session ended at %u\n", m.label, frame);
             m.ok = false;
             return;
         }
-        m.caughtUp += r;
-        m.framesRun = frame + 1;
-
-        SessionInfo info = m.session->GetInfo();
-        auto it = info.inputBy.find(HostPlayer);
-        if (it != info.inputBy.end())
+        if (!rerun)
         {
-            m.authoritiesSeen.insert(it->second);
-            if (lastAuthority != NoPlayer && it->second != lastAuthority)
+            m.caughtUp += (r & M64P_NETPLAY_NEW_SKIP_LIMITER) ? 1 : 0;
+            m.slowDowns += (r & M64P_NETPLAY_NEW_SLOW_DOWN) ? 1 : 0;
+            m.framesRun = frame + 1;
+
+            SessionInfo info = m.session->GetInfo();
+            auto it = info.inputBy.find(HostPlayer);
+            if (it != info.inputBy.end())
             {
-                m.authorityChanges++;
+                m.authoritiesSeen.insert(it->second);
+                if (lastAuthority != NoPlayer && it->second != lastAuthority)
+                {
+                    m.authorityChanges++;
+                }
+                lastAuthority = it->second;
             }
-            lastAuthority = it->second;
         }
 
-        // a frame takes about 16 ms, with jitter (unless catching up)
-        if (r == 0)
+        frame++;
+        if (boundary(frame))
         {
-            std::this_thread::sleep_for(std::chrono::microseconds(14000 + rng() % 5000));
+            continue;
+        }
+
+        // a frame takes about 16 ms, with jitter (unless catching up or re-run)
+        if (!rerun && !(r & M64P_NETPLAY_NEW_SKIP_LIMITER))
+        {
+            std::this_thread::sleep_for(std::chrono::microseconds(14000 + rng() % 5000 + ((r & M64P_NETPLAY_NEW_SLOW_DOWN) ? 1000 : 0)));
         }
     }
+    m.finalFrames = confirmed;
 }
 
 struct Scenario
@@ -249,6 +399,10 @@ struct Scenario
     InputFunction inputOf;
     unsigned playerLeavesAt = 0;
     unsigned spectatorDesyncsAt = 0;
+    // RMG_NETPLAY_NEW_DELAY_MS for this scenario (0: none)
+    unsigned delayMs = 0;
+    // the host's execution plugin (Rollback refuses it)
+    std::string hostExecutionPlugin;
     // runs on the test thread once the game is going
     std::function<void(Machine& host, Machine& player, Machine& spectator)> during;
     // extra checks
@@ -260,11 +414,24 @@ static uint32_t default_input(uint8_t player, unsigned frame)
     return (uint32_t(player) << 24) ^ (frame * 2654435761u);
 }
 
+// input that changes every few frames, like a player's: a guess (the last
+// input) is right most of the time and wrong whenever it changes
+static uint32_t changing_input(uint8_t player, unsigned frame)
+{
+    return (uint32_t(player) << 24) ^ ((frame / 6) * 2654435761u);
+}
+
 static bool run(const Scenario& scenario)
 {
     std::printf("=== %s\n", scenario.name);
 
     Machine host{"host"}, player{"player"}, spectator{"spectator"};
+
+    // the transports read the test delay when they start
+    if (scenario.delayMs != 0)
+    {
+        set_env("RMG_NETPLAY_NEW_DELAY_MS", std::to_string(scenario.delayMs).c_str());
+    }
     auto make = [](Machine& m) {
         m.session = std::make_unique<Session>([&m](const Event& event) {
             switch (event.type)
@@ -296,13 +463,14 @@ static bool run(const Scenario& scenario)
     make(spectator);
 
     std::string error;
-    LocalInfo info{"Host", "v1", "rsp", "gfx", ""};
+    LocalInfo info{"Host", "v1", "rsp", "gfx", scenario.hostExecutionPlugin, ""};
     if (!host.session->Host(scenario.port, info, "Test Game", "ABC", scenario.internalName, error))
     {
         std::printf("  host failed: %s\n", error.c_str());
         return false;
     }
     info.name = "Player";
+    info.executionPlugin = scenario.hostExecutionPlugin;
     if (!player.session->Join(g_address, scenario.port, info, error))
     {
         std::printf("  join failed: %s\n", error.c_str());
@@ -399,15 +567,19 @@ static bool run(const Scenario& scenario)
     player.emu.join();
     spectator.emu.join();
 
+    set_env("RMG_NETPLAY_NEW_DELAY_MS", nullptr);
+
     bool ok = host.ok && spectator.ok && (scenario.playerLeavesAt != 0 || player.ok);
 
-    // every machine saw the same input on every frame it ran
+    // every machine saw the same input on every frame it ran (in the end:
+    // after correcting its wrong guesses)
+    unsigned playerFrames = scenario.playerLeavesAt != 0 ? player.finalFrames : player.framesRun;
     for (unsigned f = 0; ok && f < Frames; f++)
     {
         for (int p = 0; p < 4; p++)
         {
             uint32_t h = host.seen[f][p], s = spectator.seen[f][p];
-            uint32_t g = f < player.framesRun ? player.seen[f][p] : h;
+            uint32_t g = f < playerFrames ? player.seen[f][p] : h;
             if (h != g || h != s)
             {
                 std::printf("  MISMATCH frame %u port %d: host %08x player %08x spectator %08x\n", f, p, h, g, s);
@@ -419,13 +591,20 @@ static bool run(const Scenario& scenario)
 
     // every pak switch reached every machine exactly once, on the same frame
     {
-        auto expect = [&](const std::vector<std::array<int, 3>>& paks, const char* label, unsigned framesRun) {
-            std::vector<std::array<int, 3>> wanted;
+        auto expect = [&](const std::vector<std::array<int, 3>>& all, const char* label, unsigned framesRun) {
+            std::vector<std::array<int, 3>> wanted, paks;
             for (const auto& p : host.paks)
             {
                 if (unsigned(p[0]) < framesRun)
                 {
                     wanted.push_back(p);
+                }
+            }
+            for (const auto& p : all)
+            {
+                if (unsigned(p[0]) < framesRun)
+                {
+                    paks.push_back(p);
                 }
             }
             if (paks != wanted)
@@ -436,7 +615,7 @@ static bool run(const Scenario& scenario)
             return true;
         };
         ok = expect(spectator.paks, "spectator", Frames) && ok;
-        ok = expect(player.paks, "player", player.framesRun) && ok;
+        ok = expect(player.paks, "player", playerFrames) && ok;
 
         // the host saw the player's three (port 3), in order, and its own (port 1)
         std::vector<int> playerPaks, hostPaks;
@@ -495,6 +674,20 @@ static bool run(const Scenario& scenario)
 
     std::printf("  catch-up frames: host %d player %d spectator %d; authority changes seen by the host: %d\n",
                 host.caughtUp, player.caughtUp, spectator.caughtUp, host.authorityChanges);
+    for (Machine* m : {&host, &player, &spectator})
+    {
+        if (m->session == nullptr)
+        {
+            continue;
+        }
+        RollbackStats stats = m->session->GetInfo().rollback;
+        if (stats.guessedFrames != 0 || m->rollbacks != 0)
+        {
+            std::printf("  [%s] guessed %llu, rolled back %u times (%llu frames re-run, deepest %u), slowed down %u times\n",
+                        m->label, (unsigned long long)stats.guessedFrames, m->rollbacks,
+                        (unsigned long long)stats.framesRerun, m->deepest, m->slowDowns);
+        }
+    }
 
     // a game ending on the host ends it for everyone, but the session stays
     if (scenario.playerLeavesAt == 0)
@@ -530,6 +723,9 @@ static bool run(const Scenario& scenario)
 
 int main()
 {
+    // progress shows up as it happens, also when the output goes to a file
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+
     if (const char* address = std::getenv("RMG_NETPLAY_NEW_TEST_ADDRESS"))
     {
         g_address = address;
@@ -724,10 +920,168 @@ int main()
         scenarios.push_back(s);
     }
 
+    // what every Rollback scenario checks: the players guessed, guessed
+    // wrong and went back, never further than the window allows; the
+    // spectator never guessed
+    auto rolledBack = [](Machine& host, Machine& player, Machine& spectator) {
+        for (Machine* m : {&host, &player})
+        {
+            if (m->session == nullptr)
+            {
+                continue;
+            }
+            RollbackStats stats = m->session->GetInfo().rollback;
+            if (stats.guessedFrames == 0 || m->rollbacks == 0)
+            {
+                std::printf("  FAIL: %s didn't guess and roll back (%llu guesses, %u rollbacks)\n", m->label,
+                            (unsigned long long)stats.guessedFrames, m->rollbacks);
+                return false;
+            }
+            // (one more than the window: a frame may have no snapshot)
+            if (m->deepest > RollbackWindow + 2)
+            {
+                std::printf("  FAIL: %s rolled back %u frames, past the window\n", m->label, m->deepest);
+                return false;
+            }
+        }
+        if (spectator.session->GetInfo().rollback.guessedFrames != 0 || spectator.rollbacks != 0)
+        {
+            std::printf("  FAIL: the spectator guessed\n");
+            return false;
+        }
+        return true;
+    };
+
+    // Rollback at lag 0: on loopback a frame often isn't there yet when
+    // it's needed, so it's guessed, and input that changes every few frames
+    // makes some guesses wrong. The host pauses in the middle.
+    {
+        Scenario s;
+        s.name = "Rollback at lag 0, with a pause";
+        s.port = 47129;
+        s.mode = Mode::Rollback;
+        s.hostLag = 0;
+        s.playerLag = 0;
+        s.inputOf = changing_input;
+        s.during = [](Machine& host, Machine&, Machine&) {
+            std::this_thread::sleep_for(5s);
+            host.session->SetPaused(true);
+            std::this_thread::sleep_for(700ms);
+            host.session->SetPaused(false);
+        };
+        s.check = [rolledBack](Machine& host, Machine& player, Machine& spectator) {
+            if (player.pausedEvents == 0 || spectator.pausedEvents == 0)
+            {
+                std::printf("  FAIL: not everyone heard about the pause\n");
+                return false;
+            }
+            return rolledBack(host, player, spectator);
+        };
+        scenarios.push_back(s);
+    }
+
+    // Rollback over a slower network (25 ms each way) with the automatic
+    // lag: the lag covers what guessing doesn't (RollbackHide frames)
+    {
+        Scenario s;
+        s.name = "Rollback with 25 ms of delay each way and the automatic lag";
+        s.port = 47130;
+        s.mode = Mode::Rollback;
+        s.autoLag = true;
+        s.delayMs = 25;
+        s.inputOf = changing_input;
+        s.check = [rolledBack](Machine& host, Machine& player, Machine& spectator) {
+            SessionInfo info = host.session->GetInfo();
+            uint8_t hostLag = info.Find(HostPlayer)->lag, playerLag = info.Find(player.id)->lag;
+            std::printf("  automatic lag: host %u, player %u (player's ping %u ms)\n", hostLag, playerLag,
+                        info.Find(player.id)->ping);
+            if (hostLag > 2 || playerLag > 2)
+            {
+                std::printf("  FAIL: Rollback should need less lag here\n");
+                return false;
+            }
+            return rolledBack(host, player, spectator);
+        };
+        scenarios.push_back(s);
+    }
+
+    // Rollback when a player leaves: the host writes their input from then
+    // on (idle), which everyone guessed differently
+    {
+        Scenario s;
+        s.name = "Rollback, a player leaves mid-game";
+        s.port = 47131;
+        s.mode = Mode::Rollback;
+        s.hostLag = 0;
+        s.playerLag = 0;
+        s.inputOf = changing_input;
+        s.playerLeavesAt = 400;
+        s.check = [rolledBack](Machine& host, Machine& player, Machine& spectator) {
+            if (host.framesRun != Frames)
+            {
+                std::printf("  FAIL: the host stopped at frame %u\n", host.framesRun);
+                return false;
+            }
+            for (unsigned f = Frames - 100; f < Frames; f++)
+            {
+                if (host.seen[f][2] != NotRead && host.seen[f][2] != 0)
+                {
+                    std::printf("  FAIL: the player's port isn't idle at frame %u (%08x)\n", f, host.seen[f][2]);
+                    return false;
+                }
+            }
+            return rolledBack(host, player, spectator);
+        };
+        scenarios.push_back(s);
+    }
+
+    // Switching modes mid-game: Rollback, Lockstep, Authority, Rollback
+    {
+        Scenario s;
+        s.name = "Rollback, then Lockstep, Authority and Rollback again";
+        s.port = 47132;
+        s.mode = Mode::Rollback;
+        s.hostLag = 0;
+        s.playerLag = 0;
+        s.inputOf = changing_input;
+        s.during = [](Machine& host, Machine& player, Machine&) {
+            std::this_thread::sleep_for(3s);
+            host.session->SetMode(Mode::Lockstep);
+            std::this_thread::sleep_for(2s);
+            host.session->SetMode(Mode::Authority, player.id);
+            std::this_thread::sleep_for(2s);
+            host.session->SetMode(Mode::Rollback);
+        };
+        s.check = rolledBack;
+        scenarios.push_back(s);
+    }
+
     bool ok = true;
+
+    // Rollback isn't available with an execution plugin
+    {
+        std::printf("=== Rollback refused with an execution plugin\n");
+        Scenario s;
+        s.port = 47133;
+        Session host([](const Event&) {});
+        LocalInfo info{"Host", "v1", "rsp", "gfx", "Golf Plugin", ""};
+        std::string error;
+        bool refused = host.Host(s.port, info, "Test Game", "ABC", "", error) &&
+                       !host.SetMode(Mode::Rollback, HostPlayer, error) && !error.empty() &&
+                       host.GetInfo().mode == Mode::Lockstep;
+        std::printf("  %s\n  %s\n", error.c_str(), refused ? "PASS" : "FAIL");
+        ok = refused && ok;
+        host.Leave();
+    }
+
+    // RMG_NETPLAY_NEW_TEST_ONLY=text runs only the scenarios whose names contain it
+    const char* only = std::getenv("RMG_NETPLAY_NEW_TEST_ONLY");
     for (const Scenario& scenario : scenarios)
     {
-        ok = run(scenario) && ok;
+        if (only == nullptr || std::strstr(scenario.name, only) != nullptr)
+        {
+            ok = run(scenario) && ok;
+        }
     }
 
     std::printf(ok ? "ALL PASS\n" : "SOME FAILED\n");

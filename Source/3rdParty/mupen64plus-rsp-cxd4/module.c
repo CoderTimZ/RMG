@@ -30,6 +30,8 @@
 
 #include "module.h"
 #include "su.h"
+#include "vu/vu.h"
+#include "vu/divide.h"
 
 #include "m64p_common.h"
 
@@ -364,6 +366,60 @@ EXPORT void CALL DllConfig(p_void hParent)
 }
 
 #endif
+
+/*
+ * Optional, for the core's new netplay: the RSP's registers, which carry
+ * over from one task to the next (a microcode can read what the last task
+ * left in them), so rollback saves and restores them with the machine.
+ */
+#define RSP_STATE_SIZE (NUMBER_OF_SCALAR_REGISTERS * sizeof(u32) + sizeof(VR) + sizeof(VACC) + \
+                        sizeof(cf_ne) + sizeof(cf_co) + sizeof(cf_clip) + sizeof(cf_comp) + sizeof(cf_vce) + \
+                        NUMBER_OF_SCALAR_REGISTERS * sizeof(short) + 3 * sizeof(s32))
+
+EXPORT unsigned int CALL RspStateSize(void)
+{
+    return (unsigned int)RSP_STATE_SIZE;
+}
+
+EXPORT void CALL SaveRspState(void* data)
+{
+    unsigned char* bytes = (unsigned char*)data;
+    s32 divide[3];
+
+#define SAVE(from, size) do { memcpy(bytes, (from), (size)); bytes += (size); } while (0)
+    SAVE(SR, NUMBER_OF_SCALAR_REGISTERS * sizeof(u32));
+    SAVE(VR, sizeof(VR));
+    SAVE(VACC, sizeof(VACC));
+    SAVE(cf_ne, sizeof(cf_ne));
+    SAVE(cf_co, sizeof(cf_co));
+    SAVE(cf_clip, sizeof(cf_clip));
+    SAVE(cf_comp, sizeof(cf_comp));
+    SAVE(cf_vce, sizeof(cf_vce));
+    SAVE(MFC0_count, NUMBER_OF_SCALAR_REGISTERS * sizeof(short));
+    get_divide_state(divide);
+    SAVE(divide, sizeof(divide));
+#undef SAVE
+}
+
+EXPORT void CALL LoadRspState(const void* data)
+{
+    const unsigned char* bytes = (const unsigned char*)data;
+    s32 divide[3];
+
+#define LOAD(to, size) do { memcpy((to), bytes, (size)); bytes += (size); } while (0)
+    LOAD(SR, NUMBER_OF_SCALAR_REGISTERS * sizeof(u32));
+    LOAD(VR, sizeof(VR));
+    LOAD(VACC, sizeof(VACC));
+    LOAD(cf_ne, sizeof(cf_ne));
+    LOAD(cf_co, sizeof(cf_co));
+    LOAD(cf_clip, sizeof(cf_clip));
+    LOAD(cf_comp, sizeof(cf_comp));
+    LOAD(cf_vce, sizeof(cf_vce));
+    LOAD(MFC0_count, NUMBER_OF_SCALAR_REGISTERS * sizeof(short));
+    LOAD(divide, sizeof(divide));
+    set_divide_state(divide);
+#undef LOAD
+}
 
 EXPORT unsigned int CALL DoRspCycles(unsigned int cycles)
 {

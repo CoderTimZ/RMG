@@ -194,21 +194,39 @@ static void savestates_clear_job(void)
 #define PUTDATA(buff, type, value) \
     do { type x = value; PUTARRAY(&x, buff, type, 1); } while(0)
 
+/* The m64p format: a header, the main block (whose TLB lookup tables
+ * rollback buffers leave out), the event queue, the using_tlb flag and a
+ * block of extra state. */
+#define M64P_HEADER_SIZE 44
+#define M64P_MAIN_SIZE 16788244
+#define M64P_LUT_SIZE (2 * 0x100000 * sizeof(uint32_t))
+#define M64P_QUEUE_SIZE 1024
+#define M64P_EXTRA_SIZE 4096
+#define ROLLBACK_MAIN_SIZE (M64P_MAIN_SIZE - M64P_LUT_SIZE)
+
+/* For the new netplay's rollback: restoring a state the core saved a moment
+ * ago in memory. Only the parts of RDRAM that changed are copied and
+ * invalidated in the code cache, so a rollback doesn't recompile the game. */
+struct rollback_load
+{
+    struct tlb_entry tlb_entries[32];
+};
+
+static void savestates_parse_m64p(struct device* dev, unsigned int version, unsigned char* curr,
+                                  char* queue, unsigned char* using_tlb_data, unsigned char* data_0001_0200,
+                                  struct rollback_load* rollback);
+
 static int savestates_load_m64p(struct device* dev, char *filepath)
 {
     unsigned char header[44];
     gzFile f;
     unsigned int version;
-    int i;
-    uint32_t FCR31;
 
     size_t savestateSize;
     unsigned char *savestateData, *curr;
     char queue[1024];
     unsigned char using_tlb_data[4];
     unsigned char data_0001_0200[4096]; // 4k for extra state from v1.2
-
-    uint32_t* cp0_regs = r4300_cp0_regs(&dev->r4300.cp0);
 
     SDL_LockMutex(savestates_lock);
 
@@ -313,6 +331,45 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     gzclose(f);
     SDL_UnlockMutex(savestates_lock);
 
+    savestates_parse_m64p(dev, version, curr, queue, using_tlb_data, data_0001_0200, NULL);
+
+    free(savestateData);
+    main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "State loaded from: %s", namefrompath(filepath));
+    return 1;
+}
+
+/* A page of RDRAM changed: the code compiled from it is stale, at every
+ * address it can run from (KSEG0, KSEG1 and wherever the TLB maps it) */
+static void rollback_invalidate_page(struct device* dev, uint32_t phys)
+{
+    size_t i;
+    const struct tlb_entry* e;
+
+    invalidate_r4300_cached_code(&dev->r4300, R4300_KSEG0 + phys, 0x1000);
+    invalidate_r4300_cached_code(&dev->r4300, R4300_KSEG1 + phys, 0x1000);
+
+    for (i = 0; i < 32; ++i)
+    {
+        e = &dev->r4300.cp0.tlb.entries[i];
+        if (e->v_even && phys >= e->phys_even && phys - e->phys_even < e->end_even - e->start_even)
+            invalidate_r4300_cached_code(&dev->r4300, e->start_even + (phys - e->phys_even), 0x1000);
+        if (e->v_odd && phys >= e->phys_odd && phys - e->phys_odd < e->end_odd - e->start_odd)
+            invalidate_r4300_cached_code(&dev->r4300, e->start_odd + (phys - e->phys_odd), 0x1000);
+    }
+}
+
+static void savestates_parse_m64p(struct device* dev, unsigned int version, unsigned char* curr,
+                                  char* queue, unsigned char* using_tlb_data, unsigned char* data_0001_0200,
+                                  struct rollback_load* rollback)
+{
+    int i;
+    uint32_t FCR31;
+    uint32_t* cp0_regs = r4300_cp0_regs(&dev->r4300.cp0);
+    /* rollback: the RDRAM pages that changed, invalidated once the TLB is restored */
+    static uint8_t changed_pages[RDRAM_MAX_SIZE / 0x1000];
+    int tlb_changed = 0;
+    uint32_t rollback_pc = 0;
+
     // Parse savestate
     dev->rdram.regs[0][RDRAM_CONFIG_REG]       = GETDATA(curr, uint32_t);
     dev->rdram.regs[0][RDRAM_DEVICE_ID_REG]    = GETDATA(curr, uint32_t);
@@ -410,7 +467,8 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
      */
     dev->ai.fifo[0].address = dev->ai.regs[AI_DRAM_ADDR_REG];
     dev->ai.fifo[1].address = dev->ai.regs[AI_DRAM_ADDR_REG];
-    dev->ai.samples_format_changed = 1;
+    if (rollback == NULL)
+        dev->ai.samples_format_changed = 1;
 
     dev->dp.dpc_regs[DPC_START_REG]    = GETDATA(curr, uint32_t);
     dev->dp.dpc_regs[DPC_END_REG]      = GETDATA(curr, uint32_t);
@@ -428,7 +486,22 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     dev->dp.dps_regs[DPS_BUFTEST_ADDR_REG] = GETDATA(curr, uint32_t);
     dev->dp.dps_regs[DPS_BUFTEST_DATA_REG] = GETDATA(curr, uint32_t);
 
-    COPYARRAY(dev->rdram.dram, curr, uint32_t, RDRAM_MAX_SIZE/4);
+    if (rollback != NULL)
+    {
+        size_t page;
+        uint8_t* dram = (uint8_t*)dev->rdram.dram;
+        for (page = 0; page < RDRAM_MAX_SIZE / 0x1000; ++page)
+        {
+            changed_pages[page] = memcmp(dram + page * 0x1000, curr + page * 0x1000, 0x1000) != 0;
+            if (changed_pages[page])
+                memcpy(dram + page * 0x1000, curr + page * 0x1000, 0x1000);
+        }
+        curr += RDRAM_MAX_SIZE;
+    }
+    else
+    {
+        COPYARRAY(dev->rdram.dram, curr, uint32_t, RDRAM_MAX_SIZE/4);
+    }
     COPYARRAY(dev->sp.mem, curr, uint32_t, SP_MEM_SIZE/4);
     COPYARRAY(dev->pif.ram, curr, uint8_t, PIF_RAM_SIZE);
 
@@ -437,8 +510,12 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     /* by default, reset flashram state here and load it later if available */
     poweron_flashram(&dev->cart.flashram);
 
-    COPYARRAY(dev->r4300.cp0.tlb.LUT_r, curr, uint32_t, 0x100000);
-    COPYARRAY(dev->r4300.cp0.tlb.LUT_w, curr, uint32_t, 0x100000);
+    /* rollback buffers leave the TLB lookup tables out: they follow from the TLB */
+    if (rollback == NULL)
+    {
+        COPYARRAY(dev->r4300.cp0.tlb.LUT_r, curr, uint32_t, 0x100000);
+        COPYARRAY(dev->r4300.cp0.tlb.LUT_w, curr, uint32_t, 0x100000);
+    }
 
     *r4300_llbit(&dev->r4300) = GETDATA(curr, uint32_t);
     COPYARRAY(r4300_regs(&dev->r4300), curr, int64_t, 32);
@@ -480,7 +557,26 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
         dev->r4300.cp0.tlb.entries[i].phys_odd = GETDATA(curr, uint32_t);
     }
 
-    savestates_load_set_pc(&dev->r4300, GETDATA(curr, uint32_t));
+    if (rollback != NULL)
+    {
+        /* The lookup tables are kept while the TLB is the same; otherwise
+         * they're rebuilt from it, and all compiled code is invalidated
+         * (which also rebuilds the recompiler's memory map from them) */
+        tlb_changed = memcmp(rollback->tlb_entries, dev->r4300.cp0.tlb.entries, sizeof(rollback->tlb_entries)) != 0;
+        if (tlb_changed)
+        {
+            memset(dev->r4300.cp0.tlb.LUT_r, 0, sizeof(dev->r4300.cp0.tlb.LUT_r));
+            memset(dev->r4300.cp0.tlb.LUT_w, 0, sizeof(dev->r4300.cp0.tlb.LUT_w));
+            for (i = 0; i < 32; ++i)
+                tlb_map(&dev->r4300.cp0.tlb, i);
+        }
+        /* (jumped to once stale code is invalidated, below) */
+        rollback_pc = GETDATA(curr, uint32_t);
+    }
+    else
+    {
+        savestates_load_set_pc(&dev->r4300, GETDATA(curr, uint32_t));
+    }
 
     *r4300_cp0_next_interrupt(&dev->r4300.cp0) = GETDATA(curr, uint32_t);
     curr += 4; /* here there used to be next_vi */
@@ -958,21 +1054,41 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
         }
     }
 
-    /* Zilmar-Spec plugin expect a call with control_id = -1 when RAM processing is done */
-    if (input.controllerCommand) {
-        input.controllerCommand(-1, NULL);
-    }
+    if (rollback != NULL)
+    {
+        /* RDRAM's mapping depends on its registers, which were set directly */
+        rdram_update_corrupt_handler(&dev->rdram);
 
-    /* reset fb state */
-    poweron_fb(&dev->dp.fb);
+        if (tlb_changed)
+        {
+            invalidate_r4300_cached_code(&dev->r4300, 0, 0);
+        }
+        else
+        {
+            size_t page;
+            for (page = 0; page < RDRAM_MAX_SIZE / 0x1000; ++page)
+            {
+                if (changed_pages[page])
+                    rollback_invalidate_page(dev, (uint32_t)(page * 0x1000));
+            }
+        }
+
+        generic_jump_to(&dev->r4300, rollback_pc);
+    }
+    else
+    {
+        /* Zilmar-Spec plugin expect a call with control_id = -1 when RAM processing is done */
+        if (input.controllerCommand) {
+            input.controllerCommand(-1, NULL);
+        }
+
+        /* reset fb state */
+        poweron_fb(&dev->dp.fb);
+    }
 
     dev->r4300.cp0.interrupt_unsafe_state = 0;
 
     *r4300_cp0_last_addr(&dev->r4300.cp0) = *r4300_pc(&dev->r4300);
-
-    free(savestateData);
-    main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "State loaded from: %s", namefrompath(filepath));
-    return 1;
 }
 
 static int savestates_load_pj64(struct device* dev,
@@ -1537,18 +1653,14 @@ static void savestates_save_m64p_work(struct work_struct *work)
     StateChanged(M64CORE_STATE_SAVECOMPLETE, 1);
 }
 
+static void savestates_write_m64p(const struct device* dev, char* curr, const char* queue, int rollback);
+
 static int savestates_save_m64p(const struct device* dev, char *filepath)
 {
-    unsigned char outbuf[4];
-    int i;
-
     char queue[1024];
 
     struct savestate_work *save;
     char *curr;
-
-    /* OK to cast away const qualifier */
-    const uint32_t* cp0_regs = r4300_cp0_regs((struct cp0*)&dev->r4300.cp0);
 
     save = malloc(sizeof(*save));
     if (!save) {
@@ -1577,6 +1689,27 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     }
 
     memset(save->data, 0, save->size);
+
+    savestates_write_m64p(dev, curr, queue, 0);
+
+    init_work(&save->work, savestates_save_m64p_work);
+    queue_work(&save->work);
+
+    return 1;
+}
+
+/* Writes a state in the m64p format to buffer, which has room for it. A
+ * rollback buffer leaves out the TLB lookup tables. */
+static void savestates_write_m64p(const struct device* dev, char* curr, const char* queue, int rollback)
+{
+    unsigned char outbuf[4];
+    int i;
+    char queue_copy[1024];
+
+    /* OK to cast away const qualifier */
+    const uint32_t* cp0_regs = r4300_cp0_regs((struct cp0*)&dev->r4300.cp0);
+
+    memcpy(queue_copy, queue, sizeof(queue_copy));
 
     // Write the save state data to memory
     PUTARRAY(savestate_magic, curr, unsigned char, 8);
@@ -1736,8 +1869,11 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     PUTDATA(curr, int32_t, dev->cart.use_flashram);
     curr += 4+8+4+4; // Here used to be flashram state
 
-    PUTARRAY(dev->r4300.cp0.tlb.LUT_r, curr, uint32_t, 0x100000);
-    PUTARRAY(dev->r4300.cp0.tlb.LUT_w, curr, uint32_t, 0x100000);
+    if (!rollback)
+    {
+        PUTARRAY(dev->r4300.cp0.tlb.LUT_r, curr, uint32_t, 0x100000);
+        PUTARRAY(dev->r4300.cp0.tlb.LUT_w, curr, uint32_t, 0x100000);
+    }
 
     /* OK to cast away const qualifier */
     PUTDATA(curr, uint32_t, *r4300_llbit((struct r4300_core*)&dev->r4300));
@@ -1783,8 +1919,8 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     PUTDATA(curr, uint32_t, 0); /* here there used to be next_vi */
     PUTDATA(curr, uint32_t, dev->vi.field);
 
-    to_little_endian_buffer(queue, 4, sizeof(queue)/4);
-    PUTARRAY(queue, curr, char, sizeof(queue));
+    to_little_endian_buffer(queue_copy, 4, sizeof(queue_copy)/4);
+    PUTARRAY(queue_copy, curr, char, sizeof(queue_copy));
 
 #ifdef NEW_DYNAREC
     PUTDATA(curr, uint32_t, using_tlb);
@@ -1939,11 +2075,31 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     PUTDATA(curr, uint32_t, dev->sp.rsp_status);
     PUTDATA(curr, uint32_t, dev->sp.first_run);
     PUTDATA(curr, uint32_t, dev->sp.rsp_wait);
+}
 
-    init_work(&save->work, savestates_save_m64p_work);
-    queue_work(&save->work);
+size_t savestates_rollback_size(void)
+{
+    return M64P_HEADER_SIZE + ROLLBACK_MAIN_SIZE + M64P_QUEUE_SIZE + 4 + M64P_EXTRA_SIZE;
+}
 
-    return 1;
+void savestates_rollback_save(unsigned char* buffer)
+{
+    char queue[1024];
+
+    save_eventqueue_infos(&g_dev.r4300.cp0, queue);
+    savestates_write_m64p(&g_dev, (char*)buffer, queue, 1);
+}
+
+void savestates_rollback_load(unsigned char* buffer)
+{
+    struct rollback_load rollback;
+    unsigned char* main_block = buffer + M64P_HEADER_SIZE;
+    char* queue = (char*)main_block + ROLLBACK_MAIN_SIZE;
+
+    memcpy(rollback.tlb_entries, g_dev.r4300.cp0.tlb.entries, sizeof(rollback.tlb_entries));
+    savestates_parse_m64p(&g_dev, savestate_latest_version, main_block, queue,
+                          (unsigned char*)queue + M64P_QUEUE_SIZE,
+                          (unsigned char*)queue + M64P_QUEUE_SIZE + 4, &rollback);
 }
 
 static int savestates_save_pj64(const struct device* dev,

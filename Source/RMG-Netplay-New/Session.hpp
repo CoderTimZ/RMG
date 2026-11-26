@@ -25,13 +25,14 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
 namespace NetplayNew
 {
 // bump whenever messages change; machines with different versions can't play together
-constexpr uint32_t ProtocolVersion = 5;
+constexpr uint32_t ProtocolVersion = 6;
 constexpr uint16_t DefaultPort     = 6420;
 // players and spectators, including the host
 constexpr int MaxPlayers = 8;
@@ -49,7 +50,25 @@ enum class Mode : uint8_t
     Authority = 1,
     // like Authority, but whoever starts playing becomes the authority
     Golf = 2,
+    // like Lockstep, but instead of waiting for another player's input,
+    // guess it (their last input) and go back to correct the game when the
+    // guess was wrong. Not possible with an execution plugin.
+    Rollback = 3,
 };
+
+// whether every player writes their own input (Lockstep and Rollback)
+inline bool OwnersWrite(Mode mode)
+{
+    return mode == Mode::Lockstep || mode == Mode::Rollback;
+}
+
+// Rollback: how many frames ahead of the input that has arrived a game may
+// run on guesses; past that it waits, as in Lockstep
+constexpr uint32_t RollbackWindow = 8;
+// Rollback: how many frames of the delay to the other players are covered
+// by guessing instead of by lag (3 frames: 50 ms). Rollbacks this short
+// are hard to see; the rest is lag, as in Lockstep.
+constexpr uint32_t RollbackHide = 3;
 
 // Games that are best played in golf mode, and which buttons count as
 // "starting to play" in them (the rest, like looking around, don't).
@@ -73,6 +92,20 @@ struct PlayerInfo
     std::string gfxPlugin;
     // empty when no execution plugin is attached
     std::string executionPlugin;
+    // why this player's machine can't roll back, or empty
+    std::string rollbackProblem;
+};
+
+// what Rollback mode did on this machine during the current game
+struct RollbackStats
+{
+    // frames whose input was guessed (for at least one player)
+    uint64_t guessedFrames = 0;
+    // times the game went back, and the frames it re-ran
+    uint64_t rollbacks = 0;
+    uint64_t framesRerun = 0;
+    // the most frames re-run at once
+    uint32_t deepest = 0;
 };
 
 struct SessionInfo
@@ -118,6 +151,9 @@ struct SessionInfo
     // first frame where it was noticed (player -> frame)
     std::map<uint8_t, uint32_t> desyncs;
 
+    // during a game, on this machine (Rollback mode)
+    RollbackStats rollback;
+
     const PlayerInfo* Find(uint8_t id) const
     {
         for (const PlayerInfo& player : this->players)
@@ -139,6 +175,8 @@ struct LocalInfo
     std::string rspPlugin;
     std::string gfxPlugin;
     std::string executionPlugin;
+    // why this machine can't roll back (a video setting), or empty
+    std::string rollbackProblem;
 };
 
 enum class EventType
@@ -184,9 +222,10 @@ struct Event
 // is still written exactly once.
 //
 // Input frames are kept for the whole game, indexed by frame number, and a
-// frame is never written twice. This keeps rollback possible later: a
-// rollback policy could predict missing frames and correct them once the
-// real frames arrive, without changing how frames are written or sent.
+// frame is never written twice. In Rollback mode, GetInput guesses a frame
+// that hasn't arrived instead of waiting for it, and records the guess; when
+// the real frame arrives and differs, the core goes back to a state it saved
+// at or before that frame and re-runs the frames since (see Rollback).
 //
 // Events are delivered on the network or emulation thread; the handler
 // must not call back into the session synchronously.
@@ -222,8 +261,12 @@ class Session
     // host: fixes a player's input delay in frames, which the automatic lag
     // then leaves alone (the window doesn't offer this; the tests use it)
     void SetLag(uint8_t player, uint8_t lag);
-    // host: who writes input, also during a game; authorityPlayer is for Authority mode
+    // host: who writes input, also during a game; authorityPlayer is for
+    // Authority mode. Returns false, with the reason, if the mode can't be used.
+    bool SetMode(Mode mode, uint8_t authorityPlayer, std::string& error);
     void SetMode(Mode mode, uint8_t authorityPlayer = HostPlayer);
+    // whether Rollback mode can be used with these players; reason says why not
+    bool CanRollback(std::string& reason);
     // host: whether the game can start; reason says why not
     bool CanStart(std::string& reason);
     // host: starts the game for everyone
@@ -281,6 +324,15 @@ class Session
         std::vector<std::deque<uint8_t>> pendingEvents;
         // host: when it last asked the authority to hand this stream over
         uint64_t lastRequest = 0;
+        // Rollback: the input this machine used for frames that weren't
+        // final when it ran them (guesses, and frames past `count`), checked
+        // when they become final. A frame keeps its value for the whole run.
+        struct Used
+        {
+            std::vector<uint32_t> values;
+            std::vector<uint8_t> events;
+        };
+        std::map<uint32_t, Used> used;
     };
 
     std::mutex mutex;
@@ -345,6 +397,27 @@ class Session
     int64_t lastSampled = -1;
     uint32_t updateSequence = 0;
 
+    // Rollback: the frames the core saved the machine at
+    std::set<uint32_t> snapshots;
+    // the first frame this machine ran with input that turned out wrong (-1: none)
+    int64_t mismatch = -1;
+    // hashes of frames that aren't final yet (frame -> hash, frame it was taken in)
+    struct ProvisionalHash
+    {
+        uint64_t hash;
+        uint32_t takenIn;
+    };
+    std::map<uint32_t, ProvisionalHash> provisionalHashes;
+    // Rollback time sync: the other players' latest frames and when they
+    // were heard of, and how far this machine runs ahead of them (averaged)
+    struct RemoteFrame
+    {
+        uint32_t frame;
+        uint64_t at;
+    };
+    std::map<uint8_t, RemoteFrame> remoteFrames;
+    double lead = 0.0;
+
     // desync detection: this machine's hashes, and on the host everyone's
     // hashes that it can't compare yet (player -> frame -> hash)
     std::map<uint32_t, uint64_t> myHashes;
@@ -364,6 +437,8 @@ class Session
     void HandleInputUpdate(PeerId peer, PacketReader& reader);
     void HandleHashes(PeerId peer, PacketReader& reader);
     void CompareHashLocked(uint8_t player, uint32_t frame, uint64_t hash, std::vector<Event>& events);
+    void RecordHashLocked(uint32_t frame, uint64_t hash, std::vector<Event>& events);
+    void FinalizeHashesLocked(std::vector<Event>& events);
 
     // helpers; the ones ending in Locked expect the mutex to be held
     void Emit(const std::vector<Event>& events);
@@ -394,20 +469,33 @@ class Session
     void EnforceModeLocked(bool now);
     void ApplyPauseLocked(bool paused, const std::string& by, std::vector<Event>& events);
 
+    // rollback
+    bool CanRollbackLocked(std::string& reason);
+    uint32_t ConfirmedLocked(void);
+    bool CanGuessLocked(uint32_t frame);
+    Stream::Used GuessLocked(const Stream& stream, uint32_t frame);
+    void CheckUsedLocked(Stream& stream, uint32_t from, uint32_t to);
+    double OneWayMsLocked(uint8_t a, uint8_t b);
+    bool AheadLocked(uint32_t frame);
+
     // core callbacks (emulation thread)
     static int CoreSync(void* context, m64p_netplay_new_sync kind, void* data, unsigned int size);
     static int CoreConfigurePorts(void* context, const m64p_netplay_new_port local[4], m64p_netplay_new_port ports[4]);
     static void CoreSample(void* context, unsigned int frame, const m64p_netplay_new_input local[4]);
     static int CoreGetInput(void* context, unsigned int frame, int port, m64p_netplay_new_input* input);
-    static int CoreFrameEnd(void* context, unsigned int frame, unsigned int busyUs, unsigned int frameUs);
-    static void CoreFrameHash(void* context, unsigned int frame, uint64_t hash);
+    static int CoreFrameEnd(void* context, unsigned int frame, unsigned int busyUs, unsigned int frameUs, int flags);
+    static void CoreFrameHash(void* context, unsigned int frame, uint64_t hash, unsigned int takenIn);
+    static int CoreRollback(void* context, unsigned int nextFrame, unsigned int* confirmed, int* snapshot);
+    static void CoreSnapshot(void* context, unsigned int frame, int kept);
 
     int Sync(m64p_netplay_new_sync kind, void* data, unsigned int size);
     int ConfigurePorts(const m64p_netplay_new_port local[4], m64p_netplay_new_port ports[4]);
     void Sample(unsigned int frame, const m64p_netplay_new_input local[4]);
     int GetInput(unsigned int frame, int port, m64p_netplay_new_input* input);
-    int FrameEnd(unsigned int frame, unsigned int busyUs, unsigned int frameUs);
-    void FrameHash(unsigned int frame, uint64_t hash);
+    int FrameEnd(unsigned int frame, unsigned int busyUs, unsigned int frameUs, int flags);
+    void FrameHash(unsigned int frame, uint64_t hash, unsigned int takenIn);
+    int Rollback(unsigned int nextFrame, unsigned int* confirmed, int* snapshot);
+    void Snapshot(unsigned int frame, int kept);
 };
 } // namespace NetplayNew
 

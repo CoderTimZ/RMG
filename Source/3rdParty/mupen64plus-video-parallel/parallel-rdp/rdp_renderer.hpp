@@ -97,6 +97,12 @@ public:
 class Renderer : public Vulkan::DebugChannelInterface
 {
 public:
+	// The noise (dithering, the combiner's noise input) is seeded from the
+	// number of primitives drawn so far, which is part of the RDP's state
+	// for saving and restoring the emulated machine
+	uint32_t get_base_primitive_index() const { return base_primitive_index; }
+	void set_base_primitive_index(uint32_t index) { base_primitive_index = index; }
+
 	explicit Renderer(CommandProcessor &processor);
 	~Renderer();
 	void set_device(Vulkan::Device *device);

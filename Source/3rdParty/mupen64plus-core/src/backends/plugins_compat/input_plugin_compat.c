@@ -159,11 +159,31 @@ const struct controller_input_backend_interface
 };
 
 
+/* Rumble from frames re-run after a rollback isn't sent; what the motors
+ * should do once the re-run is over is (see input_plugin_rumble_flush) */
+static struct
+{
+    void* opaque;
+    enum rumble_action action;
+} l_rerun_rumble[4];
+
 static void input_plugin_rumble_exec(void* opaque, enum rumble_action action)
 {
     int control_id = *(int*)opaque;
 
     if (input.controllerCommand == NULL) {
+        return;
+    }
+
+    if (netplay_new_rerunning()) {
+        size_t i;
+        for (i = 0; i < 4; ++i) {
+            if (l_rerun_rumble[i].opaque == NULL || l_rerun_rumble[i].opaque == opaque) {
+                l_rerun_rumble[i].opaque = opaque;
+                l_rerun_rumble[i].action = action;
+                break;
+            }
+        }
         return;
     }
 
@@ -208,6 +228,17 @@ const struct rumble_backend_interface
 {
     input_plugin_rumble_exec
 };
+
+void input_plugin_rumble_flush(void)
+{
+    size_t i;
+    for (i = 0; i < 4; ++i) {
+        if (l_rerun_rumble[i].opaque != NULL) {
+            input_plugin_rumble_exec(l_rerun_rumble[i].opaque, l_rerun_rumble[i].action);
+            l_rerun_rumble[i].opaque = NULL;
+        }
+    }
+}
 
 
 static void input_plugin_read_controller(void* opaque,

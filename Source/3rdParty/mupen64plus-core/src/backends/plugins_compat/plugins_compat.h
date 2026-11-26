@@ -63,6 +63,9 @@ extern const struct controller_input_backend_interface
 extern const struct rumble_backend_interface
     g_irumble_backend_plugin_compat;
 
+/* sends the rumble that frames re-run after a rollback held back */
+void input_plugin_rumble_flush(void);
+
 /* PIF data processing functions */
 
 extern const struct joybus_device_interface

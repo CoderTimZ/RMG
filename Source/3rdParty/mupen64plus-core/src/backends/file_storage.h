@@ -39,6 +39,9 @@ int open_file_storage(struct file_storage* storage, size_t size, const char* fil
 int open_rom_file_storage(struct file_storage* storage, const char* filename);
 void close_file_storage(struct file_storage* storage);
 
+/* writes data (storage->size bytes) to the storage's file */
+void file_storage_write_all(struct file_storage* storage, const uint8_t* data);
+
 extern const struct storage_backend_interface g_ifile_storage;
 extern const struct storage_backend_interface g_ifile_storage_ro;
 extern const struct storage_backend_interface g_isubfile_storage;

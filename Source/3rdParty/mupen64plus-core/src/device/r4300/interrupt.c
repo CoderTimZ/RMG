@@ -44,6 +44,7 @@
 #include "device/rcp/ai/ai_controller.h"
 #include "device/rcp/vi/vi_controller.h"
 #include "main/main.h"
+#include "main/netplay_new.h"
 #include "main/savestates.h"
 #include "plugin/plugin.h"
 
@@ -684,5 +685,8 @@ void gen_interrupt(struct r4300_core* r4300)
             return;
         }
     }
+
+    /* the new netplay's rollback saves and loads where savestates do */
+    netplay_new_interrupt_end();
 }
 

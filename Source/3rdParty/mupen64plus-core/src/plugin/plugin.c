@@ -180,6 +180,70 @@ static void rsp_process_rdp_list(void)
     }
 }
 
+/* Optional: a GPU plugin that writes RDRAM asynchronously waits until the
+ * RDP has finished every command it was given (the new netplay's rollback
+ * saves and restores RDRAM, which must not change under it) */
+typedef void (*ptr_WaitRdpIdle)(void);
+static ptr_WaitRdpIdle l_waitRdpIdle = NULL;
+
+void plugin_wait_rdp_idle(void)
+{
+    if (l_waitRdpIdle != NULL)
+        l_waitRdpIdle();
+}
+
+/* Optional: a video plugin that keeps RDP state outside RDRAM (the hidden
+ * bits, TMEM) hands it over and takes it back, for the new netplay's
+ * rollback, which saves and restores the machine */
+typedef unsigned int (*ptr_RdpStateSize)(void);
+typedef void (*ptr_SaveRdpState)(void* data);
+typedef void (*ptr_LoadRdpState)(const void* data);
+static ptr_RdpStateSize l_rdpStateSize = NULL;
+static ptr_SaveRdpState l_saveRdpState = NULL;
+static ptr_LoadRdpState l_loadRdpState = NULL;
+
+/* Optional: the same for an RSP plugin's registers */
+typedef unsigned int (*ptr_RspStateSize)(void);
+typedef void (*ptr_SaveRspState)(void* data);
+typedef void (*ptr_LoadRspState)(const void* data);
+static ptr_RspStateSize l_rspStateSize = NULL;
+static ptr_SaveRspState l_saveRspState = NULL;
+static ptr_LoadRspState l_loadRspState = NULL;
+
+unsigned int plugin_rsp_state_size(void)
+{
+    return (l_rspStateSize != NULL && l_saveRspState != NULL && l_loadRspState != NULL) ? l_rspStateSize() : 0;
+}
+
+void plugin_save_rsp_state(void* data)
+{
+    if (l_saveRspState != NULL)
+        l_saveRspState(data);
+}
+
+void plugin_load_rsp_state(const void* data)
+{
+    if (l_loadRspState != NULL)
+        l_loadRspState(data);
+}
+
+unsigned int plugin_rdp_state_size(void)
+{
+    return (l_rdpStateSize != NULL && l_saveRdpState != NULL && l_loadRdpState != NULL) ? l_rdpStateSize() : 0;
+}
+
+void plugin_save_rdp_state(void* data)
+{
+    if (l_saveRdpState != NULL)
+        l_saveRdpState(data);
+}
+
+void plugin_load_rdp_state(const void* data)
+{
+    if (l_loadRdpState != NULL)
+        l_loadRdpState(data);
+}
+
 // Handy macro to avoid code bloat when loading symbols
 #define GET_FUNC(type, field, name) \
     ((field = (type)osal_dynlib_getproc(plugin_handle, name)) != NULL)
@@ -204,6 +268,10 @@ static void backcompat_setRenderCallbackIntercept(void (*callback)(int))
 static void plugin_disconnect_gfx(void)
 {
     gfx = dummy_gfx;
+    l_waitRdpIdle = NULL;
+    l_rdpStateSize = NULL;
+    l_saveRdpState = NULL;
+    l_loadRdpState = NULL;
     l_GfxAttached = 0;
     l_mainRenderCallback = NULL;
 }
@@ -245,6 +313,10 @@ static m64p_error plugin_connect_gfx(m64p_dynlib_handle plugin_handle)
 
         /* set function pointers for optional functions */
         gfx.resizeVideoOutput = (ptr_ResizeVideoOutput)osal_dynlib_getproc(plugin_handle, "ResizeVideoOutput");
+        l_waitRdpIdle = (ptr_WaitRdpIdle)osal_dynlib_getproc(plugin_handle, "WaitRdpIdle");
+        l_rdpStateSize = (ptr_RdpStateSize)osal_dynlib_getproc(plugin_handle, "RdpStateSize");
+        l_saveRdpState = (ptr_SaveRdpState)osal_dynlib_getproc(plugin_handle, "SaveRdpState");
+        l_loadRdpState = (ptr_LoadRdpState)osal_dynlib_getproc(plugin_handle, "LoadRdpState");
 
         /* check the version info */
         (*gfx.getVersion)(&PluginType, &PluginVersion, &APIVersion, NULL, NULL);
@@ -501,6 +573,9 @@ static void plugin_disconnect_rsp(void)
 {
     rsp = dummy_rsp;
     l_RspAttached = 0;
+    l_rspStateSize = NULL;
+    l_saveRspState = NULL;
+    l_loadRspState = NULL;
 }
 
 static m64p_error plugin_connect_rsp(m64p_dynlib_handle plugin_handle)
@@ -523,6 +598,11 @@ static m64p_error plugin_connect_rsp(m64p_dynlib_handle plugin_handle)
             plugin_disconnect_rsp();
             return M64ERR_INPUT_INVALID;
         }
+
+        /* optional functions */
+        l_rspStateSize = (ptr_RspStateSize)osal_dynlib_getproc(plugin_handle, "RspStateSize");
+        l_saveRspState = (ptr_SaveRspState)osal_dynlib_getproc(plugin_handle, "SaveRspState");
+        l_loadRspState = (ptr_LoadRspState)osal_dynlib_getproc(plugin_handle, "LoadRspState");
 
         /* check the version info */
         (*rsp.getVersion)(&PluginType, &PluginVersion, &APIVersion, NULL, NULL);

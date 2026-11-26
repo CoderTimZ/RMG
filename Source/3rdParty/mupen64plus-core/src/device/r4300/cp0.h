@@ -178,6 +178,10 @@ enum { CP0_INTERRUPT_HANDLERS_COUNT = 17 };
 enum {
     INTR_UNSAFE_R4300 = 0x01,
     INTR_UNSAFE_RSP = 0x02,
+    /* gen_interrupt called from inside an instruction or a memory access:
+     * the recompiler may still hold guest registers in host registers, and
+     * writes them back after the call */
+    INTR_UNSAFE_CALL = 0x04,
 };
 
 struct cp0
