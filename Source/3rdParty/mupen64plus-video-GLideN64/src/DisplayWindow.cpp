@@ -7,6 +7,8 @@
 #include "DisplayWindow.h"
 #include "PluginAPI.h"
 #include "FrameBuffer.h"
+#include "DepthBuffer.h"
+#include "gDP.h"
 
 bool DisplayWindow::start()
 {
@@ -130,8 +132,23 @@ bool DisplayWindow::resizeWindow()
 			return false;
 	updateScale();
 	m_drawer._initData();
+	_rebindImages();
 	m_bResizeWindow = false;
 	return true;
+}
+
+void DisplayWindow::_rebindImages()
+{
+	// _initData() starts with no frame buffers, so the color and depth images the game bound stay unbound until it
+	// binds them again, which can be in a later display list of the same frame. Until then, what it draws is dropped,
+	// with the depth that's rendered into RDRAM in software. Binding them again keeps RDRAM the same as when the window
+	// wasn't resized (which keeps the players of a netplay game in sync).
+	if (config.frameBufferEmulation.enable == 0 || gDP.colorImage.address == 0 || gDP.colorImage.width == 0)
+		return;
+	if (gDP.depthImageAddress != 0)
+		depthBufferList().saveBuffer(gDP.depthImageAddress);
+	frameBufferList().saveBuffer(gDP.colorImage.address, static_cast<u16>(gDP.colorImage.format),
+		static_cast<u16>(gDP.colorImage.size), static_cast<u16>(gDP.colorImage.width), false);
 }
 
 void DisplayWindow::updateScale()

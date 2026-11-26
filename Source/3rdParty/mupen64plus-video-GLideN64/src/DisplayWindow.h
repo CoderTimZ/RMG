@@ -74,6 +74,8 @@ protected:
 private:
 	GraphicsDrawer m_drawer;
 
+	void _rebindImages();
+
 	virtual bool _start() = 0;
 	virtual void _stop() = 0;
 	virtual void _restart() = 0;
