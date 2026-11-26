@@ -88,6 +88,7 @@ cglobal do_interrupt
 cglobal fp_exception
 cglobal jump_syscall
 cglobal jump_eret
+cglobal jump_execution_hook
 cglobal new_dyna_start
 cglobal invalidate_block_eax
 cglobal invalidate_block_ecx
@@ -113,6 +114,8 @@ cextern g_dev
 cextern verify_dirty
 cextern cop1_unusable
 cextern SYSCALL_new
+cextern execution_hook_new
+cextern execution_apply_resume
 cextern dynamic_linker
 cextern dynamic_linker_ds
 
@@ -214,6 +217,7 @@ new_dyna_stop:
     ret             ;exit dynarec
 
 do_interrupt:
+    call    execution_apply_resume ;a load or store the execution plugin left the block in (see new_dynarec.c)
     mov     edx,    DWORD[rel g_dev_r4300_new_dynarec_hot_state_stop]
     test    edx,    edx
     jne     new_dyna_stop
@@ -230,6 +234,17 @@ fp_exception:
 jump_syscall:
     mov     DWORD[rel g_dev_r4300_new_dynarec_hot_state_pcaddr],    eax
     call    SYSCALL_new
+    jmp     rax
+
+jump_execution_hook:
+    ;eax = the address of an instruction the execution plugin hooked (see execution_hook_new)
+    mov     DWORD[rel g_dev_r4300_new_dynarec_hot_state_pcaddr],    eax
+    mov     DWORD[rel g_dev_r4300_new_dynarec_hot_state_cycle_count],    CCREG
+    call    execution_hook_new
+    mov     CCREG,    DWORD[rel g_dev_r4300_new_dynarec_hot_state_cycle_count]
+    mov     edx,    DWORD[rel g_dev_r4300_new_dynarec_hot_state_stop]
+    test    edx,    edx
+    jne     new_dyna_stop
     jmp     rax
 
 jump_eret:

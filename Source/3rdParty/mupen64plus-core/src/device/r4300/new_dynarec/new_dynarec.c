@@ -43,6 +43,8 @@
 #include "device/r4300/fpu.h"
 #include "device/rcp/mi/mi_controller.h"
 #include "device/rcp/rsp/rsp_core.h"
+#include "device/r4300/idec.h"
+#include "plugin/plugin.h"
 
 #if !defined(WIN32)
 #include <sys/mman.h>
@@ -212,6 +214,7 @@ struct ll_entry
   u_int reg32;
   u_int start;
   u_int length;
+  u_int stale; // Execution plugin: compiled for hooks that changed since, so never restored (see verify_dirty)
 };
 
 /* linkage */
@@ -221,6 +224,7 @@ void do_interrupt(void);
 void fp_exception(void);
 void jump_syscall(void);
 void jump_eret(void);
+void jump_execution_hook(void);
 void dyna_linker(void);
 void dyna_linker_ds(void);
 void breakpoint(void);
@@ -2085,16 +2089,85 @@ static unsigned int hshift(uint32_t address)
     return ((address & 2) ^ 2) << 3;
 }
 
+/* Execution plugin: the loads and stores below call its Read and Write hooks as the interpreters do (see
+ * mips_instructions.def). The compiled code comes here for RDRAM too when the page has a hook of the kind (see
+ * emit_execution_hook_check). pcaddr is the address after the instruction, with bit 0 set in a delay slot. If the
+ * plugin jumps, or its hooks or code change, the block is left after the instruction (see execution_resume). */
+#define EXECUTION_STUB_PC(pcaddr) ((((uint32_t)(pcaddr)) & ~UINT32_C(1)) - 4)
+
+/* Whether an address is in RDRAM through KSEG0 or KSEG1, where reading it has no side effects (for showing the
+ * plugin the whole word or doubleword a partial store makes) */
+static int execution_rdram_addr(uint32_t addr)
+{
+  return (addr & UINT32_C(0xc0000000)) == UINT32_C(0x80000000) && (addr & UINT32_C(0x1fffffff)) < UINT32_C(0x00800000);
+}
+
+/* Set while new_dynarec_execution_hook_changed and the others may leave the current block (see
+ * execution_request_exit) */
+static int execution_exit_ok = 0;
+
+/* A load or store function that leaves the block without an exception (the plugin jumped, or asked to leave through
+ * execution_request_exit) goes on after its instruction: the load's result and, in a delay slot, where the branch
+ * goes are filled in by execution_apply_resume, from do_interrupt, after the stub has written the registers back */
+static struct
+{
+  int active;
+  uint32_t pc;    // the load's or store's address
+  int branch;     // in a delay slot, and the plugin didn't jump: go where the branch goes
+  int load;       // a load that read its value
+  uint64_t value; // the value it read (rdword)
+} execution_resume;
+
+#define EXECUTION_STUB_IN \
+  unsigned int exec_exceptions = execution_sync_exceptions, exec_jumps = execution_jumps; \
+  execution_resume.active = 0; \
+  execution_exit_ok = 1;
+
+#define EXECUTION_STUB_OUT(load) \
+  execution_exit_ok = 0; \
+  execution_stub_exit(pcaddr, exec_exceptions, exec_jumps, load);
+
+static void execution_stub_exit(int pcaddr, unsigned int exceptions, unsigned int jumps, int load)
+{
+  struct new_dynarec_hot_state* state = &g_dev.r4300.new_dynarec_hot_state;
+  int jumped = execution_jumps != jumps;
+  /* Not when staying in the block, or after an exception the instruction raised (it didn't complete). (Without the
+   * plugin, a stub for a constant address doesn't always check pending_exception, see inline_writestub.) */
+  if(!state->pending_exception || execution_sync_exceptions != exceptions || !execution_plugin_attached()) return;
+  /* Nor after an interrupt (pcaddr is its handler) */
+  if(!jumped && (uint32_t)state->pcaddr != ((uint32_t)pcaddr & ~UINT32_C(1))) return;
+  execution_resume.active = 1;
+  execution_resume.pc = EXECUTION_STUB_PC(pcaddr);
+  execution_resume.branch = (pcaddr & 1) && !jumped; // the plugin's jump cancels the branch
+  execution_resume.load = load;
+  execution_resume.value = state->rdword;
+}
+
+/* What the block being compiled calls the plugin for (set as compiling starts) */
+static int exec_hooks_execute = 0;
+static int exec_hooks_read = 0;
+static int exec_hooks_write = 0;
+
+#if NEW_DYNAREC == NEW_DYNAREC_X64
+static intptr_t emit_execution_hook_check(int r,int kind);
+#endif
+
 static void read_byte_new(int pcaddr, int count)
 {
   uint32_t value;
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
+  EXECUTION_STUB_IN
+  int loaded = 0;
   unsigned int shift = bshift(state->address);
   if (r4300_read_aligned_word(r4300, state->address, &value)) {
-    state->rdword = (uint64_t)((value >> shift) & 0xff);
+    loaded = 1;
+    uint8_t v = (value >> shift) & 0xff;
+    if (execution_hooked(M64HOOK_READ, state->address)) execution.read8(&v, EXECUTION_STUB_PC(pcaddr), state->address);
+    state->rdword = (uint64_t)v;
   }
+  EXECUTION_STUB_OUT(loaded)
   UPDATE_COUNT_OUT
 }
 
@@ -2104,10 +2177,16 @@ static void read_hword_new(int pcaddr, int count)
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
+  EXECUTION_STUB_IN
+  int loaded = 0;
   unsigned int shift = hshift(state->address);
   if (r4300_read_aligned_word(r4300, state->address, &value)) {
-    state->rdword = (uint64_t)((value >> shift) & 0xffff);
+    loaded = 1;
+    uint16_t v = (value >> shift) & 0xffff;
+    if (execution_hooked(M64HOOK_READ, state->address)) execution.read16(&v, EXECUTION_STUB_PC(pcaddr), state->address);
+    state->rdword = (uint64_t)v;
   }
+  EXECUTION_STUB_OUT(loaded)
   UPDATE_COUNT_OUT
 }
 
@@ -2117,18 +2196,31 @@ static void read_word_new(int pcaddr, int count)
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
+  EXECUTION_STUB_IN
+  int loaded = 0;
   if (r4300_read_aligned_word(r4300, state->address, &value)) {
+    loaded = 1;
+    if (execution_hooked(M64HOOK_READ, state->address)) execution.read32(&value, EXECUTION_STUB_PC(pcaddr), state->address);
     state->rdword = (uint64_t)(value);
   }
+  EXECUTION_STUB_OUT(loaded)
   UPDATE_COUNT_OUT
 }
 
 static void read_dword_new(int pcaddr, int count)
 {
+  uint64_t value;
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
-  r4300_read_aligned_dword(r4300, state->address, (uint64_t*)&state->rdword);
+  EXECUTION_STUB_IN
+  int loaded = 0;
+  if (r4300_read_aligned_dword(r4300, state->address, &value)) {
+    loaded = 1;
+    if (execution_dword_hooked(M64HOOK_READ, state->address)) execution.read64(&value, EXECUTION_STUB_PC(pcaddr), state->address);
+    state->rdword = value;
+  }
+  EXECUTION_STUB_OUT(loaded)
   UPDATE_COUNT_OUT
 }
 
@@ -2137,9 +2229,12 @@ static void write_byte_new(int pcaddr, int count)
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
+  EXECUTION_STUB_IN
   unsigned int shift = bshift(state->address);
-  state->wword <<= shift;
-  r4300_write_aligned_word(r4300, state->address, state->wword, UINT32_C(0xff) << shift);
+  uint8_t v = (uint8_t)state->wword;
+  if (execution_hooked(M64HOOK_WRITE, state->address)) execution.write8(&v, EXECUTION_STUB_PC(pcaddr), state->address);
+  r4300_write_aligned_word(r4300, state->address, (uint32_t)v << shift, UINT32_C(0xff) << shift);
+  EXECUTION_STUB_OUT(0)
   UPDATE_COUNT_OUT
 }
 
@@ -2148,9 +2243,12 @@ static void write_hword_new(int pcaddr, int count)
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
+  EXECUTION_STUB_IN
   unsigned int shift = hshift(state->address);
-  state->wword <<= shift;
-  r4300_write_aligned_word(r4300, state->address, state->wword, UINT32_C(0xffff) << shift);
+  uint16_t v = (uint16_t)state->wword;
+  if (execution_hooked(M64HOOK_WRITE, state->address)) execution.write16(&v, EXECUTION_STUB_PC(pcaddr), state->address);
+  r4300_write_aligned_word(r4300, state->address, (uint32_t)v << shift, UINT32_C(0xffff) << shift);
+  EXECUTION_STUB_OUT(0)
   UPDATE_COUNT_OUT
 }
 
@@ -2159,7 +2257,11 @@ static void write_word_new(int pcaddr, int count)
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
-  r4300_write_aligned_word(r4300, state->address, state->wword, UINT32_C(0xffffffff));
+  EXECUTION_STUB_IN
+  uint32_t v = state->wword;
+  if (execution_hooked(M64HOOK_WRITE, state->address)) execution.write32(&v, EXECUTION_STUB_PC(pcaddr), state->address);
+  r4300_write_aligned_word(r4300, state->address, v, UINT32_C(0xffffffff));
+  EXECUTION_STUB_OUT(0)
   UPDATE_COUNT_OUT
 }
 
@@ -2168,8 +2270,12 @@ static void write_dword_new(int pcaddr, int count)
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
+  EXECUTION_STUB_IN
+  uint64_t v = state->wdword; /* a copy: the plugin may change what is written, not the register */
+  if (execution_dword_hooked(M64HOOK_WRITE, state->address)) execution.write64(&v, EXECUTION_STUB_PC(pcaddr), state->address);
   /* NOTE: in dynarec, we only need an all-one mask */
-  r4300_write_aligned_dword(r4300, state->address, state->wdword, ~UINT64_C(0));
+  r4300_write_aligned_dword(r4300, state->address, v, ~UINT64_C(0));
+  EXECUTION_STUB_OUT(0)
   UPDATE_COUNT_OUT
 }
 
@@ -2178,13 +2284,19 @@ static void LWL_new(int pcaddr, int count)
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
+  EXECUTION_STUB_IN
+  int loaded = 0;
   uint32_t value;
   unsigned int n = (state->address & 3);
   unsigned int shift = 8 * n;
   uint32_t mask = BITS_BELOW_MASK32(8 * n);
   if (r4300_read_aligned_word(r4300, state->address & ~UINT32_C(0x3), &value)) {
+    loaded = 1;
+    /* The plugin is shown the whole (aligned) word the bytes come from */
+    if (execution_hooked(M64HOOK_READ, state->address)) execution.read32(&value, EXECUTION_STUB_PC(pcaddr), state->address & ~UINT32_C(3));
     state->rdword = (uint64_t)((state->wword & mask) | (value << shift));
   }
+  EXECUTION_STUB_OUT(loaded)
   UPDATE_COUNT_OUT
 }
 
@@ -2193,13 +2305,19 @@ static void LWR_new(int pcaddr, int count)
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
+  EXECUTION_STUB_IN
+  int loaded = 0;
   uint32_t value;
   unsigned int n = (state->address & 3);
   unsigned int shift = 8 * (3 - n);
   uint32_t mask = (n == 3) ? UINT32_C(0) : BITS_ABOVE_MASK32(8 * (n + 1));
   if (r4300_read_aligned_word(r4300, state->address & ~UINT32_C(0x3), &value)) {
+    loaded = 1;
+    /* The plugin is shown the whole (aligned) word the bytes come from */
+    if (execution_hooked(M64HOOK_READ, state->address)) execution.read32(&value, EXECUTION_STUB_PC(pcaddr), state->address & ~UINT32_C(3));
     state->rdword = (uint64_t)((state->wword & mask) | (value >> shift));
   }
+  EXECUTION_STUB_OUT(loaded)
   UPDATE_COUNT_OUT
 }
 
@@ -2208,13 +2326,18 @@ static void LDL_new(int pcaddr, int count)
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
+  EXECUTION_STUB_IN
+  int loaded = 0;
   uint64_t value;
   unsigned int n = (state->address & 7);
   unsigned int shift = 8 * n;
   uint64_t mask = BITS_BELOW_MASK64(8 * n);
   if(r4300_read_aligned_dword(r4300, state->address & ~UINT32_C(7), &value)) {
+    loaded = 1;
+      if (execution_dword_hooked(M64HOOK_READ, state->address & ~UINT32_C(7))) execution.read64(&value, EXECUTION_STUB_PC(pcaddr), state->address & ~UINT32_C(7));
       state->rdword = (state->wdword & mask) | (value << shift);
   }
+  EXECUTION_STUB_OUT(loaded)
   UPDATE_COUNT_OUT
 }
 
@@ -2223,13 +2346,18 @@ static void LDR_new(int pcaddr, int count)
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
+  EXECUTION_STUB_IN
+  int loaded = 0;
   uint64_t value;
   unsigned int n = (state->address & 7);
   unsigned int shift = 8 * (7 - n);
   uint64_t mask = (n == 7) ? UINT64_C(0) : BITS_ABOVE_MASK64(8 * (n + 1));
   if(r4300_read_aligned_dword(r4300, state->address & ~UINT32_C(7), &value)){
+    loaded = 1;
+      if (execution_dword_hooked(M64HOOK_READ, state->address & ~UINT32_C(7))) execution.read64(&value, EXECUTION_STUB_PC(pcaddr), state->address & ~UINT32_C(7));
       state->rdword = (state->wdword & mask) | (value >> shift);
   }
+  EXECUTION_STUB_OUT(loaded)
   UPDATE_COUNT_OUT
 }
 
@@ -2238,10 +2366,21 @@ static void SWL_new(int pcaddr, int count)
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
+  EXECUTION_STUB_IN
   unsigned int n = (state->address & 3);
   unsigned int shift = 8 * n;
   uint32_t mask = (n == 0) ? ~UINT32_C(0) : BITS_BELOW_MASK32(8 * (4 - n));
-  r4300_write_aligned_word(r4300, state->address & ~UINT32_C(0x3), state->wword >> shift, mask);
+  const uint32_t aligned = state->address & ~UINT32_C(0x3);
+  uint32_t word;
+  /* The plugin is shown the whole word as the store leaves it (and can change all of it) */
+  if (execution_hooked(M64HOOK_WRITE, aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_word(r4300, aligned, &word)) {
+    word = (word & ~mask) | ((state->wword >> shift) & mask);
+    execution.write32(&word, EXECUTION_STUB_PC(pcaddr), aligned);
+    r4300_write_aligned_word(r4300, aligned, word, ~UINT32_C(0));
+  }
+  else
+    r4300_write_aligned_word(r4300, aligned, state->wword >> shift, mask);
+  EXECUTION_STUB_OUT(0)
   UPDATE_COUNT_OUT
 }
 
@@ -2250,10 +2389,21 @@ static void SWR_new(int pcaddr, int count)
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
+  EXECUTION_STUB_IN
   unsigned int n = (state->address & 3);
   unsigned int shift = 8 * (3 - n);
   uint32_t mask = BITS_ABOVE_MASK32(8 * (3 - n));
-  r4300_write_aligned_word(r4300, state->address & ~UINT32_C(0x3), state->wword << shift, mask);
+  const uint32_t aligned = state->address & ~UINT32_C(0x3);
+  uint32_t word;
+  /* The plugin is shown the whole word as the store leaves it (and can change all of it) */
+  if (execution_hooked(M64HOOK_WRITE, aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_word(r4300, aligned, &word)) {
+    word = (word & ~mask) | ((state->wword << shift) & mask);
+    execution.write32(&word, EXECUTION_STUB_PC(pcaddr), aligned);
+    r4300_write_aligned_word(r4300, aligned, word, ~UINT32_C(0));
+  }
+  else
+    r4300_write_aligned_word(r4300, aligned, state->wword << shift, mask);
+  EXECUTION_STUB_OUT(0)
   UPDATE_COUNT_OUT
 }
 
@@ -2262,10 +2412,21 @@ static void SDL_new(int pcaddr, int count)
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
+  EXECUTION_STUB_IN
   unsigned int n = (state->address & 7);
   unsigned int shift = 8 * n;
   uint64_t mask = (n == 0) ? ~UINT64_C(0) : BITS_BELOW_MASK64(8 * (8 - n));
-  r4300_write_aligned_dword(r4300, state->address & ~UINT32_C(0x7), state->wdword >> shift, mask);
+  const uint32_t aligned = state->address & ~UINT32_C(0x7);
+  uint64_t dword;
+  /* The plugin is shown the whole doubleword as the store leaves it (and can change all of it) */
+  if (execution_dword_hooked(M64HOOK_WRITE, aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_dword(r4300, aligned, &dword)) {
+    dword = (dword & ~mask) | ((state->wdword >> shift) & mask);
+    execution.write64(&dword, EXECUTION_STUB_PC(pcaddr), aligned);
+    r4300_write_aligned_dword(r4300, aligned, dword, ~UINT64_C(0));
+  }
+  else
+    r4300_write_aligned_dword(r4300, aligned, state->wdword >> shift, mask);
+  EXECUTION_STUB_OUT(0)
   UPDATE_COUNT_OUT
 }
 
@@ -2274,10 +2435,21 @@ static void SDR_new(int pcaddr, int count)
   UPDATE_COUNT_IN
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
+  EXECUTION_STUB_IN
   unsigned int n = (state->address & 7);
   unsigned int shift = 8 * (7 - n);
   uint64_t mask = BITS_ABOVE_MASK64(8 * (7 - n));
-  r4300_write_aligned_dword(r4300, state->address & ~UINT32_C(0x7), state->wdword << shift, mask);
+  const uint32_t aligned = state->address & ~UINT32_C(0x7);
+  uint64_t dword;
+  /* The plugin is shown the whole doubleword as the store leaves it (and can change all of it) */
+  if (execution_dword_hooked(M64HOOK_WRITE, aligned) && execution_rdram_addr(aligned) && r4300_read_aligned_dword(r4300, aligned, &dword)) {
+    dword = (dword & ~mask) | ((state->wdword << shift) & mask);
+    execution.write64(&dword, EXECUTION_STUB_PC(pcaddr), aligned);
+    r4300_write_aligned_dword(r4300, aligned, dword, ~UINT64_C(0));
+  }
+  else
+    r4300_write_aligned_dword(r4300, aligned, state->wdword << shift, mask);
+  EXECUTION_STUB_OUT(0)
   UPDATE_COUNT_OUT
 }
 
@@ -2342,6 +2514,8 @@ static void tlb_speed_hacks()
 u_int verify_dirty(struct ll_entry * head)
 {
   void *source = NULL;
+  if(head->stale)
+    return head->vaddr;
   if((int)head->start>=0xa0000000&&(int)head->start<0xa07fffff) {
     source=(void *)((uintptr_t)g_dev.rdram.dram+head->start-0xa0000000);
   }else if((int)head->start>=0xa4000000&&(int)head->start<0xa4001000) {
@@ -2384,6 +2558,7 @@ static struct ll_entry *ll_add_32(struct ll_entry **head,int vaddr,u_int reg32,v
   new_entry->start=start;
   new_entry->copy=copy;
   new_entry->length=length;
+  new_entry->stale=0;
   new_entry->next=*head;
   *head=new_entry;
   return new_entry;
@@ -3047,7 +3222,368 @@ void dynarec_gen_interrupt(void)
         *candidate = 0;
     }
 
+    /* An interrupt (the plugin's Frame, say) may change the plugin's hooks: then the code goes on at pcaddr, where
+     * the branch that called this goes */
+    execution_exit_ok = 1;
     gen_interrupt(r4300);
+    execution_exit_ok = 0;
+}
+
+/**** Execution plugin ****/
+
+/* The plugin's M64HOOK_EXECUTE hooks: a hooked instruction, or a jump or branch whose delay slot is hooked, isn't
+ * compiled. Its block ends there with a jump to jump_execution_hook (linkage), which calls execution_hook_new to run
+ * it here the way the cached interpreter does (see exec_cached_ops), and goes on at the address that leaves. Hook
+ * changes recompile the code they affect (new_dynarec_execution_hook_changed). Read and write hooks are in the load
+ * and store functions above. */
+
+static int new_dynarec_ready = 0;
+
+
+/* The instructions of the block being compiled that execution_hook_new runs (decoded as a SYSCALL, which ends the
+ * block the same way) */
+static char hookcall[MAXBLOCK];
+
+/* A block whose code was compiled for hooks that changed since can't go on past an instruction that may have one:
+ * the code that called C leaves the block when pending_exception is set, where it can go on at pcaddr
+ * (execution_exit_ok: in an interrupt at a branch, and after a load or store, see execution_resume) */
+static void execution_request_exit(void)
+{
+  if(execution_exit_ok)
+    g_dev.r4300.new_dynarec_hot_state.pending_exception=1;
+}
+
+/* Whether an instruction is a jump or branch with a delay slot, as the recompiler decodes them */
+static int execution_jump_opcode(uint32_t iw)
+{
+  switch(iw>>26)
+  {
+    case 0x00: return (iw&0x3e)==0x08; // JR, JALR
+    case 0x01: return (((iw>>16)&0x0c)==0); // BLTZ, BGEZ, BLTZL, BGEZL and their AL versions
+    case 0x02: case 0x03: case 0x04: case 0x05: case 0x06: case 0x07: // J, JAL, BEQ, BNE, BLEZ, BGTZ
+    case 0x14: case 0x15: case 0x16: case 0x17: // BEQL, BNEL, BLEZL, BGTZL
+      return 1;
+    case 0x11: return ((iw>>21)&0x1f)==0x08; // BC1F, BC1T, BC1FL, BC1TL
+  }
+  return 0;
+}
+
+/* Instructions the plugin can't hook under this recompiler (the cached interpreter's version doesn't update its
+ * memory map) */
+static int execution_unhookable(uint32_t iw)
+{
+  return (iw>>26)==0x10&&((iw>>21)&0x1f)==0x10&&((iw&0x3f)==0x02||(iw&0x3f)==0x06); // TLBWI, TLBWR
+}
+
+/* Execute for the instruction at pc (the current PC): 0 if the plugin jumped elsewhere */
+static int execution_execute(struct r4300_core* r4300, uint32_t pc)
+{
+  if(execution_hooked(M64HOOK_EXECUTE, pc))
+  {
+    execution.execute(pc);
+    if((uint32_t)r4300->new_dynarec_hot_state.pcaddr!=pc) return 0;
+  }
+  /* The instruction is read from memory after this, so a change the plugin made to it is seen */
+  execution_reload_pending=0;
+  return 1;
+}
+
+/* ExecuteDone, unless the instruction raised an exception (it didn't complete, and runs again after the handler) */
+static void execution_execute_done(uint32_t pc, unsigned int exceptions)
+{
+  if(execution_hooked(M64HOOK_EXECUTE, pc)&&execution_sync_exceptions==exceptions)
+    execution.executeDone(pc);
+}
+
+/* Runs an instruction that isn't a jump or branch through the cached interpreter's function for it, in the
+ * recompiler's fake_pc (which the recompiler's own calls of those functions use), leaving pcaddr after it */
+static void execution_run_instruction(struct r4300_core* r4300, uint32_t pc, uint32_t iw)
+{
+  static const struct precomp_block no_block = { 0 };
+  struct new_dynarec_hot_state* state = &r4300->new_dynarec_hot_state;
+  struct precomp_instr saved = state->fake_pc;
+  struct precomp_instr* saved_pc = state->pc;
+  state->pc = &state->fake_pc;
+  state->fake_pc.addr = pc;
+  r4300_decode(&state->fake_pc, r4300, r4300_get_idec(iw), iw, 0, &no_block);
+  state->fake_pc.ops();
+  state->fake_pc = saved;
+  state->pc = saved_pc;
+}
+
+/* An instruction with Execute and ExecuteDone around it (pcaddr is pc). A jump or branch in a delay slot isn't run. */
+static void execution_step(struct r4300_core* r4300, uint32_t pc)
+{
+  struct new_dynarec_hot_state* state = &r4300->new_dynarec_hot_state;
+  unsigned int exceptions;
+  uint32_t* mem;
+  if(!execution_execute(r4300, pc)) return;
+  mem=fast_mem_access(r4300, pc);
+  if(mem==NULL) {
+    TLB_refill_exception(r4300, pc, 2);
+    return;
+  }
+  exceptions=execution_sync_exceptions;
+  if(execution_jump_opcode(*mem)) state->pcaddr=pc+4;
+  else execution_run_instruction(r4300, pc, *mem);
+  execution_execute_done(pc, exceptions);
+}
+
+/* What a jump or branch does, from the registers as they are */
+struct execution_jump
+{
+  uint32_t target;
+  unsigned int link; // the register it links to (0 for none)
+  int take, likely, cop1, idle;
+};
+
+static void execution_decode_jump(struct r4300_core* r4300, uint32_t pc, uint32_t iw, struct execution_jump* j)
+{
+  int64_t* regs = r4300_regs(r4300);
+  unsigned int rs = (iw>>21)&0x1f, rt = (iw>>16)&0x1f;
+  j->target = pc + 4 + ((uint32_t)(int32_t)(int16_t)iw << 2);
+  j->link = 0;
+  j->take = j->likely = j->cop1 = j->idle = 0;
+
+  switch(iw>>26)
+  {
+    case 0x00: // JR, JALR
+      j->target = (uint32_t)regs[rs];
+      j->take = 1;
+      if(iw&1) j->link = (iw>>11)&0x1f;
+      break;
+    case 0x01: // BLTZ, BGEZ, BLTZL, BGEZL, BLTZAL, BGEZAL, BLTZALL, BGEZALL
+      j->take = (rt&1) ? (regs[rs] >= 0) : (regs[rs] < 0);
+      j->likely = (rt>>1)&1;
+      if(rt&0x10) j->link = 31;
+      j->idle = 1;
+      break;
+    case 0x02: case 0x03: // J, JAL
+      j->target = ((pc+4)&UINT32_C(0xF0000000)) | ((iw&UINT32_C(0x3FFFFFF))<<2);
+      j->take = 1;
+      if(iw>>26==0x03) j->link = 31;
+      j->idle = 1;
+      break;
+    case 0x04: case 0x14: j->take = regs[rs] == regs[rt]; j->idle = 1; break; // BEQ, BEQL
+    case 0x05: case 0x15: j->take = regs[rs] != regs[rt]; j->idle = 1; break; // BNE, BNEL
+    case 0x06: case 0x16: j->take = regs[rs] <= 0; j->idle = 1; break; // BLEZ, BLEZL
+    case 0x07: case 0x17: j->take = regs[rs] > 0; j->idle = 1; break; // BGTZ, BGTZL
+    case 0x11: // BC1F, BC1T, BC1FL, BC1TL
+      j->take = ((*r4300_cp1_fcr31(&r4300->cp1) & FCR31_CMP_BIT) != 0) == ((iw>>16)&1);
+      j->likely = (iw>>17)&1;
+      j->cop1 = 1;
+      j->idle = 1;
+      break;
+  }
+  if((iw>>26)>=0x14&&(iw>>26)<=0x17) j->likely = 1;
+}
+
+/* A jump or branch at pc and its delay slot, as DECLARE_JUMP does in the interpreters, then the interrupt check the
+ * recompiler does at a branch. Execute for pc has been sent. */
+static void execution_run_jump(struct r4300_core* r4300, uint32_t pc, uint32_t iw)
+{
+  struct new_dynarec_hot_state* state = &r4300->new_dynarec_hot_state;
+  int64_t* regs = r4300_regs(r4300);
+  struct execution_jump j;
+  uint32_t target;
+  unsigned int link;
+  int take, likely, cop1, idle;
+  int ds_exception = 0;
+
+  execution_decode_jump(r4300, pc, iw, &j);
+  target = j.target; link = j.link; take = j.take; likely = j.likely; cop1 = j.cop1; idle = j.idle;
+
+  if(cop1 && check_cop1_unusable(r4300)) return;
+  if(link) regs[link] = (int64_t)(int32_t)(pc + 8);
+
+  if(!likely || take)
+  {
+    /* An idle loop (a jump to itself with nothing in the delay slot) goes on to the next interrupt at once */
+    if(idle && take && target == pc && fast_mem_access(r4300, pc + 4) != NULL && *fast_mem_access(r4300, pc + 4) == 0
+       && state->cycle_count < 0)
+      state->cycle_count = 0;
+    state->cycle_count += CLOCK_DIVIDER*2;
+    state->pcaddr = pc + 4;
+    state->pending_exception = 0;
+    r4300->delay_slot = 1;
+    execution_step(r4300, pc + 4);
+    r4300->delay_slot = 0;
+    if(execution_branch_cancelled)
+      execution_branch_cancelled = 0; // The plugin jumped elsewhere from the delay slot
+    else if(state->pending_exception)
+      ds_exception = 1; // The delay slot raised an exception: pcaddr is the handler
+    else if(take)
+      state->pcaddr = target;
+  }
+  else
+  {
+    state->cycle_count += CLOCK_DIVIDER*2;
+    state->pcaddr = pc + 8;
+  }
+
+  if(!ds_exception && state->cycle_count >= 0)
+  {
+    state->pending_exception = 0;
+    dynarec_gen_interrupt();
+  }
+}
+
+/* A load's result, written to its register (or FPR) by the instruction at pc */
+static void execution_finish_load(struct r4300_core* r4300, uint32_t iw, uint64_t value)
+{
+  struct new_dynarec_hot_state* state = &r4300->new_dynarec_hot_state;
+  int64_t* regs = r4300_regs(r4300);
+  unsigned int rt = (iw>>16)&0x1f;
+  switch(iw>>26)
+  {
+    case 0x31: *(uint32_t*)state->cp1_regs_simple[rt] = (uint32_t)value; return; // LWC1
+    case 0x35: *(uint64_t*)state->cp1_regs_double[rt] = value; return; // LDC1
+  }
+  if(rt==0) return;
+  switch(iw>>26)
+  {
+    case 0x20: regs[rt] = (int8_t)value; break; // LB
+    case 0x24: regs[rt] = (uint8_t)value; break; // LBU
+    case 0x21: regs[rt] = (int16_t)value; break; // LH
+    case 0x25: regs[rt] = (uint16_t)value; break; // LHU
+    case 0x23: case 0x22: case 0x26: regs[rt] = (int32_t)value; break; // LW, LWL, LWR
+    case 0x27: regs[rt] = (uint32_t)value; break; // LWU
+    case 0x37: case 0x1a: case 0x1b: regs[rt] = (int64_t)value; break; // LD, LDL, LDR
+  }
+}
+
+/* Called by do_interrupt (linkage), once a load or store function left the block and the registers are written back
+ * (see execution_stub_exit): completes the load, and in a delay slot sets pcaddr to where its branch goes, from the
+ * registers as the branch saw them (the delay slot hasn't changed any yet) */
+void execution_apply_resume(void)
+{
+  struct r4300_core* r4300 = &g_dev.r4300;
+  struct new_dynarec_hot_state* state = &r4300->new_dynarec_hot_state;
+  uint32_t pc;
+  uint32_t* mem;
+  if(!execution_resume.active) return;
+  execution_resume.active = 0;
+  pc = execution_resume.pc;
+  if(execution_resume.branch) {
+    mem = fast_mem_access(r4300, pc - 4);
+    if(mem != NULL && execution_jump_opcode(*mem)) {
+      struct execution_jump j;
+      execution_decode_jump(r4300, pc - 4, *mem, &j);
+      if(j.link) r4300_regs(r4300)[j.link] = (int64_t)(int32_t)(pc + 4);
+      state->pcaddr = j.take ? j.target : pc + 4;
+    }
+  }
+  if(execution_resume.load) {
+    mem = fast_mem_access(r4300, pc);
+    if(mem != NULL) execution_finish_load(r4300, *mem, execution_resume.value);
+  }
+}
+
+/* Called from jump_execution_hook (linkage) with pcaddr and cycle_count set: runs the hooked instruction at pcaddr
+ * and returns where the code goes on */
+void* execution_hook_new(void)
+{
+  struct r4300_core* r4300 = &g_dev.r4300;
+  struct new_dynarec_hot_state* state = &r4300->new_dynarec_hot_state;
+  uint32_t pc = state->pcaddr;
+  unsigned int exceptions;
+  uint32_t* mem;
+
+  state->pending_exception = 0;
+  r4300->delay_slot = 0;
+  execution_branch_cancelled = 0;
+
+  if(execution_execute(r4300, pc))
+  {
+    mem = fast_mem_access(r4300, pc);
+    if(mem == NULL)
+      TLB_refill_exception(r4300, pc, 2);
+    else
+    {
+      exceptions = execution_sync_exceptions;
+      if(execution_jump_opcode(*mem))
+        execution_run_jump(r4300, pc, *mem);
+      else
+      {
+        state->cycle_count += CLOCK_DIVIDER;
+        execution_run_instruction(r4300, pc, *mem);
+      }
+      execution_execute_done(pc, exceptions);
+    }
+  }
+
+  execution_branch_cancelled = 0;
+  return get_addr_ht(state->pcaddr);
+}
+
+int new_dynarec_execution_supported(void)
+{
+#if NEW_DYNAREC == NEW_DYNAREC_X64
+  return 1;
+#else
+  return 0;
+#endif
+}
+
+/* Marks the restorable copies (jump_dirty) of the blocks with a word whose address agrees with addr in bits 2..22 (as
+ * the hook maps do), so they're compiled again instead of being restored. They're listed by the page of an entry
+ * point, which may be up to 4 pages from any word of the block. */
+static void execution_mark_stale(u_int addr)
+{
+  int k,l;
+  for(k=-4;k<=4;k++) {
+    u_int page=((addr>>12)+k)&2047;
+    for(l=0;l<2;l++) {
+      struct ll_entry *head;
+      for(head=jump_dirty[page+l*2048];head!=NULL;head=head->next) {
+        if(((addr-head->start)&UINT32_C(0x7ffffc))<head->length)
+          head->stale=1;
+      }
+    }
+  }
+}
+
+/* Invalidates the code at an address through KSEG0 and KSEG1 (or a TLB-mapped address as it is) */
+static void execution_invalidate(u_int start, u_int size)
+{
+  struct r4300_core* r4300 = &g_dev.r4300;
+  if((start&UINT32_C(0xc0000000))==UINT32_C(0x80000000)) {
+    invalidate_cached_code_new_dynarec(r4300,(start&UINT32_C(0x1fffffff))|UINT32_C(0x80000000),size);
+    invalidate_cached_code_new_dynarec(r4300,(start&UINT32_C(0x1fffffff))|UINT32_C(0xa0000000),size);
+  }
+  else
+    invalidate_cached_code_new_dynarec(r4300,start,size);
+}
+
+void new_dynarec_execution_hook_changed(uint32_t addr)
+{
+  if(!new_dynarec_ready) return;
+  addr&=~UINT32_C(3);
+  /* The word, and a jump or branch it may be the delay slot of */
+  execution_mark_stale(addr);
+  execution_mark_stale(addr-4);
+  execution_invalidate(addr-4,8);
+  execution_request_exit();
+}
+
+void new_dynarec_execution_memory_hooks_changed(void)
+{
+  int i;
+  if(!new_dynarec_ready) return;
+  /* Code compiled without the checks for the kind */
+  invalidate_all_pages();
+  for(i=0;i<4096;i++) {
+    struct ll_entry *head;
+    for(head=jump_dirty[i];head!=NULL;head=head->next)
+      head->stale=1;
+  }
+  execution_request_exit();
+}
+
+void new_dynarec_execution_code_changed(void)
+{
+  if(!new_dynarec_ready) return;
+  execution_request_exit();
 }
 
 /**** Register allocation ****/
@@ -4978,7 +5514,8 @@ static void inline_readstub(int type, int i, u_int addr_const, char addr, struct
 
   restore_regs(reglist);
 
-  if((signed int)addr_const>=(signed int)0xC0000000) {
+  // (Or the execution plugin jumped elsewhere from its Read hook)
+  if((signed int)addr_const>=(signed int)0xC0000000||execution_plugin_attached()) {
     // Theoretically we can have a pagefault here, if the TLB has never
     // been enabled and the address is outside the range 80000000..BFFFFFFF
     // Write out the registers so the pagefault can be handled.  This is
@@ -5187,7 +5724,8 @@ static void inline_writestub(int type, int i, u_int addr_const, char addr, struc
 
   restore_regs(reglist);
 
-  if(((signed int)addr_const>=(signed int)0xC0000000)||((addr_const>>16)==0xa430)||((addr_const>>16)==0x8430)) {
+  // (Or the execution plugin jumped elsewhere from its Write hook, or changed its hooks, see execution_exit_ok)
+  if(((signed int)addr_const>=(signed int)0xC0000000)||((addr_const>>16)==0xa430)||((addr_const>>16)==0x8430)||execution_plugin_attached()) {
     // Theoretically we can have a pagefault here, if the TLB has never
     // been enabled and the address is outside the range 80000000..BFFFFFFF
     // Write out the registers so the pagefault can be handled.  This is
@@ -6114,11 +6652,44 @@ void shift_assemble(int i,struct regstat *i_regs)
 }
 #endif
 
+/* Execution plugin: a jne (for add_stub, to the load or store function, which calls the plugin) taken when the page
+ * of the RDRAM address in r (0x80000000..0x807fffff) has a hook of the kind. Uses r13 and r14, which the register
+ * allocator never hands out. Emitted only while some page has a hook of the kind (see exec_hooks_read). */
+#if NEW_DYNAREC == NEW_DYNAREC_X64
+static intptr_t emit_execution_hook_check(int r,int kind)
+{
+  intptr_t jaddr;
+  assert(r>=0&&r<8);
+  emit_lea_rip((intptr_t)execution_hook_page_flags[kind]-0x80000,R14);
+  assem_debug("mov %%%s,%%r13d",regname[r]);
+  output_rex(0,0,0,1);
+  output_byte(0x89);
+  output_modrm(3,R13&7,r);
+  assem_debug("shr $12,%%r13d");
+  output_rex(0,0,0,1);
+  output_byte(0xC1);
+  output_modrm(3,R13&7,5);
+  output_byte(12);
+  assem_debug("cmpb $0,(%%r14,%%r13)");
+  output_rex(0,0,1,1);
+  output_byte(0x80);
+  output_modrm(0,4,7);
+  output_sib(0,R13&7,R14&7);
+  output_byte(0);
+  jaddr=(intptr_t)out;
+  emit_jne(0);
+  return jaddr;
+}
+#define EXECUTION_HOOK_CHECK(cond,r,kind) ((cond)?emit_execution_hook_check(r,kind):0)
+#else
+#define EXECUTION_HOOK_CHECK(cond,r,kind) 0
+#endif
+
 static void load_assemble(int i,struct regstat *i_regs)
 {
   signed char s,th,tl,addr,map=-1,cache=-1;
   int offset,type=0,memtarget=0,c=0;
-  intptr_t jaddr=0;
+  intptr_t jaddr=0,jaddr_hook=0;
   u_int hr,reglist=0;
   int agr=AGEN1+(i&1);
   th=get_reg(i_regs->regmap,rt1[i]|64);
@@ -6174,6 +6745,7 @@ static void load_assemble(int i,struct regstat *i_regs)
         emit_jno(0);
       }
     }
+    jaddr_hook=EXECUTION_HOOK_CHECK(exec_hooks_read&&(!c||memtarget)&&!dummy,addr,M64HOOK_READ);
     #ifdef RAM_OFFSET
     #ifndef NATIVE_64
     if(!c&&!dummy)
@@ -6282,6 +6854,9 @@ static void load_assemble(int i,struct regstat *i_regs)
   } else if(c&&!memtarget) {
     inline_readstub(type,i,constmap[i][s]+offset,addr,i_regs,rt1[i],ccadj[i],reglist);
   }
+  if(jaddr_hook) {
+    add_stub(type,jaddr_hook,(intptr_t)out,i,addr,(intptr_t)i_regs,ccadj[i],reglist);
+  }
 #else
   inline_readstub(type,i,c?(constmap[i][s]+offset):0,addr,i_regs,rt1[i],ccadj[i],reglist);
 #endif
@@ -6299,7 +6874,7 @@ static void store_assemble(int i,struct regstat *i_regs)
 {
   signed char s,th,tl,real_addr,addr,temp,map=-1,cache=-1;
   int offset,type=0,memtarget=0,c=0;
-  intptr_t jaddr=0;
+  intptr_t jaddr=0,jaddr_hook=0;
   u_int hr,reglist=0;
   int agr=AGEN1+(i&1);
   th=get_reg(i_regs->regmap,rs2[i]|64);
@@ -6356,6 +6931,7 @@ static void store_assemble(int i,struct regstat *i_regs)
       if(s==addr) emit_mov(s,temp);
       #endif
     }
+    jaddr_hook=EXECUTION_HOOK_CHECK(exec_hooks_write&&(!c||memtarget),real_addr,M64HOOK_WRITE);
     #ifdef RAM_OFFSET
     if(!c||memtarget) {
       map=get_reg(i_regs->regmap,ROREG);
@@ -6427,6 +7003,9 @@ static void store_assemble(int i,struct regstat *i_regs)
   } else if(c&&!memtarget) {
     inline_writestub(type,i,constmap[i][s]+offset,real_addr,i_regs,rs2[i],ccadj[i],reglist);
   }
+  if(jaddr_hook) {
+    add_stub(type,jaddr_hook,(intptr_t)out,i,real_addr,(intptr_t)i_regs,ccadj[i],reglist);
+  }
 #else
   inline_writestub(type,i,c?(constmap[i][s]+offset):0,real_addr,i_regs,rs2[i],ccadj[i],reglist);
 #endif
@@ -6436,7 +7015,7 @@ static void storelr_assemble(int i,struct regstat *i_regs)
 {
   signed char s,th,tl,real_addr,addr,temp,temp2=0,map=-1;
   int offset,type=0,memtarget=0,c=0;
-  intptr_t jaddr=0;
+  intptr_t jaddr=0,jaddr_hook=0;
   u_int hr,reglist=0;
   int agr=AGEN1+(i&1);
   th=get_reg(i_regs->regmap,rs2[i]|64);
@@ -6481,6 +7060,7 @@ static void storelr_assemble(int i,struct regstat *i_regs)
       if(s==addr) emit_mov(s,temp);
       #endif
     }
+    jaddr_hook=EXECUTION_HOOK_CHECK(exec_hooks_write&&(!c||memtarget),real_addr,M64HOOK_WRITE);
     #ifdef RAM_OFFSET
     if(!c||memtarget) {
       map=get_reg(i_regs->regmap,ROREG);
@@ -6708,6 +7288,9 @@ static void storelr_assemble(int i,struct regstat *i_regs)
   } else if(c&&!memtarget) {
     inline_writestub(type,i,constmap[i][s]+offset,real_addr,i_regs,rs2[i],ccadj[i],reglist);
   }
+  if(jaddr_hook) {
+    add_stub(type,jaddr_hook,(intptr_t)out,i,real_addr,(intptr_t)i_regs,ccadj[i],reglist);
+  }
 #else
   inline_writestub(type,i,c?(constmap[i][s]+offset):0,real_addr,i_regs,rs2[i],ccadj[i],reglist);
 #endif
@@ -6717,7 +7300,7 @@ static void c1ls_assemble(int i,struct regstat *i_regs)
 {
   signed char s,th,tl,real_addr,addr,temp,ar,map=-1;
   int offset,type=0,memtarget=0,c=0;
-  intptr_t jaddr,jaddr2=0;
+  intptr_t jaddr,jaddr2=0,jaddr_hook=0;
   u_int hr,reglist=0;
   int agr=AGEN1+(i&1);
   th=get_reg(i_regs->regmap,FTEMP|64);
@@ -6792,6 +7375,10 @@ static void c1ls_assemble(int i,struct regstat *i_regs)
       }
       #endif
     }
+    if (opcode[i]==0x39||opcode[i]==0x3D) // SWC1/SDC1
+      jaddr_hook=EXECUTION_HOOK_CHECK(exec_hooks_write&&(!c||memtarget),real_addr,M64HOOK_WRITE);
+    else // LWC1/LDC1
+      jaddr_hook=EXECUTION_HOOK_CHECK(exec_hooks_read&&(!c||memtarget),real_addr,M64HOOK_READ);
     #ifdef RAM_OFFSET
     #ifndef NATIVE_64
     if ((!c&&(opcode[i]==0x31||opcode[i]==0x35))||((!c||memtarget)&&(opcode[i]==0x39||opcode[i]==0x3D)))
@@ -6865,6 +7452,9 @@ static void c1ls_assemble(int i,struct regstat *i_regs)
         #endif
       }
     }
+  }
+  if(jaddr_hook) {
+    add_stub(type,jaddr_hook,(intptr_t)out,i,real_addr,(intptr_t)i_regs,ccadj[i],reglist);
   }
   if(jaddr2) {
     add_stub(type,jaddr2,(intptr_t)out,i,real_addr,(intptr_t)i_regs,ccadj[i],reglist);
@@ -6947,7 +7537,12 @@ static void syscall_assemble(int i,struct regstat *i_regs)
   assert(!is_delayslot);
   emit_movimm(start+i*4,0); // Get PC
   emit_addimm(HOST_CCREG,CLOCK_DIVIDER*ccadj[i],HOST_CCREG); // CHECK: is this right?  There should probably be an extra cycle...
-  emit_jmp((intptr_t)jump_syscall);
+#if NEW_DYNAREC == NEW_DYNAREC_X64
+  if(hookcall[i])
+    emit_jmp((intptr_t)jump_execution_hook); // Execution plugin (see execution_hook_new)
+  else
+#endif
+    emit_jmp((intptr_t)jump_syscall);
 }
 
 static void ds_assemble(int i,struct regstat *i_regs)
@@ -8744,10 +9339,12 @@ void new_dynarec_init(void)
 
   tlb_speed_hacks();
   arch_init();
+  new_dynarec_ready=1;
 }
 
 void new_dynarec_cleanup(void)
 {
+  new_dynarec_ready=0;
 #if defined(RECOMPILER_DEBUG) && !defined(RECOMP_DBG)
   recomp_dbg_cleanup();
 #endif
@@ -8839,6 +9436,10 @@ int new_recompile_block(int addr)
   int i,j;
   int done=0;
   unsigned int type,op,op2;
+
+  exec_hooks_execute=execution_hook_page_count[M64HOOK_EXECUTE]!=0;
+  exec_hooks_read=execution_hook_page_count[M64HOOK_READ]!=0;
+  exec_hooks_write=execution_hook_page_count[M64HOOK_WRITE]!=0;
 
   //DebugMessage(M64MSG_VERBOSE, "addr = %x source = %x %x", addr,source,source[0]);
 
@@ -9110,6 +9711,23 @@ int new_recompile_block(int addr)
       case 0x3F: assem_strcpy(insn[i],"SD"); type=STORE; break;
       default: assem_strcpy(insn[i],"???"); type=NI; break;
     }
+    /* Execution plugin: a hooked instruction, or a jump or branch whose delay slot is hooked, ends the block and is
+     * run by execution_hook_new (see syscall_assemble). Not in a delay slot: the jump or branch before it is. */
+    hookcall[i]=0;
+#if NEW_DYNAREC == NEW_DYNAREC_X64
+    if(exec_hooks_execute&&!(i==0&&((u_int)addr&1))&&
+       !(i>0&&(itype[i-1]==UJUMP||itype[i-1]==RJUMP||itype[i-1]==CJUMP||itype[i-1]==SJUMP||itype[i-1]==FJUMP)))
+    {
+      int jump=(type==UJUMP||type==RJUMP||type==CJUMP||type==SJUMP||type==FJUMP);
+      if((execution_hooked(M64HOOK_EXECUTE,start+i*4)||(jump&&execution_hooked(M64HOOK_EXECUTE,start+i*4+4)))&&
+         !execution_unhookable(source[i]))
+      {
+        hookcall[i]=1;
+        type=SYSCALL;
+        assem_strcpy(insn[i],"HOOKCALL");
+      }
+    }
+#endif
     itype[i]=type;
     opcode2[i]=op2;
     /* Get registers/immediates */
@@ -9363,6 +9981,7 @@ int new_recompile_block(int addr)
       if(i>MAXBLOCK/2) done=1;
     }
     if(i>0&&itype[i]==SYSCALL&&stop_after_jal) done=1;
+    if(hookcall[i]) done=1;
     assert(i<MAXBLOCK-1);
     if(start+i*4==pagelimit-4) done=1;
     assert(start+i*4<pagelimit);

@@ -162,16 +162,25 @@ extern execution_plugin_functions execution;
 extern uint8_t execution_hooks[EXECUTION_HOOK_MAPS][EXECUTION_HOOK_WORDS / 8];
 extern uint8_t execution_hook_pages[EXECUTION_HOOK_MAPS][EXECUTION_HOOK_PAGES / 8];
 
+/* The same pages a byte each (nonzero while the page has a hook of the kind), for the dynamic recompiler's code to
+ * index, and how many pages have one of each kind */
+extern uint8_t execution_hook_page_flags[EXECUTION_HOOK_MAPS][EXECUTION_HOOK_PAGES];
+extern unsigned int execution_hook_page_count[EXECUTION_HOOK_MAPS];
+
 /* Set when the plugin calls jump() during a delay slot: the branch the delay slot belongs to is not taken, so execution
  * continues where the plugin jumped (the interpreters' branch code checks and clears it) */
 extern int execution_branch_cancelled;
+
+/* Counts the plugin's calls of jump() (the dynamic recompiler tells them from exceptions with it) */
+extern unsigned int execution_jumps;
 
 /* Counts the exceptions an instruction raised itself (not interrupts): ExecuteDone isn't sent for an instruction that
  * didn't complete because of one */
 extern unsigned int execution_sync_exceptions;
 
 /* Set when the plugin invalidated cached code: the cached interpreter reloads the current block before its next
- * instruction, so a change to code just ahead of the current instruction is seen right away */
+ * instruction, so a change to code just ahead of the current instruction is seen right away (the dynamic recompiler
+ * leaves the current block where it can, see new_dynarec_execution_code_changed) */
 extern int execution_reload_pending;
 
 extern int execution_plugin_attached(void);

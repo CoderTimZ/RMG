@@ -94,4 +94,12 @@ void new_dynarec_init(void);
 void new_dyna_start(void);
 void new_dynarec_cleanup(void);
 
+/* The execution plugin (see plugin.h): whether this dynamic recompiler can call it, a change to whether the word at
+ * an address has an M64HOOK_EXECUTE hook, the first page getting a hook of a memory kind, and a change the plugin
+ * made to code. Each recompiles what's affected and leaves the current block where that's safe. */
+int new_dynarec_execution_supported(void);
+void new_dynarec_execution_hook_changed(uint32_t addr);
+void new_dynarec_execution_memory_hooks_changed(void);
+void new_dynarec_execution_code_changed(void);
+
 #endif /* M64P_DEVICE_R4300_NEW_DYNAREC_H */

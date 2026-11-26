@@ -39,6 +39,7 @@
 #include "dummy_rsp.h"
 #include "dummy_video.h"
 #include "dummy_execution.h"
+#include "device/r4300/new_dynarec/new_dynarec.h"
 #include "main/main.h"
 #include "main/netplay_new.h"
 #include "main/rom.h"
@@ -57,7 +58,10 @@ execution_plugin_functions execution;
 
 uint8_t execution_hooks[EXECUTION_HOOK_MAPS][EXECUTION_HOOK_WORDS / 8];
 uint8_t execution_hook_pages[EXECUTION_HOOK_MAPS][EXECUTION_HOOK_PAGES / 8];
+uint8_t execution_hook_page_flags[EXECUTION_HOOK_MAPS][EXECUTION_HOOK_PAGES];
+unsigned int execution_hook_page_count[EXECUTION_HOOK_MAPS];
 int execution_branch_cancelled = 0;
+unsigned int execution_jumps = 0;
 unsigned int execution_sync_exceptions = 0;
 int execution_reload_pending = 0;
 
@@ -657,11 +661,18 @@ static m64p_error plugin_start_rsp(void)
     return M64ERR_SUCCESS;
 }
 
+static void clear_execution_hooks(void)
+{
+    memset(execution_hooks, 0, sizeof(execution_hooks));
+    memset(execution_hook_pages, 0, sizeof(execution_hook_pages));
+    memset(execution_hook_page_flags, 0, sizeof(execution_hook_page_flags));
+    memset(execution_hook_page_count, 0, sizeof(execution_hook_page_count));
+}
+
 static void plugin_disconnect_execution(void)
 {
     execution = dummy_execution;
-    memset(execution_hooks, 0, sizeof(execution_hooks));
-    memset(execution_hook_pages, 0, sizeof(execution_hook_pages));
+    clear_execution_hooks();
     execution_branch_cancelled = 0;
     execution_reload_pending = 0;
     l_ExecutionAttached = 0;
@@ -809,6 +820,8 @@ static void execution_jump(uint32_t address)
 {
     struct r4300_core* r4300 = &g_dev.r4300;
 
+    ++execution_jumps;
+
     /* The interpreters count cycles from how far the PC got since the last branch (cp0.last_addr): count what ran up
      * to here, then count from the new address, as a branch does. Without this, the next count added the distance
      * jumped: about a cycle per 4 bytes forward, and about 2^30 cycles for a jump back (the subtraction wrapped). */
@@ -845,6 +858,10 @@ static void invalidate_code(uint32_t addr, uint32_t size)
     }
 
     execution_reload_pending = 1;
+#if defined(NEW_DYNAREC) && !defined(NO_ASM)
+    if (r4300->emumode == EMUMODE_DYNAREC)
+        new_dynarec_execution_code_changed();
+#endif
 }
 
 EXPORT void CALL ExecutionInvalidateCode(uint32_t addr, uint32_t size)
@@ -862,21 +879,47 @@ static void execution_set_hook(uint32_t addr, int kind, int on)
     uint32_t page = (addr >> 12) & (EXECUTION_HOOK_PAGES - 1);
     const uint8_t* page_words;
     size_t i;
+    int was_on, page_on, page_was_on;
 
     if (kind < M64HOOK_EXECUTE || kind > M64HOOK_WRITE)
         return;
 
     page_words = &execution_hooks[kind][page * (0x1000 / 4 / 8)];
+    was_on = (execution_hooks[kind][word >> 3] >> (word & 7)) & 1;
     if (on)
         execution_hooks[kind][word >> 3] |= (uint8_t)(1 << (word & 7));
     else
         execution_hooks[kind][word >> 3] &= (uint8_t)~(1 << (word & 7));
 
     for (i = 0; i < 0x1000 / 4 / 8 && !page_words[i]; ++i);
-    if (i < 0x1000 / 4 / 8)
+    page_on = i < 0x1000 / 4 / 8;
+    if (page_on)
         execution_hook_pages[kind][page >> 3] |= (uint8_t)(1 << (page & 7));
     else
         execution_hook_pages[kind][page >> 3] &= (uint8_t)~(1 << (page & 7));
+
+    page_was_on = execution_hook_page_flags[kind][page] != 0;
+    if (page_on != page_was_on)
+    {
+        execution_hook_page_flags[kind][page] = (uint8_t)page_on;
+        if (page_on)
+            ++execution_hook_page_count[kind];
+        else
+            --execution_hook_page_count[kind];
+    }
+
+#if defined(NEW_DYNAREC) && !defined(NO_ASM)
+    /* The dynamic recompiler decides where to call the plugin as it compiles (see new_dynarec.c) */
+    if (g_dev.r4300.emumode == EMUMODE_DYNAREC)
+    {
+        if (kind == M64HOOK_EXECUTE && was_on != (on != 0))
+            new_dynarec_execution_hook_changed(addr);
+        else if (kind != M64HOOK_EXECUTE && page_on && !page_was_on && execution_hook_page_count[kind] == 1)
+            new_dynarec_execution_memory_hooks_changed(); /* the first page with a hook of the kind */
+    }
+#else
+    (void)was_on;
+#endif
 }
 
 int execution_plugin_attached(void)
@@ -886,8 +929,7 @@ int execution_plugin_attached(void)
 
 void initiate_execution_plugin(void)
 {
-    memset(execution_hooks, 0, sizeof(execution_hooks));
-    memset(execution_hook_pages, 0, sizeof(execution_hook_pages));
+    clear_execution_hooks();
     execution_branch_cancelled = 0;
     execution_reload_pending = 0;
 

@@ -3375,7 +3375,7 @@ static void loadlr_assemble_x64(int i,struct regstat *i_regs)
 {
   signed char s,th,tl,temp,temp2,temp2h,addr,map=-1,cache=-1;
   int offset,type=0,memtarget=0,c=0;
-  intptr_t jaddr=0;
+  intptr_t jaddr=0,jaddr_hook=0;
   u_int hr,reglist=0;
   th=get_reg(i_regs->regmap,rt1[i]|64);
   tl=get_reg(i_regs->regmap,rt1[i]);
@@ -3417,6 +3417,9 @@ static void loadlr_assemble_x64(int i,struct regstat *i_regs)
       jaddr=(intptr_t)out;
       emit_jno(0);
     }
+    // Execution plugin: to the load function when the page has a read hook (LDL/LDR always go there if not constant)
+    if(exec_hooks_read&&((!c&&!ldlr)||memtarget)&&!dummy)
+      jaddr_hook=emit_execution_hook_check(addr,M64HOOK_READ);
     #ifdef RAM_OFFSET
     if(((!c&&!ldlr)||memtarget)&&!dummy) {
       map=get_reg(i_regs->regmap,ROREG);
@@ -3527,6 +3530,9 @@ static void loadlr_assemble_x64(int i,struct regstat *i_regs)
     add_stub(type,jaddr,(intptr_t)out,i,addr,(intptr_t)i_regs,ccadj[i],reglist);
   } else if(c&&!memtarget) {
     inline_readstub(type,i,(constmap[i][s]+offset),addr,i_regs,rt1[i],ccadj[i],reglist);
+  }
+  if(jaddr_hook) {
+    add_stub(type,jaddr_hook,(intptr_t)out,i,addr,(intptr_t)i_regs,ccadj[i],reglist);
   }
 #else
   inline_readstub(type,i,c?(constmap[i][s]+offset):0,addr,i_regs,rt1[i],ccadj[i],reglist);

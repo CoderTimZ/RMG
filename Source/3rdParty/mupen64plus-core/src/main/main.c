@@ -74,6 +74,7 @@
 #include "osal/preproc.h"
 #include "osd/osd.h"
 #include "plugin/plugin.h"
+#include "device/r4300/new_dynarec/new_dynarec.h"
 #if defined(PROFILE)
 #include "profile.h"
 #endif
@@ -1641,6 +1642,16 @@ void main_change_gb_cart(int control_id)
 */
 
 
+/* Whether the dynamic recompiler calls the execution plugin (see new_dynarec_execution_supported) */
+static int dynarec_supports_execution_plugin(void)
+{
+#if defined(NEW_DYNAREC) && !defined(NO_ASM)
+    return new_dynarec_execution_supported();
+#else
+    return 0;
+#endif
+}
+
 m64p_error main_run(void)
 {
     size_t i, k;
@@ -1718,8 +1729,9 @@ m64p_error main_run(void)
     //During netplay, player 1 is the source of truth for these settings
     netplay_sync_settings(&count_per_op, &count_per_op_denom_pot, &disable_extra_mem, &si_dma_duration, &emumode, &no_compiled_jump);
 
-    /* The execution plugin follows the game's code through the interpreters (the dynamic recompiler sends it nothing) */
-    if (emumode == EMUMODE_DYNAREC && execution_plugin_attached())
+    /* The execution plugin follows the game's code through the interpreters, and the new dynamic recompiler on
+     * x86-64 (the other dynamic recompilers send it nothing) */
+    if (emumode == EMUMODE_DYNAREC && execution_plugin_attached() && !dynarec_supports_execution_plugin())
     {
         DebugMessage(M64MSG_INFO, "Using the cached interpreter instead of the dynamic recompiler for the execution plugin");
         emumode = EMUMODE_INTERPRETER;
@@ -1749,9 +1761,9 @@ m64p_error main_run(void)
         count_per_op_denom_pot = netplay_settings.count_per_op_denom_pot;
         disable_extra_mem = netplay_settings.disable_extra_mem;
         si_dma_duration = netplay_settings.si_dma_duration;
-        if (emumode != netplay_settings.emumode && execution_plugin_attached())
+        if (netplay_settings.emumode == EMUMODE_DYNAREC && execution_plugin_attached() && !dynarec_supports_execution_plugin())
         {
-            DebugMessage(M64MSG_WARNING, "Netplay: the host's CPU emulator is used, so the execution plugin may not see the game's code");
+            DebugMessage(M64MSG_WARNING, "Netplay: the host's CPU emulator is used, the dynamic recompiler, which can't call the execution plugin here");
         }
         emumode = netplay_settings.emumode;
         no_compiled_jump = netplay_settings.no_compiled_jump;
