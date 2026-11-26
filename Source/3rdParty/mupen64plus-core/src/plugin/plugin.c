@@ -716,6 +716,8 @@ static m64p_error plugin_connect_execution(m64p_dynlib_handle plugin_handle)
             execution.stateLoaded = dummyexecution_StateLoaded;
         if (!GET_FUNC(ptr_Reset, execution.reset, "Reset"))
             execution.reset = dummyexecution_Reset;
+        if (!GET_FUNC(ptr_StateSaving, execution.stateSaving, "StateSaving"))
+            execution.stateSaving = NULL;
         if (!GET_FUNC(ptr_NetplayStart, execution.netplayStart, "NetplayStart"))
             execution.netplayStart = NULL;
         if (!GET_FUNC(ptr_NetplayExport, execution.netplayExport, "NetplayExport"))
@@ -953,6 +955,11 @@ void execution_state_loaded(void)
     /* A jump the plugin made in a delay slot belongs to the state before the load */
     execution_branch_cancelled = 0;
     execution.stateLoaded();
+}
+
+int execution_state_saving(void)
+{
+    return execution.stateSaving == NULL || execution.stateSaving();
 }
 
 void execution_reset(int hard)

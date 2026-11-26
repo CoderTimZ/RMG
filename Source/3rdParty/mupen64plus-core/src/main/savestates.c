@@ -2354,6 +2354,10 @@ int savestates_save(void)
         get_next_event_type(&dev->r4300.cp0.q) > COMPARE_INT)
         return 0;
 
+    /* Nor while the execution plugin is in the middle of something a save state can't hold */
+    if (!execution_state_saving())
+        return 0;
+
     if (fname != NULL && type == savestates_type_unknown)
         type = savestates_type_m64p;
     else if (fname == NULL) // Always save slots in M64P format

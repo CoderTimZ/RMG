@@ -145,6 +145,7 @@ typedef struct _execution_plugin_functions
 	ptr_StateLoaded         stateLoaded;
 	ptr_Reset               reset;
 	/* optional, NULL when the plugin doesn't have them */
+	ptr_StateSaving         stateSaving;
 	ptr_NetplayStart        netplayStart;
 	ptr_NetplayExport       netplayExport;
 	ptr_NetplayImport       netplayImport;
@@ -201,6 +202,8 @@ extern void plugin_save_rsp_state(void* data);
 extern void plugin_load_rsp_state(const void* data);
 extern void initiate_execution_plugin(void);
 extern void execution_state_loaded(void);
+/* Before a save state is made: 0 if the execution plugin puts it off (see ptr_StateSaving) */
+extern int execution_state_saving(void);
 extern void execution_reset(int hard);
 
 /* the new netplay (see NetplayStart in m64p_plugin.h); the export and import return 0 if the plugin has nothing */

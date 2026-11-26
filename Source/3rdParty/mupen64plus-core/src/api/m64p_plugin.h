@@ -335,6 +335,8 @@ typedef void(*ptr_Write32)(uint32_t* value, uint32_t pc, uint32_t addr);
 typedef void(*ptr_Write64)(uint64_t* value, uint32_t pc, uint32_t addr);
 /* Optional plugin functions: the core calls them when the plugin exports them */
 typedef void(*ptr_StateLoaded)(void);  /* after a save state was loaded */
+typedef int (*ptr_StateSaving)(void);  /* before a save state is made: 0 puts it off until the next interrupt (the
+                                          plugin is in the middle of something it can't save), 1 lets it be made */
 typedef void(*ptr_Reset)(int hard);    /* when the game is reset (hard = 1 for a hard reset) */
 /* Optional, for the new netplay. Plugins that change the game need the same settings and state on every machine.
  * Every machine calls NetplayStart(is_host) before InitiateExecution. The host's plugin then starts as usual, and
