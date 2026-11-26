@@ -449,6 +449,15 @@ void vk_rasterize()
 	auto &device = wsi->get_device();
 	if (wsi->has_swapchain_image())
 		render_frame(device);
+	else
+	{
+		// A frame skipped for want of a free image (without VSync) has no
+		// scanout, which is what submits the RDP's batched work. Submit it
+		// anyway: ending the frame waits for every command buffer to be
+		// submitted, and the command thread holds its open one until more
+		// RDP commands come, so the game hung.
+		processor->flush();
+	}
 	(*render_callback)(1);
 	wsi->end_frame();
 	wsi->begin_frame();
