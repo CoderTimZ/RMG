@@ -302,6 +302,15 @@ int netplay_new_active(void)
     return l_active;
 }
 
+/* For plugins (they look it up in the core library): 1 while a game of the
+ * new netplay runs. GLideN64 then stops copying its frame buffers to RDRAM:
+ * what it copies comes from its own buffers on the GPU, so it differs between
+ * graphics cards and resolutions, and a rollback can't reproduce it. */
+EXPORT int CALL NetplayNewGame(void)
+{
+    return l_active;
+}
+
 int netplay_new_can_write_saves(void)
 {
     return !l_active || l_callbacks.is_host;

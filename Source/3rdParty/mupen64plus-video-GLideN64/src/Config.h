@@ -285,6 +285,9 @@ struct Config
 #define hack_fbTextureOffset		(1<<23) //Hack to offset Conker's shadow in CBFD and Bob-ombs in Mario Tennis.
 
 extern Config config;
+// Set by the mupen64plus API when the core has it: whether a game of RMG's
+// new netplay runs (see Config::validate)
+extern int (*Config_netplayNewGame)(void);
 
 void Config_LoadConfig();
 #if defined(M64P_GLIDENUI) || !defined(MUPENPLUSAPI)

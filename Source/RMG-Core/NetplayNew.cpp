@@ -60,16 +60,8 @@ CORE_EXPORT std::string CoreGetNetplayNewRollbackProblem(std::string gfxPlugin)
     std::transform(gfxPlugin.begin(), gfxPlugin.end(), gfxPlugin.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-    // GLideN64 copies its frame buffers to RDRAM one or two frames late in
-    // its double and triple buffer modes (2, 3). A rollback restores RDRAM
-    // but can't take back a copy that's still on its way, which would then
-    // land in the corrected game.
-    if (gfxPlugin.find("glide") != std::string::npos &&
-        CoreSettingsGetBoolValue("Video-GLideN64", "EnableFBEmulation", true) &&
-        CoreSettingsGetIntValue("Video-GLideN64", "EnableCopyColorToRDRAM", 1) >= 2)
-    {
-        return "GLideN64 copies frame buffers to RDRAM asynchronously (set \"Copy color buffer to RDRAM\" to synchronous or off)";
-    }
+    // (GLideN64 copies nothing to RDRAM in a game of the new netplay: the
+    // core tells it, see NetplayNewGame)
 
     // Parallel's upscaling keeps an upscaled copy of RDRAM on the GPU, which
     // rollback doesn't save. That's fine while the game only reads native

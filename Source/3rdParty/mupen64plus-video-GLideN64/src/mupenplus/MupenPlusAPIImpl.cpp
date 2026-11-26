@@ -79,6 +79,8 @@ m64p_error PluginAPI::PluginStartup(m64p_dynlib_handle _CoreLibHandle, void* Con
 	ConfigGetParamBool = (ptr_ConfigGetParamBool)DLSYM(_CoreLibHandle, "ConfigGetParamBool");
 	ConfigGetParamString = (ptr_ConfigGetParamString)DLSYM(_CoreLibHandle, "ConfigGetParamString");
 	ConfigExternalGetParameter = (ptr_ConfigExternalGetParameter)DLSYM(_CoreLibHandle, "ConfigExternalGetParameter");
+	// optional: only RMG's core has the new netplay
+	Config_netplayNewGame = (int (*)(void))DLSYM(_CoreLibHandle, "NetplayNewGame");
 	ConfigExternalOpen = (ptr_ConfigExternalOpen)DLSYM(_CoreLibHandle, "ConfigExternalOpen");
 	ConfigExternalClose = (ptr_ConfigExternalClose)DLSYM(_CoreLibHandle, "ConfigExternalClose");
 

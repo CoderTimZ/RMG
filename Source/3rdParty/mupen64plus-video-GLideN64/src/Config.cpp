@@ -165,8 +165,24 @@ bool isHWLightingAllowed()
 	return GBI.isHWLSupported();
 }
 
+int (*Config_netplayNewGame)(void) = nullptr;
+
 void Config::validate()
 {
+	// In a game of RMG's new netplay, every machine's RDRAM must stay the
+	// same. The frame buffers this plugin copies to RDRAM come from its own
+	// buffers on the GPU: they differ between graphics cards and resolutions,
+	// and after a rollback (which doesn't touch the GPU's buffers) re-run
+	// frames would copy different pixels than the first time. So nothing is
+	// copied (depth is rendered in software, which is exact).
+	if (Config_netplayNewGame != nullptr && Config_netplayNewGame() != 0) {
+		frameBufferEmulation.copyToRDRAM = ctDisable;
+		frameBufferEmulation.copyAuxToRDRAM = 0;
+		if (frameBufferEmulation.copyDepthToRDRAM == cdCopyFromVRam)
+			frameBufferEmulation.copyDepthToRDRAM = cdSoftwareRender;
+		generalEmulation.hacks &= ~hack_subscreen;
+	}
+
 	if (frameBufferEmulation.enable != 0 && frameBufferEmulation.N64DepthCompare != dcDisable)
 		video.multisampling = 0;
 	if (frameBufferEmulation.nativeResFactor == 1) {
