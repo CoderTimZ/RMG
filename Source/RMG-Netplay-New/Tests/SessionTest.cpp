@@ -75,7 +75,37 @@ struct Machine
     unsigned slowDowns = 0;
     // frames below this were final when the machine stopped
     unsigned finalFrames = 0;
+    // execution plugin messages: the ones this machine's stand-in plugin
+    // sent, and the ones each frame delivered (in the end, after re-runs)
+    std::vector<std::string> sent;
+    std::vector<std::vector<std::string>> delivered;
+    bool speaker = false;
+    std::string portNames[4];
+    // send a message on every frame from this one for 30 frames (0: don't)
+    unsigned messageBurstAt = 0;
 };
+
+// what a machine's stand-in plugin broadcasts, on frames it samples (like a
+// server's messages, which arrive in real time, not again when re-running):
+// the host often (one of them big, to cross several packets), the others now and then
+static std::string message_of(bool isHost, uint8_t id, unsigned frame)
+{
+    if (frame + 150 >= Frames)
+    {
+        return std::string();
+    }
+    if (isHost && frame % 37 == 5)
+    {
+        std::string message = "h" + std::to_string(frame) + ":";
+        message.append(frame == 301 ? 20000 : frame % 300, char('a' + frame % 26));
+        return message;
+    }
+    if (!isHost && frame % 53 == 7 + id)
+    {
+        return "g" + std::to_string(id) + ":" + std::to_string(frame);
+    }
+    return std::string();
+}
 
 static void set_env(const char* name, const char* value)
 {
@@ -160,7 +190,13 @@ static void emulate(Machine& m, bool isHost, InputFunction inputOf)
     }
 
     m.seen.assign(Frames, {NotRead, NotRead, NotRead, NotRead});
+    m.delivered.assign(Frames, {});
     uint8_t lastAuthority = NoPlayer;
+    for (int port = 0; port < 4; port++)
+    {
+        m.portNames[port] = cb->port_name(cb->context, port);
+    }
+    m.speaker = cb->speaker(cb->context) != 0;
 
     // a machine that fails stops the game for everyone, or they'd wait for it forever
     struct StopOnFailure
@@ -288,6 +324,21 @@ static void emulate(Machine& m, bool isHost, InputFunction inputOf)
                                                     {0, -1}, {0, -1}, {0, -1}};
             cb->sample(cb->context, frame, localInput);
             nextSample = frame + 1;
+
+            std::string message = message_of(isHost, m.id, frame);
+            if (message.empty() && m.messageBurstAt != 0 && frame >= m.messageBurstAt && frame < m.messageBurstAt + 30)
+            {
+                message = "h" + std::to_string(frame) + ":burst";
+            }
+            if (!message.empty())
+            {
+                if (!cb->send_message(cb->context, message.data(), unsigned(message.size())))
+                {
+                    std::printf("  [%s] FAIL: couldn't send a message at frame %u\n", m.label, frame);
+                    m.ok = false;
+                }
+                m.sent.push_back(message);
+            }
         }
 
         // like the core: every frame's pak switch is taken once per port, at
@@ -329,6 +380,24 @@ static void emulate(Machine& m, bool isHost, InputFunction inputOf)
                 {
                     return;
                 }
+            }
+        }
+
+        // the messages put into this frame, after its input (like the core)
+        m.delivered[frame].clear();
+        for (unsigned index = 0;; index++)
+        {
+            unsigned size = 0;
+            const void* data = cb->get_message(cb->context, frame, index, &size);
+            if (data == nullptr)
+            {
+                break;
+            }
+            std::string message(static_cast<const char*>(data), size);
+            m.delivered[frame].push_back(message);
+            for (char c : message)
+            {
+                state = (state ^ uint8_t(c)) * 0x100000001b3ull;
             }
         }
 
@@ -403,6 +472,8 @@ struct Scenario
     unsigned delayMs = 0;
     // the host's execution plugin (Rollback refuses it)
     std::string hostExecutionPlugin;
+    // the host sends a message every frame for 30 frames from this one (0: it doesn't)
+    unsigned hostMessageBurstAt = 0;
     // runs on the test thread once the game is going
     std::function<void(Machine& host, Machine& player, Machine& spectator)> during;
     // extra checks
@@ -498,6 +569,7 @@ static bool run(const Scenario& scenario)
     player.id    = player.session->GetInfo().myId;
     spectator.id = spectator.session->GetInfo().myId;
     player.leaveAt = scenario.playerLeavesAt;
+    host.messageBurstAt = scenario.hostMessageBurstAt;
     player.busyUs = scenario.playerBusyUs;
     spectator.desyncAt = scenario.spectatorDesyncsAt;
 
@@ -635,6 +707,88 @@ static bool run(const Scenario& scenario)
             std::printf(" %d(port %d)", p[0], p[1] + 1);
         }
         std::printf("\n");
+    }
+
+    // every machine got the same messages on the same frames; every message
+    // the host's or the spectator's plugin sent arrived exactly once (and the
+    // player's, unless it left), and the host's no earlier than it was sent
+    {
+        bool same = true;
+        for (unsigned f = 0; same && f < Frames; f++)
+        {
+            bool playerSame = f >= playerFrames || player.delivered[f] == host.delivered[f];
+            if (!playerSame || spectator.delivered[f] != host.delivered[f])
+            {
+                std::printf("  MESSAGE MISMATCH at frame %u: host %zu, player %zu, spectator %zu\n", f,
+                            host.delivered[f].size(), f < playerFrames ? player.delivered[f].size() : 0,
+                            spectator.delivered[f].size());
+                same = false;
+            }
+        }
+        std::map<std::string, std::vector<unsigned>> at;
+        for (unsigned f = 0; f < Frames; f++)
+        {
+            for (const std::string& message : host.delivered[f])
+            {
+                at[message].push_back(f);
+            }
+        }
+        unsigned delivered = 0, lost = 0, repeated = 0, early = 0, delay = 0;
+        for (Machine* m : {&host, &player, &spectator})
+        {
+            for (const std::string& message : m->sent)
+            {
+                auto it = at.find(message);
+                unsigned sentAt = unsigned(std::stoul(message.substr(m == &host ? 1 : message.find(':') + 1)));
+                if (it == at.end())
+                {
+                    lost += (m == &player && scenario.playerLeavesAt != 0) ? 0 : 1;
+                    continue;
+                }
+                delivered++;
+                repeated += it->second.size() > 1 ? 1 : 0;
+                // (a guest's can land on an earlier frame: in Rollback it runs ahead of the host, which writes it)
+                early += (m == &host && it->second[0] < sentAt) ? 1 : 0;
+                delay = std::max(delay, it->second[0] - std::min(it->second[0], sentAt));
+            }
+        }
+        std::printf("  messages: %u delivered (at most %u frames after they were sent), %u lost, %u repeated, %u early\n",
+                    delivered, delay, lost, repeated, early);
+        // a message never makes a guess wrong (they apply MessageDelayFrames late)
+        uint64_t misses = 0;
+        for (Machine* m : {&host, &player, &spectator})
+        {
+            if (m->session != nullptr)
+            {
+                misses += m->session->GetInfo().rollback.messageMisses;
+            }
+        }
+        if (!same || lost != 0 || repeated != 0 || early != 0 || delivered == 0 || misses != 0)
+        {
+            std::printf("  FAIL: messages (%llu guesses wrong only about messages)\n", (unsigned long long)misses);
+            ok = false;
+        }
+
+        // the host is the speaker, and everyone has the same player names
+        if (!host.speaker || player.speaker || spectator.speaker)
+        {
+            std::printf("  FAIL: the speaker isn't the host alone\n");
+            ok = false;
+        }
+        for (int port = 0; port < 4; port++)
+        {
+            if (player.portNames[port] != host.portNames[port] || spectator.portNames[port] != host.portNames[port])
+            {
+                std::printf("  FAIL: port %d's name differs\n", port + 1);
+                ok = false;
+            }
+        }
+        if (host.portNames[0] != "Host" || host.portNames[2] != "Player" || !host.portNames[1].empty())
+        {
+            std::printf("  FAIL: the port names are %s, %s, %s, %s\n", host.portNames[0].c_str(), host.portNames[1].c_str(),
+                        host.portNames[2].c_str(), host.portNames[3].c_str());
+            ok = false;
+        }
     }
 
     // synced data
@@ -874,6 +1028,31 @@ int main()
         scenarios.push_back(s);
     }
 
+    // The player writes everyone's input (the host's too, so the messages the
+    // host sends go into frames the player writes), then leaves: the host
+    // takes over, and the messages it sent them that no frame had yet go into
+    // its own frames (the message check below covers that none get lost)
+    {
+        Scenario s;
+        s.name = "Authority (the player), who leaves mid-game";
+        s.port = 47135;
+        s.mode = Mode::Authority;
+        s.playerIsAuthority = true;
+        s.playerLeavesAt = 400;
+        s.hostMessageBurstAt = 385;
+        s.check = [](Machine& host, Machine& player, Machine&) {
+            if (host.authoritiesSeen.count(player.id) == 0 || host.authoritiesSeen.count(HostPlayer) == 0 ||
+                host.framesRun != Frames)
+            {
+                std::printf("  FAIL: the player didn't write the host's input and then the host\n");
+                return false;
+            }
+            std::printf("  the host put %u messages into a frame again\n", host.session->GetInfo().messagesResent);
+            return true;
+        };
+        scenarios.push_back(s);
+    }
+
     // Lockstep with the automatic lag: on loopback the delay fits in the
     // spare time of every frame, so nobody needs any lag.
     {
@@ -1064,13 +1243,25 @@ int main()
         Scenario s;
         s.port = 47133;
         Session host([](const Event&) {});
-        LocalInfo info{"Host", "v1", "rsp", "gfx", "Golf Plugin", ""};
+        LocalInfo info{"Host", "v1", "rsp", "gfx", "Golf Plugin", "execution plugin can't save its state for rollback"};
         std::string error;
         bool refused = host.Host(s.port, info, "Test Game", "ABC", "", error) &&
                        !host.SetMode(Mode::Rollback, HostPlayer, error) && !error.empty() &&
                        host.GetInfo().mode == Mode::Lockstep;
         std::printf("  %s\n  %s\n", error.c_str(), refused ? "PASS" : "FAIL");
         ok = refused && ok;
+        host.Leave();
+    }
+    // and is with one that saves it
+    {
+        std::printf("=== Rollback allowed with an execution plugin that saves its state\n");
+        Session host([](const Event&) {});
+        LocalInfo info{"Host", "v1", "rsp", "gfx", "Party Plugin", ""};
+        std::string error;
+        bool allowed = host.Host(47134, info, "Test Game", "ABC", "", error) &&
+                       host.SetMode(Mode::Rollback, HostPlayer, error) && host.GetInfo().mode == Mode::Rollback;
+        std::printf("  %s\n", allowed ? "PASS" : ("FAIL: " + error).c_str());
+        ok = allowed && ok;
         host.Leave();
     }
 

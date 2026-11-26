@@ -243,9 +243,18 @@ typedef struct {
  * The core saves the machine's state at the start of frames the frontend
  * asks for (snapshot), and when a guess turns out wrong, the frontend names
  * one of those frames, the core goes back to it and re-runs the frames from
- * there to where it was, quickly and without showing or playing them. */
+ * there to where it was, quickly and without showing or playing them.
+ *
+ * Messages: an execution plugin can broadcast a message (bytes of its own
+ * format) to every machine's plugin with send_message(). The session puts
+ * it into an input frame, and at the end of that frame every machine's core
+ * hands it to its plugin (get_message), so every game applies it at the
+ * same point. */
 
-#define M64P_NETPLAY_NEW_API_VERSION 0x010400
+#define M64P_NETPLAY_NEW_API_VERSION 0x010500
+
+/* the largest message send_message() takes */
+#define M64P_NETPLAY_NEW_MAX_MESSAGE 32768
 
 /* frame_end's flags and return value */
 #define M64P_NETPLAY_NEW_RERUN        1 /* (flag) the frame was re-run after a rollback */
@@ -347,6 +356,32 @@ typedef struct {
   /* The core saved the machine's state at the start of frame (kept = 1),
    * or dropped that save (kept = 0) */
   void (*snapshot)(void* context, unsigned int frame, int kept);
+
+  /* Messages (all four may be NULL).
+   *
+   * Broadcasts a message from this machine's execution plugin, up to
+   * M64P_NETPLAY_NEW_MAX_MESSAGE bytes. Returns 0 if it can't be sent. */
+  int (*send_message)(void* context, const void* data, unsigned int size);
+
+  /* The messages to hand to the plugin at the end of a frame, in order
+   * (index 0, 1, ...). Called at the end of the frame, after get_input.
+   * Returns the message's bytes, valid until the next call, and sets *size;
+   * NULL when there are no more. The session decides which messages apply at
+   * which frame (the same everywhere): the new netplay's session applies a
+   * message some frames after the input frame that carries it, so that frame
+   * has arrived everywhere by then, also in Rollback mode. May block like
+   * get_input. */
+  const void* (*get_message)(void* context, unsigned int frame, unsigned int index, unsigned int* size);
+
+  /* Whether this machine talks to services outside the session (like a
+   * bingo site) for the execution plugin. One machine does at a time; the
+   * others' plugins only take part through messages. Asked at every frame
+   * boundary, so it can move to another machine during a game. */
+  int (*speaker)(void* context);
+
+  /* The name of the player on a port (0-3) when the game started, the same
+   * on every machine, or "" if the port has none. Valid until the game ends. */
+  const char* (*port_name)(void* context, int port);
 } m64p_netplay_new_callbacks;
 
 /* ----------------------------------------- */

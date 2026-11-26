@@ -343,10 +343,51 @@ typedef void(*ptr_Reset)(int hard);    /* when the game is reset (hard = 1 for a
  * NetplayExport() hands its settings and state to the core, which sends them to the guests (the data stays valid until
  * the next call or RomClosed). Each guest's plugin gets them with NetplayImport() before its InitiateExecution, and uses
  * them instead of its own files. The format is the plugin's own. Both return 0 on success. The plugin stays in netplay
- * mode until RomClosed (it shouldn't do anything that depends on the machine, like talking to a server). */
+ * mode until RomClosed (it shouldn't do anything that depends on the machine, like talking to a server, except as the
+ * speaker, see NetplayFrame). */
 typedef void(*ptr_NetplayStart)(int is_host);
 typedef int (*ptr_NetplayExport)(const void** data, uint32_t* size);
 typedef int (*ptr_NetplayImport)(const void* data, uint32_t size);
+/* Optional, for the new netplay (each is used when the plugin exports it):
+ *
+ * NetplayPlayers(names): right after NetplayStart, the name of the player on each of the 4 ports ("" for none), the
+ * same on every machine. The strings are valid until RomClosed.
+ *
+ * NetplayFrame(frame, final, flags): at the start of every frame, also before InitiateExecution (frame 0), and while
+ * frames are re-run after a rollback. Frames before `final` are final: their input won't change. A plugin does what
+ * reaches outside the game (sending to a server, writing files, logging) only for final frames: it waits for them, and
+ * forgets what it was going to do for frames it goes back from (NetplayLoadState). A final frame can still be run again
+ * (a rollback goes back to the newest frame the core saved before the wrong guess, which can be before `final`), but
+ * with the same input it does the same, so what it does outside the game was done already and is skipped.
+ * flags: NETPLAY_FRAME_RERUN when the frame is run again after a rollback; NETPLAY_FRAME_SPEAKER when this machine is
+ * the one that talks to services outside the session (one machine at a time, which can change during a game).
+ *
+ * NetplayMessage(data, size): a message a plugin broadcast with the core's ExecutionNetplaySendMessage, at the end of
+ * the frame the session put it into, on every machine (and again when that frame is re-run). Plugins apply what a
+ * server tells them here, rather than when it arrives, so every game applies it at the same point.
+ *
+ * Rollback: the core saves the plugin's state with each state it saves for rollback (NetplaySaveState, at the start of
+ * the frame), restores it when it goes back to that frame (NetplayLoadState, the frames after it are then run again)
+ * and drops it when it can't go back that far anymore (NetplayDropState). NetplayStateSize() is the size of the buffer
+ * the core keeps for the plugin with each saved frame (it can be 0, for a plugin that keeps its saves itself). A game
+ * with an execution plugin can only use Rollback mode if the plugin exports these four.
+ *
+ * NetplayStateHash(): optional, for the core's rollback self-test (RMG_NETPLAY_NEW_ROLLBACK_TEST): a hash of the
+ * plugin's state, which must be the same at the end of a frame run again as at the end of its first run. */
+#define NETPLAY_FRAME_RERUN   1
+#define NETPLAY_FRAME_SPEAKER 2
+typedef void(*ptr_NetplayPlayers)(const char* const* names);
+typedef void(*ptr_NetplayFrame)(uint32_t frame, uint32_t final_frames, int flags);
+typedef void(*ptr_NetplayMessage)(const void* data, uint32_t size);
+typedef uint32_t(*ptr_NetplayStateSize)(void);
+typedef void(*ptr_NetplaySaveState)(uint32_t frame, void* data);
+typedef void(*ptr_NetplayLoadState)(uint32_t frame, const void* data);
+typedef void(*ptr_NetplayDropState)(uint32_t frame);
+typedef uint64_t(*ptr_NetplayStateHash)(void);
+/* Exported by the core (find it with the core's library handle): broadcasts a message to every machine's plugin during
+ * the new netplay (see NetplayMessage), up to 32 KB. Returns 0 if it can't (no netplay game, or the message is too
+ * big). Call it from the emulation thread (any plugin callback). */
+typedef int(*ptr_ExecutionNetplaySendMessage)(const void* data, uint32_t size);
 /* Exported by the core (find it with the core's library handle): tells the cached interpreter and the dynarec that the
  * plugin changed code at the address, so they don't keep running the old instructions. The address is a virtual
  * address in KSEG0 or KSEG1 (like 0x80001234); both are invalidated. */
@@ -370,6 +411,14 @@ EXPORT void CALL Reset(int hard);
 EXPORT void CALL NetplayStart(int is_host);
 EXPORT int CALL NetplayExport(const void** data, uint32_t* size);
 EXPORT int CALL NetplayImport(const void* data, uint32_t size);
+EXPORT void CALL NetplayPlayers(const char* const* names);
+EXPORT void CALL NetplayFrame(uint32_t frame, uint32_t final_frames, int flags);
+EXPORT void CALL NetplayMessage(const void* data, uint32_t size);
+EXPORT uint32_t CALL NetplayStateSize(void);
+EXPORT void CALL NetplaySaveState(uint32_t frame, void* data);
+EXPORT void CALL NetplayLoadState(uint32_t frame, const void* data);
+EXPORT void CALL NetplayDropState(uint32_t frame);
+EXPORT uint64_t CALL NetplayStateHash(void);
 #endif
 
 #ifdef __cplusplus

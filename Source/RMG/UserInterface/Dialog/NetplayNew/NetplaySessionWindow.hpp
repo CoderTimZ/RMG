@@ -47,6 +47,13 @@ class NetplaySessionWindow : public QDialog
     // whether the session is over (the window only shows why)
     bool HasEnded(void) const;
 
+#ifdef NETPLAY_NEW_TESTS
+    // (tests) the host starts the game in this mode once this many players,
+    // the host too, have the game, giving each the next port; in Authority
+    // mode, the authority is the player who joined authority-th (0: the host)
+    void SetAutoStart(int players, int mode, int authority);
+#endif // NETPLAY_NEW_TESTS
+
     // the game stopped on this machine
     void OnGameStopped(void);
 
@@ -74,6 +81,12 @@ class NetplaySessionWindow : public QDialog
     // the host's addresses to share (the router's part is added as it's known)
     QString addressText;
     bool ended = false;
+#ifdef NETPLAY_NEW_TESTS
+    int autoStartPlayers = 0;
+    int autoStartMode = 0;
+    int autoStartAuthority = 0;
+    bool autoStarted = false;
+#endif // NETPLAY_NEW_TESTS
     bool sentHasGame = false;
     bool updatingTable = false;
 

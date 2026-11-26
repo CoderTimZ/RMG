@@ -35,6 +35,10 @@ struct CorePlugin
 // retrieves all available plugins
 std::vector<CorePlugin> CoreGetAllPlugins(void);
 
+// whether the plugin a setting names (like Core_EXECUTION_Plugin's value)
+// exports a function
+bool CorePluginHasFunction(CorePluginType type, std::string settingsValue, const char* function);
+
 // applies updated plugin settings,
 // i.e when you've changed a plugin
 bool CoreApplyPluginSettings(void);

@@ -83,8 +83,8 @@ find_package(Threads REQUIRED)
 target_link_libraries(RMG-Netplay-New PUBLIC Threads::Threads)
 
 # a loopback test of the session: a host, a player and a spectator in one
-# process (run it with RMG_NETPLAY_NEW_DROP_PERCENT=30 to drop input packets)
-option(NETPLAY_NEW_TESTS "Builds the new netplay's tests" OFF)
+# process (run it with RMG_NETPLAY_NEW_DROP_PERCENT=30 to drop input packets);
+# NETPLAY_NEW_TESTS is in the main CMakeLists.txt
 if (NETPLAY_NEW_TESTS)
     add_executable(RMG-Netplay-New-Test Tests/SessionTest.cpp)
     set_target_properties(RMG-Netplay-New-Test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

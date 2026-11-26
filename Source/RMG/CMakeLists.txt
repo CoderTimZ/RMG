@@ -37,6 +37,9 @@ endif(NETPLAY)
 if (NETPLAY_NEW)
     add_definitions(-DNETPLAY_NEW)
 endif(NETPLAY_NEW)
+if (NETPLAY_NEW_TESTS)
+    add_definitions(-DNETPLAY_NEW_TESTS)
+endif(NETPLAY_NEW_TESTS)
 
 find_package(SDL3 REQUIRED)
 

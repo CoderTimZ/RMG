@@ -3003,6 +3003,28 @@ void MainWindow::setupNetplayNew(void)
     connect(this->action_NetplayNew_JoinGame, &QAction::triggered, this, &MainWindow::on_Action_NetplayNew_JoinGame);
     connect(this->action_NetplayNew_ShowSession, &QAction::triggered, this, &MainWindow::on_Action_NetplayNew_ShowSession);
 
+#ifdef NETPLAY_NEW_TESTS
+    // For tests with several copies of RMG on one computer (built with NETPLAY_NEW_TESTS):
+    //   RMG_NETPLAY_NEW_AUTO=host or join, RMG_NETPLAY_NEW_AUTO_NAME (nickname), RMG_NETPLAY_NEW_AUTO_PORT (6420),
+    //   join: RMG_NETPLAY_NEW_AUTO_ADDRESS (127.0.0.1),
+    //   host: RMG_NETPLAY_NEW_AUTO_ROM (the ROM file, which must be in the ROM browser),
+    //         RMG_NETPLAY_NEW_AUTO_PLAYERS (start once this many players, the host too, have the game, each on the
+    //         next port), RMG_NETPLAY_NEW_AUTO_MODE (lockstep, rollback, authority, golf) and
+    //         RMG_NETPLAY_NEW_AUTO_AUTHORITY (in Authority mode, the player who joined this many players after the host)
+    if (qEnvironmentVariableIsSet("RMG_NETPLAY_NEW_AUTO"))
+    {
+        QTimer* timer = new QTimer(this);
+        connect(timer, &QTimer::timeout, this, [this, timer]() {
+            if (this->autoNetplayNew())
+            {
+                timer->stop();
+                timer->deleteLater();
+            }
+        });
+        timer->start(500);
+    }
+#endif // NETPLAY_NEW_TESTS
+
     this->updateActions(false, false);
 }
 
@@ -3030,6 +3052,49 @@ void MainWindow::showNetplaySessionWindow(Dialog::NetplaySessionWindow* window)
     });
 
     window->show();
+
+#ifdef NETPLAY_NEW_TESTS
+    // tests (see RMG_NETPLAY_NEW_AUTO): with RMG_NETPLAY_NEW_AUTO_COPIES (how many copies run) and
+    // RMG_NETPLAY_NEW_AUTO_SLOT (this one's place, from 0), each copy gets its own part of the rightmost screen, so
+    // their windows don't overlap: 2 side by side, 3 or 4 in a 2x2 grid. The game's window goes at the top of it (it
+    // keeps its top left corner when the game resizes it), and the session window below it when the copies are side
+    // by side, or minimized when they're in rows too (its log is in the output anyway).
+    if (qEnvironmentVariableIsSet("RMG_NETPLAY_NEW_AUTO") && qEnvironmentVariableIsSet("RMG_NETPLAY_NEW_AUTO_SLOT"))
+    {
+        QScreen* screen = QGuiApplication::primaryScreen();
+        for (QScreen* s : QGuiApplication::screens())
+        {
+            if (s->geometry().x() > screen->geometry().x())
+            {
+                screen = s;
+            }
+        }
+        const QRect area = screen->availableGeometry();
+        const int copies = std::max(1, qEnvironmentVariable("RMG_NETPLAY_NEW_AUTO_COPIES", "1").toInt());
+        const int slot   = std::max(0, qEnvironmentVariable("RMG_NETPLAY_NEW_AUTO_SLOT").toInt());
+        const int columns = copies >= 2 ? 2 : 1;
+        const int rows    = copies >= 3 ? 2 : 1;
+        const int cellWidth  = area.width() / columns;
+        const int cellHeight = area.height() / rows;
+        const int x = area.x() + (slot % columns) * cellWidth;
+        const int y = area.y() + ((slot / columns) % rows) * cellHeight;
+
+        if (this->isMaximized())
+        {
+            this->showNormal();
+        }
+        this->move(x, y);
+        if (rows == 1)
+        {
+            window->move(x, area.y() + area.height() - window->frameGeometry().height());
+        }
+        else
+        {
+            window->showMinimized();
+        }
+    }
+#endif // NETPLAY_NEW_TESTS
+
     this->updateActions(CoreIsEmulationRunning(), CoreIsEmulationPaused());
 }
 
@@ -3047,6 +3112,66 @@ void MainWindow::deleteNetplaySessionWindowWhenIdle(void)
     this->netplaySessionWindow = nullptr;
     this->updateActions(false, false);
 }
+
+#ifdef NETPLAY_NEW_TESTS
+bool MainWindow::autoNetplayNew(void)
+{
+    if (this->netplaySessionWindow != nullptr || CoreIsEmulationRunning())
+    {
+        return true;
+    }
+
+    const QString role    = qEnvironmentVariable("RMG_NETPLAY_NEW_AUTO");
+    const QString name    = qEnvironmentVariable("RMG_NETPLAY_NEW_AUTO_NAME", "Tester");
+    const uint16_t port   = static_cast<uint16_t>(qEnvironmentVariable("RMG_NETPLAY_NEW_AUTO_PORT", "6420").toUInt());
+    QMap<QString, CoreRomSettings> roms = this->ui_Widget_RomBrowser->GetModelData();
+    QString error;
+
+    if (role == "join")
+    {
+        Dialog::NetplaySessionWindow* window = new Dialog::NetplaySessionWindow(nullptr, roms);
+        if (!window->Join(name, qEnvironmentVariable("RMG_NETPLAY_NEW_AUTO_ADDRESS", "127.0.0.1"), port, error))
+        {
+            delete window;
+            return false;
+        }
+        this->showNetplaySessionWindow(window);
+        return true;
+    }
+
+    // the host waits for the ROM browser to have the game
+    const QString romName = QFileInfo(qEnvironmentVariable("RMG_NETPLAY_NEW_AUTO_ROM")).fileName();
+    for (auto it = roms.cbegin(); it != roms.cend(); ++it)
+    {
+        if (QFileInfo(it.key()).fileName().compare(romName, Qt::CaseInsensitive) != 0)
+        {
+            continue;
+        }
+        QString gameName = QString::fromStdString(it.value().GoodName);
+        if (gameName.isEmpty())
+        {
+            gameName = QFileInfo(it.key()).completeBaseName();
+        }
+        Dialog::NetplaySessionWindow* window = new Dialog::NetplaySessionWindow(nullptr, roms);
+        if (!window->Host(name, it.key(), gameName, QString::fromStdString(it.value().MD5).toUpper(),
+                          QString::fromStdString(it.value().InternalName).trimmed(), port, false, error))
+        {
+            delete window;
+            return false;
+        }
+        const QString mode = qEnvironmentVariable("RMG_NETPLAY_NEW_AUTO_MODE", "lockstep");
+        window->SetAutoStart(qEnvironmentVariable("RMG_NETPLAY_NEW_AUTO_PLAYERS", "2").toInt(),
+                             mode == "rollback"    ? static_cast<int>(NetplayNew::Mode::Rollback)
+                             : mode == "authority" ? static_cast<int>(NetplayNew::Mode::Authority)
+                             : mode == "golf"      ? static_cast<int>(NetplayNew::Mode::Golf)
+                                                   : static_cast<int>(NetplayNew::Mode::Lockstep),
+                             qEnvironmentVariable("RMG_NETPLAY_NEW_AUTO_AUTHORITY", "0").toInt());
+        this->showNetplaySessionWindow(window);
+        return true;
+    }
+    return false;
+}
+#endif // NETPLAY_NEW_TESTS
 
 void MainWindow::on_Action_NetplayNew_HostGame(void)
 {

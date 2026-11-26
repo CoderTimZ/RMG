@@ -13,6 +13,7 @@
 
 #include <RMG-Core/Cheats.hpp>
 #include <RMG-Core/NetplayNew.hpp>
+#include <RMG-Core/Plugins.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Version.hpp>
 #include <RMG-Netplay-New/Packet.hpp>
@@ -29,6 +30,9 @@
 #include <QStandardItemModel>
 #include <QTimer>
 #include <QVBoxLayout>
+
+#include <algorithm>
+#include <cstdio>
 
 using namespace UserInterface::Dialog;
 using namespace Utilities;
@@ -297,6 +301,14 @@ NetplayNew::LocalInfo NetplaySessionWindow::localInfo(QString nickname, QString 
     }
 
     info.rollbackProblem = CoreGetNetplayNewRollbackProblem(info.gfxPlugin);
+
+    // an execution plugin keeps state of its own, which rollback can only
+    // restore when the plugin saves it
+    if (info.rollbackProblem.empty() && !info.executionPlugin.empty() &&
+        !CorePluginHasFunction(CorePluginType::Execution, info.executionPlugin, "NetplaySaveState"))
+    {
+        info.rollbackProblem = "execution plugin can't save its state for rollback";
+    }
     return info;
 }
 
@@ -368,6 +380,15 @@ bool NetplaySessionWindow::HasEnded(void) const
 {
     return this->ended;
 }
+
+#ifdef NETPLAY_NEW_TESTS
+void NetplaySessionWindow::SetAutoStart(int players, int mode, int authority)
+{
+    this->autoStartPlayers   = players;
+    this->autoStartMode      = mode;
+    this->autoStartAuthority = authority;
+}
+#endif // NETPLAY_NEW_TESTS
 
 void NetplaySessionWindow::OnGameStopped(void)
 {
@@ -778,12 +799,55 @@ void NetplaySessionWindow::refresh(void)
     {
         this->startReasonLabel->setText(info.connected ? "Waiting for the host to start the game." : "Connecting...");
     }
+
+#ifdef NETPLAY_NEW_TESTS
+    // (tests, see SetAutoStart)
+    if (isHost && !info.playing && !this->autoStarted && this->autoStartPlayers > 0 &&
+        static_cast<int>(info.players.size()) >= this->autoStartPlayers &&
+        std::all_of(info.players.begin(), info.players.end(), [](const NetplayNew::PlayerInfo& p) { return p.hasGame; }))
+    {
+        std::vector<NetplayNew::PlayerInfo> players = info.players;
+        std::sort(players.begin(), players.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
+        for (size_t i = 0; i < players.size(); i++)
+        {
+            uint8_t ports = i < 4 ? static_cast<uint8_t>(1 << i) : 0;
+            if (players[i].ports != ports)
+            {
+                this->session->SetPorts(players[i].id, ports);
+            }
+        }
+        std::string error;
+        uint8_t authority = this->autoStartAuthority >= 0 && this->autoStartAuthority < static_cast<int>(players.size())
+                                ? players[this->autoStartAuthority].id
+                                : NetplayNew::HostPlayer;
+        NetplayNew::SessionInfo now = this->session->GetInfo();
+        if (now.mode != static_cast<NetplayNew::Mode>(this->autoStartMode) || now.authorityPlayer != authority)
+        {
+            this->session->SetMode(static_cast<NetplayNew::Mode>(this->autoStartMode), authority, error);
+        }
+        if (this->session->CanStart(error))
+        {
+            this->autoStarted = true;
+            this->log("Starting the game for the test");
+            this->on_startButton_clicked();
+        }
+    }
+#endif // NETPLAY_NEW_TESTS
 }
 
 void NetplaySessionWindow::log(QString message)
 {
     this->logList->addItem(QDateTime::currentDateTime().toString("HH:mm:ss") + "  " + message);
     this->logList->scrollToBottom();
+
+#ifdef NETPLAY_NEW_TESTS
+    // (tests, see SetAutoStart: the log is read from the output)
+    if (qEnvironmentVariableIsSet("RMG_NETPLAY_NEW_AUTO"))
+    {
+        std::printf("[NETPLAY] %s\n", message.toUtf8().constData());
+        std::fflush(stdout);
+    }
+#endif // NETPLAY_NEW_TESTS
 }
 
 QString NetplaySessionWindow::findRom(QString md5)

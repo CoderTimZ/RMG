@@ -70,7 +70,15 @@ enum MessageType : uint8_t
     // guest -> host: u32 how long the guest's frames take to emulate (the 90th
     // percentile of recent frames) in microseconds, for the automatic lag
     MsgBusy,
+    // any -> host -> authority: u8 stream, u32 number, bytes data; an
+    // execution plugin's message, for the stream's authority to put into the
+    // next frame it writes (a guest sends number 0, and the host numbers it;
+    // an authority that just handed the stream over sends it back)
+    MsgMessage,
 };
+
+// the most message bytes an authority puts into one frame (more wait for the next)
+constexpr size_t MaxMessageBytesPerFrame = 32768;
 
 // frames per stream per message; with redundancy, a message carries every
 // frame the receiver hasn't acknowledged yet, up to this many
@@ -159,6 +167,10 @@ Session::Session(EventHandler handler) : handler(std::move(handler))
     this->callbacks.frame_hash      = &Session::CoreFrameHash;
     this->callbacks.rollback        = &Session::CoreRollback;
     this->callbacks.snapshot        = &Session::CoreSnapshot;
+    this->callbacks.send_message    = &Session::CoreSendPluginMessage;
+    this->callbacks.get_message     = &Session::CoreGetPluginMessage;
+    this->callbacks.speaker         = &Session::CoreSpeaker;
+    this->callbacks.port_name       = &Session::CorePortName;
     std::memset(this->portTable, 0, sizeof(this->portTable));
 }
 
@@ -538,13 +550,7 @@ bool Session::CanRollbackLocked(std::string& reason)
 {
     for (const PlayerInfo& player : this->info.players)
     {
-        // an execution plugin keeps state of its own, which rollback can't restore
-        if (!player.executionPlugin.empty())
-        {
-            reason = "Rollback isn't available with an execution plugin (" + player.name + " uses " +
-                     player.executionPlugin + "). Use Lockstep.";
-            return false;
-        }
+        // (this includes an execution plugin that can't save its state)
         if (!player.rollbackProblem.empty())
         {
             reason = "Rollback isn't available: " + player.name + "'s " + player.rollbackProblem;
@@ -700,8 +706,15 @@ bool Session::Start(const std::vector<uint8_t>& cheats, std::string& error)
             }
         }
 
+        // who plays on each port, for the execution plugin (the same everywhere)
+        std::string names[4];
+        for (int i = 0; i < 4; i++)
+        {
+            names[i] = owners[i] != NoPlayer ? this->PlayerNameLocked(owners[i]) : std::string();
+        }
+
         this->info.paused = false;
-        this->StartGameLocked(this->info.mode, owners, authorities);
+        this->StartGameLocked(this->info.mode, owners, authorities, names);
 
         PacketWriter message;
         message.U8(MsgStart).Bytes(cheats).U8(static_cast<uint8_t>(this->info.mode));
@@ -713,6 +726,10 @@ bool Session::Start(const std::vector<uint8_t>& cheats, std::string& error)
         for (auto& [player, authority] : authorities)
         {
             message.U8(player).U8(authority);
+        }
+        for (int i = 0; i < 4; i++)
+        {
+            message.String(names[i]);
         }
         this->BroadcastLocked(message.Data());
         this->BroadcastLocked(this->BuildStateLocked());
@@ -1118,6 +1135,42 @@ void Session::HandleHostMessage(PeerId peer, uint8_t type, PacketReader& reader,
         break;
     }
 
+    case MsgMessage:
+    {
+        uint8_t streamPlayer      = reader.U8();
+        uint32_t seq              = reader.U32();
+        std::vector<uint8_t> data = reader.Bytes();
+        if (!this->gameRunning || data.size() > M64P_NETPLAY_NEW_MAX_MESSAGE)
+        {
+            break;
+        }
+        Stream* stream = nullptr;
+        if (seq == 0)
+        {
+            // a guest's plugin sent it: the host numbers it, and keeps it until
+            // it's in a final frame
+            stream = this->MessageStreamLocked();
+            if (stream == nullptr)
+            {
+                break;
+            }
+            seq = ++this->messageSeq;
+            this->inflightMessages[seq] = {stream->player, data};
+        }
+        else
+        {
+            // an authority that handed the stream over sent it back
+            auto it = this->streams.find(streamPlayer);
+            if (it == this->streams.end())
+            {
+                break;
+            }
+            stream = &it->second;
+        }
+        this->RouteMessageLocked(*stream, {seq, std::move(data)});
+        break;
+    }
+
     case MsgBusy:
     {
         uint32_t busyUs = reader.U32();
@@ -1229,8 +1282,13 @@ void Session::HandleGuestMessage(uint8_t type, PacketReader& reader, std::vector
             uint8_t player = reader.U8();
             authorities[player] = reader.U8();
         }
+        std::string names[4];
+        for (int i = 0; i < 4; i++)
+        {
+            names[i] = reader.String();
+        }
         this->info.paused = false;
-        this->StartGameLocked(mode, owners, authorities);
+        this->StartGameLocked(mode, owners, authorities, names);
         events.push_back({EventType::GameStarting, "", cheats});
         break;
     }
@@ -1319,6 +1377,19 @@ void Session::HandleGuestMessage(uint8_t type, PacketReader& reader, std::vector
         break;
     }
 
+    case MsgMessage:
+    {
+        uint8_t streamPlayer      = reader.U8();
+        uint32_t seq              = reader.U32();
+        std::vector<uint8_t> data = reader.Bytes();
+        auto it = this->streams.find(streamPlayer);
+        if (this->gameRunning && it != this->streams.end() && seq != 0)
+        {
+            this->RouteMessageLocked(it->second, {seq, std::move(data)});
+        }
+        break;
+    }
+
     case MsgDesync:
     {
         uint8_t player = reader.U8();
@@ -1392,6 +1463,12 @@ void Session::HandleFrames(PeerId peer, PacketReader& reader)
                     values[k] = reader.U32();
                     events[k] = reader.U8();
                 }
+                std::vector<Stream::Message> messages(reader.U8());
+                for (Stream::Message& m : messages)
+                {
+                    m.seq  = reader.U32();
+                    m.data = reader.Bytes();
+                }
 
                 // Frames never change once written, so a frame is taken from
                 // whoever has it. Only frames this machine writes itself, and
@@ -1407,7 +1484,7 @@ void Session::HandleFrames(PeerId peer, PacketReader& reader)
                 }
 
                 uint32_t before = stream.count;
-                this->SetFrameLocked(stream, f, values, events);
+                this->SetFrameLocked(stream, f, values, events, std::move(messages));
                 newFrames = newFrames || stream.count != before;
             }
         }
@@ -1757,7 +1834,8 @@ void Session::SendToPlayerLocked(uint8_t player, Channel channel, const std::vec
     }
 }
 
-void Session::StartGameLocked(Mode mode, const uint8_t owners[4], const std::map<uint8_t, uint8_t>& authorities)
+void Session::StartGameLocked(Mode mode, const uint8_t owners[4], const std::map<uint8_t, uint8_t>& authorities,
+                              const std::string names[4])
 {
     this->gameRunning    = true;
     this->gameNumber++;
@@ -1783,6 +1861,14 @@ void Session::StartGameLocked(Mode mode, const uint8_t owners[4], const std::map
     this->lead = 0.0;
     this->info.rollback = RollbackStats();
     std::memset(this->portTable, 0, sizeof(this->portTable));
+    for (int i = 0; i < 4; i++)
+    {
+        this->portNames[i] = names[i];
+    }
+    this->messageSeq = 0;
+    this->info.messagesResent = 0;
+    this->inflightMessages.clear();
+    this->messageBuffer.clear();
 
     for (int i = 0; i < 4; i++)
     {
@@ -1815,7 +1901,9 @@ void Session::EndGameLocked(void)
 std::vector<uint8_t> Session::BuildFramesLocked(uint8_t recipient)
 {
     // message: u8 MsgFrames,
-    //          u8 streams, streams * (u8 player, u32 first, u16 count, count * ports * (u32 buttons, u8 event)),
+    //          u8 streams, streams * (u8 player, u32 first, u16 count,
+    //                                 count * (ports * (u32 buttons, u8 event),
+    //                                          u8 messages, messages * (u32 number, bytes data))),
     //          u8 acks, acks * (u8 player, u32 frames received)
     //
     // Both ends of a link send each other whatever frames the other doesn't
@@ -1847,6 +1935,17 @@ std::vector<uint8_t> Session::BuildFramesLocked(uint8_t recipient)
             {
                 message.U32(stream.frames[static_cast<size_t>(f) * width + k]);
                 message.U8(stream.events[static_cast<size_t>(f) * width + k]);
+            }
+            auto messages = stream.messages.find(f);
+            if (messages == stream.messages.end())
+            {
+                message.U8(0);
+                continue;
+            }
+            message.U8(static_cast<uint8_t>(messages->second.size()));
+            for (const Stream::Message& m : messages->second)
+            {
+                message.U32(m.seq).Bytes(m.data);
             }
         }
         streamCount++;
@@ -1955,7 +2054,7 @@ uint32_t Session::LagLocked(const Stream& stream)
 }
 
 void Session::SetFrameLocked(Stream& stream, uint32_t frame, const std::vector<uint32_t>& values,
-                             const std::vector<uint8_t>& events)
+                             const std::vector<uint8_t>& events, std::vector<Stream::Message> messages)
 {
     size_t width = stream.ports.size();
     if (stream.known.size() <= frame)
@@ -1970,6 +2069,10 @@ void Session::SetFrameLocked(Stream& stream, uint32_t frame, const std::vector<u
         stream.events[static_cast<size_t>(frame) * width + k] = events[k];
     }
     stream.known[frame] = 1;
+    if (!messages.empty())
+    {
+        stream.messages[frame] = std::move(messages);
+    }
 
     uint32_t before = stream.count;
     while (stream.count < stream.known.size() && stream.known[stream.count])
@@ -1980,6 +2083,10 @@ void Session::SetFrameLocked(Stream& stream, uint32_t frame, const std::vector<u
     if (stream.count != before && !stream.used.empty())
     {
         this->CheckUsedLocked(stream, before, stream.count);
+    }
+    if (stream.count != before && !this->inflightMessages.empty())
+    {
+        this->ForgetFinalMessagesLocked(stream, before, stream.count);
     }
 }
 
@@ -2006,7 +2113,17 @@ void Session::WriteAuthoredLocked(Stream& stream, int64_t throughFrame)
                 stream.pendingEvents[k].pop_front();
             }
         }
-        this->SetFrameLocked(stream, static_cast<uint32_t>(f), stream.latest, events);
+        // the messages waiting, as many as fit (at least one)
+        std::vector<Stream::Message> messages;
+        size_t bytes = 0;
+        while (!stream.pendingMessages.empty() && messages.size() < 255 &&
+               (messages.empty() || bytes + stream.pendingMessages.front().data.size() <= MaxMessageBytesPerFrame))
+        {
+            bytes += stream.pendingMessages.front().data.size();
+            messages.push_back(std::move(stream.pendingMessages.front()));
+            stream.pendingMessages.pop_front();
+        }
+        this->SetFrameLocked(stream, static_cast<uint32_t>(f), stream.latest, events, std::move(messages));
     }
     stream.nextWrite = static_cast<uint32_t>(throughFrame + 1);
 }
@@ -2046,6 +2163,12 @@ void Session::DelegateLocked(Stream& stream, uint8_t to)
             this->RouteEventLocked(stream, k, event);
         }
     }
+    std::deque<Stream::Message> messages;
+    messages.swap(stream.pendingMessages);
+    for (Stream::Message& message : messages)
+    {
+        this->RouteMessageLocked(stream, std::move(message));
+    }
 }
 
 void Session::RouteEventLocked(Stream& stream, size_t port, uint8_t event)
@@ -2067,6 +2190,109 @@ void Session::RouteEventLocked(Stream& stream, size_t port, uint8_t event)
     else if (this->hostPeer != InvalidPeer)
     {
         this->transport.Send(this->hostPeer, Channel::Control, message.Data());
+    }
+}
+
+Session::Stream* Session::MessageStreamLocked(void)
+{
+    // The host's own stream, so the messages it sends usually go straight
+    // into its own frames. A host who plays no port uses the first stream.
+    // Every machine has the same streams, so it's the same one everywhere.
+    auto it = this->streams.find(HostPlayer);
+    if (it != this->streams.end())
+    {
+        return &it->second;
+    }
+    return this->streams.empty() ? nullptr : &this->streams.begin()->second;
+}
+
+void Session::RouteMessageLocked(Stream& stream, Stream::Message message)
+{
+    // like an event: the authority writes it into its next frame; anyone
+    // else passes it on, guests through the host
+    if (stream.authority == this->info.myId)
+    {
+        stream.pendingMessages.push_back(std::move(message));
+        return;
+    }
+
+    PacketWriter packet;
+    packet.U8(MsgMessage).U8(stream.player).U32(message.seq).Bytes(message.data);
+    if (this->info.isHost)
+    {
+        this->SendToPlayerLocked(stream.authority, Channel::Control, packet.Data());
+    }
+    else if (this->hostPeer != InvalidPeer)
+    {
+        this->transport.Send(this->hostPeer, Channel::Control, packet.Data());
+    }
+}
+
+void Session::ForgetFinalMessagesLocked(Stream& stream, uint32_t from, uint32_t to)
+{
+    // (host) messages in frames that became final can't get lost anymore
+    for (auto it = stream.messages.lower_bound(from); it != stream.messages.end() && it->first < to; ++it)
+    {
+        for (const Stream::Message& message : it->second)
+        {
+            this->inflightMessages.erase(message.seq);
+        }
+    }
+}
+
+std::vector<Session::Stream::Message> Session::MessagesOfLocked(const Stream& stream, uint32_t frame)
+{
+    std::vector<Stream::Message> result;
+    auto it = stream.messages.find(frame);
+    if (it == stream.messages.end())
+    {
+        return result;
+    }
+    for (const Stream::Message& message : it->second)
+    {
+        bool earlier = false;
+        for (auto e = stream.messages.begin(); e != it && !earlier; ++e)
+        {
+            for (const Stream::Message& other : e->second)
+            {
+                earlier = earlier || other.seq == message.seq;
+            }
+        }
+        if (!earlier)
+        {
+            result.push_back(message);
+        }
+    }
+    return result;
+}
+
+void Session::RequeueMessagesLocked(Stream& stream)
+{
+    // (host) it took the stream over from a player who left: the messages it
+    // sent them that aren't in any frame it has may have gone with them
+    if (!this->info.isHost || stream.authority != this->info.myId)
+    {
+        return;
+    }
+    std::set<uint32_t> have;
+    for (auto& [frame, messages] : stream.messages)
+    {
+        for (const Stream::Message& message : messages)
+        {
+            have.insert(message.seq);
+        }
+    }
+    for (const Stream::Message& message : stream.pendingMessages)
+    {
+        have.insert(message.seq);
+    }
+    for (auto& [seq, inflight] : this->inflightMessages)
+    {
+        if (inflight.stream == stream.player && have.count(seq) == 0)
+        {
+            stream.pendingMessages.push_back({seq, inflight.data});
+            this->info.messagesResent++;
+        }
     }
 }
 
@@ -2134,10 +2360,14 @@ void Session::TakeOverLocked(Stream& stream, uint8_t player)
         stream.frames.resize(static_cast<size_t>(start) * width);
         stream.events.resize(static_cast<size_t>(start) * width);
         stream.known.resize(start);
+        stream.messages.erase(stream.messages.lower_bound(start), stream.messages.end());
     }
     stream.authority = HostPlayer;
     stream.nextWrite = start;
     this->NoteHandoffLocked(stream, HostPlayer, start);
+
+    // the messages sent to them that no frame here has go into the host's next frames
+    this->RequeueMessagesLocked(stream);
 
     PacketWriter message;
     message.U8(MsgDelegate).U8(stream.player).U8(HostPlayer).U32(start);
@@ -2267,6 +2497,26 @@ void Session::CoreFrameHash(void* context, unsigned int frame, uint64_t hash, un
 int Session::CoreRollback(void* context, unsigned int nextFrame, unsigned int* confirmed, int* snapshot)
 {
     return static_cast<Session*>(context)->Rollback(nextFrame, confirmed, snapshot);
+}
+
+int Session::CoreSendPluginMessage(void* context, const void* data, unsigned int size)
+{
+    return static_cast<Session*>(context)->SendPluginMessage(data, size);
+}
+
+const void* Session::CoreGetPluginMessage(void* context, unsigned int frame, unsigned int index, unsigned int* size)
+{
+    return static_cast<Session*>(context)->GetPluginMessage(frame, index, size);
+}
+
+int Session::CoreSpeaker(void* context)
+{
+    return static_cast<Session*>(context)->Speaker();
+}
+
+const char* Session::CorePortName(void* context, int port)
+{
+    return static_cast<Session*>(context)->PortName(port);
 }
 
 void Session::CoreSnapshot(void* context, unsigned int frame, int kept)
@@ -2587,12 +2837,38 @@ int Session::GetInput(unsigned int frame, int port, m64p_netplay_new_input* inpu
         return 1;
     };
 
+    bool ended = false;
+    const Stream::Used* used = this->FetchLocked(lock, stream, frame, &ended);
+    if (ended)
+    {
+        return 0;
+    }
+    if (used != nullptr)
+    {
+        return answer(used->values, used->events);
+    }
+
+    std::vector<uint32_t> values(stream.ports.size());
+    std::vector<uint8_t> events(stream.ports.size());
+    for (size_t i = 0; i < stream.ports.size(); i++)
+    {
+        values[i] = stream.frames[static_cast<size_t>(frame) * stream.ports.size() + i];
+        events[i] = stream.events[static_cast<size_t>(frame) * stream.ports.size() + i];
+    }
+    return answer(values, events);
+}
+
+Session::Stream::Used* Session::FetchLocked(std::unique_lock<std::mutex>& lock, Stream& stream, uint32_t frame,
+                                                  bool* ended)
+{
+    *ended = false;
+
     // a frame this machine already used and that isn't final yet: the same
     // input for every read during this run of the frame
     auto used = stream.used.find(frame);
     if (used != stream.used.end())
     {
-        return answer(used->second.values, used->second.events);
+        return &used->second;
     }
 
     // the lock is let go while waiting; if the game ended and another one
@@ -2633,7 +2909,8 @@ int Session::GetInput(unsigned int frame, int port, m64p_netplay_new_input* inpu
 
     if (!sameGame())
     {
-        return 0;
+        *ended = true;
+        return nullptr;
     }
 
     if (stream.count <= frame)
@@ -2641,17 +2918,11 @@ int Session::GetInput(unsigned int frame, int port, m64p_netplay_new_input* inpu
         Stream::Used guess = this->GuessLocked(stream, frame);
         this->info.rollback.guessedFrames++;
         auto it = stream.used.emplace(frame, std::move(guess)).first;
-        return answer(it->second.values, it->second.events);
+        return &it->second;
     }
 
-    std::vector<uint32_t> values(stream.ports.size());
-    std::vector<uint8_t> events(stream.ports.size());
-    for (size_t i = 0; i < stream.ports.size(); i++)
-    {
-        values[i] = stream.frames[static_cast<size_t>(frame) * stream.ports.size() + i];
-        events[i] = stream.events[static_cast<size_t>(frame) * stream.ports.size() + i];
-    }
-    return answer(values, events);
+    // final
+    return nullptr;
 }
 
 int Session::FrameEnd(unsigned int frame, unsigned int busyUs, unsigned int frameUs, int flags)
@@ -2801,6 +3072,11 @@ Session::Stream::Used Session::GuessLocked(const Stream& stream, uint32_t frame)
                 guess.events[k] = stream.events[static_cast<size_t>(from) * width + k];
             }
         }
+        // a frame that arrived has its messages; a guess has none
+        if (from == frame)
+        {
+            guess.messages = this->MessagesOfLocked(stream, frame);
+        }
     }
     return guess;
 }
@@ -2819,6 +3095,24 @@ void Session::CheckUsedLocked(Stream& stream, uint32_t from, uint32_t to)
             same = same && it->second.values[k] == stream.frames[static_cast<size_t>(frame) * width + k] &&
                    it->second.events[k] == stream.events[static_cast<size_t>(frame) * width + k];
         }
+        // and the same messages (a guess has none), if the plugin read them:
+        // it reads a frame's messages MessageDelayFrames later, which is
+        // after the frame is final, except on a machine that fell behind
+        bool sameMessages = true;
+        if (it->second.messagesRead)
+        {
+            std::vector<Stream::Message> messages = this->MessagesOfLocked(stream, frame);
+            sameMessages = it->second.messages.size() == messages.size();
+            for (size_t i = 0; sameMessages && i < messages.size(); i++)
+            {
+                sameMessages = it->second.messages[i].seq == messages[i].seq;
+            }
+        }
+        if (same && !sameMessages)
+        {
+            this->info.rollback.messageMisses++;
+        }
+        same = same && sameMessages;
         if (!same && (this->mismatch < 0 || frame < this->mismatch))
         {
             this->mismatch = frame;
@@ -2960,4 +3254,94 @@ void Session::Snapshot(unsigned int frame, int kept)
     {
         this->snapshots.erase(frame);
     }
+}
+
+//
+// Execution plugin messages
+//
+
+int Session::SendPluginMessage(const void* data, unsigned int size)
+{
+    std::lock_guard<std::mutex> lock(this->mutex);
+    if (this->ended || !this->gameRunning || size > M64P_NETPLAY_NEW_MAX_MESSAGE || (data == nullptr && size > 0))
+    {
+        return 0;
+    }
+    const uint8_t* bytes = static_cast<const uint8_t*>(data);
+    std::vector<uint8_t> message(bytes, bytes + size);
+
+    if (!this->info.isHost)
+    {
+        // the host numbers it and passes it on
+        if (this->hostPeer == InvalidPeer)
+        {
+            return 0;
+        }
+        PacketWriter packet;
+        packet.U8(MsgMessage).U8(NoPlayer).U32(0).Bytes(message);
+        this->transport.Send(this->hostPeer, Channel::Control, packet.Data());
+        return 1;
+    }
+
+    Stream* stream = this->MessageStreamLocked();
+    if (stream == nullptr)
+    {
+        return 0;
+    }
+    uint32_t seq = ++this->messageSeq;
+    this->inflightMessages[seq] = {stream->player, message};
+    this->RouteMessageLocked(*stream, {seq, std::move(message)});
+    return 1;
+}
+
+const void* Session::GetPluginMessage(unsigned int frame, unsigned int index, unsigned int* size)
+{
+    std::unique_lock<std::mutex> lock(this->mutex);
+    *size = 0;
+
+    Stream* stream = this->MessageStreamLocked();
+    if (stream == nullptr || !this->gameRunning || frame < MessageDelayFrames)
+    {
+        return nullptr;
+    }
+
+    // the messages the frame MessageDelayFrames back carries, waited for like
+    // its input (it has arrived by now, except on a machine that fell behind)
+    uint32_t carrier = frame - MessageDelayFrames;
+    bool ended = false;
+    Stream::Used* used = this->FetchLocked(lock, *stream, carrier, &ended);
+    if (ended)
+    {
+        return nullptr;
+    }
+    if (used != nullptr)
+    {
+        used->messagesRead = true;
+    }
+
+    std::vector<Stream::Message> messages = used != nullptr ? used->messages : this->MessagesOfLocked(*stream, carrier);
+    if (index >= messages.size())
+    {
+        return nullptr;
+    }
+
+    // a copy: frames that aren't final can be dropped (see TakeOverLocked)
+    this->messageBuffer = messages[index].data;
+    *size = static_cast<unsigned int>(this->messageBuffer.size());
+    static const uint8_t empty = 0;
+    return this->messageBuffer.empty() ? &empty : this->messageBuffer.data();
+}
+
+int Session::Speaker(void)
+{
+    // the host talks to the outside for everyone (a session without its host
+    // is over, so this doesn't change during a game yet)
+    std::lock_guard<std::mutex> lock(this->mutex);
+    return this->gameRunning && this->info.isHost ? 1 : 0;
+}
+
+const char* Session::PortName(int port)
+{
+    std::lock_guard<std::mutex> lock(this->mutex);
+    return (port >= 0 && port < 4) ? this->portNames[port].c_str() : "";
 }

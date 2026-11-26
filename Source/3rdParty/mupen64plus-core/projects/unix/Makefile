@@ -660,6 +660,11 @@ endif
 SOURCE += $(SRCDIR)/main/netplay_new.c
 
 # netplay
+# the new netplay's hooks for testing with several copies of RMG
+ifeq ($(NETPLAY_NEW_TESTS), 1)
+CFLAGS += -DNETPLAY_NEW_TESTS
+endif
+
 ifeq ($(NETPLAY), 1)
 CFLAGS += -DM64P_NETPLAY
 SOURCE += $(SRCDIR)/main/netplay.c

@@ -32,7 +32,7 @@
 namespace NetplayNew
 {
 // bump whenever messages change; machines with different versions can't play together
-constexpr uint32_t ProtocolVersion = 6;
+constexpr uint32_t ProtocolVersion = 7;
 constexpr uint16_t DefaultPort     = 6420;
 // players and spectators, including the host
 constexpr int MaxPlayers = 8;
@@ -69,6 +69,11 @@ constexpr uint32_t RollbackWindow = 8;
 // by guessing instead of by lag (3 frames: 50 ms). Rollbacks this short
 // are hard to see; the rest is lag, as in Lockstep.
 constexpr uint32_t RollbackHide = 3;
+// Execution plugin messages apply this many frames after the input frame
+// that carries them. That's more than the Rollback window, so by the time a
+// machine runs the frame a message applies at, the frame carrying it has
+// arrived (nobody guesses that far ahead): a message never makes a guess wrong.
+constexpr uint32_t MessageDelayFrames = RollbackWindow + 2;
 
 // Games that are best played in golf mode, and which buttons count as
 // "starting to play" in them (the rest, like looking around, don't).
@@ -106,6 +111,9 @@ struct RollbackStats
     uint64_t framesRerun = 0;
     // the most frames re-run at once
     uint32_t deepest = 0;
+    // guesses that were wrong only about execution plugin messages (none are
+    // expected: see MessageDelayFrames)
+    uint64_t messageMisses = 0;
 };
 
 struct SessionInfo
@@ -153,6 +161,11 @@ struct SessionInfo
 
     // during a game, on this machine (Rollback mode)
     RollbackStats rollback;
+
+    // during a game, on the host: execution plugin messages it put into a
+    // frame again because the authority it sent them to left without
+    // writing them
+    uint32_t messagesResent = 0;
 
     const PlayerInfo* Find(uint8_t id) const
     {
@@ -322,6 +335,16 @@ class Session
         // when this machine is the authority: events (per port) waiting for
         // the next frame it writes; each goes into exactly one frame
         std::vector<std::deque<uint8_t>> pendingEvents;
+        // the execution plugins' messages in each frame (only frames that
+        // have some), and when this machine is the authority, the ones
+        // waiting for the next frame it writes. The host numbers them.
+        struct Message
+        {
+            uint32_t seq = 0;
+            std::vector<uint8_t> data;
+        };
+        std::map<uint32_t, std::vector<Message>> messages;
+        std::deque<Message> pendingMessages;
         // host: when it last asked the authority to hand this stream over
         uint64_t lastRequest = 0;
         // Rollback: the input this machine used for frames that weren't
@@ -331,6 +354,11 @@ class Session
         {
             std::vector<uint32_t> values;
             std::vector<uint8_t> events;
+            // the messages delivered with it (copies), and whether the plugin
+            // read them (see GetPluginMessage): a guess made for the input
+            // alone is right if its input is
+            std::vector<Message> messages;
+            bool messagesRead = false;
         };
         std::map<uint32_t, Used> used;
     };
@@ -418,6 +446,21 @@ class Session
     std::map<uint8_t, RemoteFrame> remoteFrames;
     double lead = 0.0;
 
+    // messages: who played on each port when the game started; on the host,
+    // the last number given to a message and the messages that aren't in a
+    // final frame yet (by number: the stream and the data), which it puts
+    // into a frame again if the authority it sent them to leaves
+    std::string portNames[4];
+    uint32_t messageSeq = 0;
+    struct InflightMessage
+    {
+        uint8_t stream;
+        std::vector<uint8_t> data;
+    };
+    std::map<uint32_t, InflightMessage> inflightMessages;
+    // the message get_message returned last
+    std::vector<uint8_t> messageBuffer;
+
     // desync detection: this machine's hashes, and on the host everyone's
     // hashes that it can't compare yet (player -> frame -> hash)
     std::map<uint32_t, uint64_t> myHashes;
@@ -446,7 +489,8 @@ class Session
     std::vector<uint8_t> BuildStateLocked(void);
     void BroadcastLocked(const std::vector<uint8_t>& message, uint8_t exceptPlayer = NoPlayer);
     void SendToPlayerLocked(uint8_t player, Channel channel, const std::vector<uint8_t>& message);
-    void StartGameLocked(Mode mode, const uint8_t owners[4], const std::map<uint8_t, uint8_t>& authorities);
+    void StartGameLocked(Mode mode, const uint8_t owners[4], const std::map<uint8_t, uint8_t>& authorities,
+                         const std::string names[4]);
     void EndGameLocked(void);
     std::vector<uint8_t> BuildFramesLocked(uint8_t recipient);
     void SendFramesLocked(void);
@@ -458,8 +502,19 @@ class Session
     uint32_t LagLocked(const Stream& stream);
     void AdjustLagLocked(uint64_t now);
     int64_t BusyLocked(void);
-    void SetFrameLocked(Stream& stream, uint32_t frame, const std::vector<uint32_t>& values, const std::vector<uint8_t>& events);
+    void SetFrameLocked(Stream& stream, uint32_t frame, const std::vector<uint32_t>& values, const std::vector<uint8_t>& events,
+                        std::vector<Stream::Message> messages = {});
     void RouteEventLocked(Stream& stream, size_t port, uint8_t event);
+    // messages: the stream they go into (the host's, or the first if the
+    // host plays no port), and passing one on to its authority
+    Stream* MessageStreamLocked(void);
+    void RouteMessageLocked(Stream& stream, Stream::Message message);
+    void ForgetFinalMessagesLocked(Stream& stream, uint32_t from, uint32_t to);
+    // the messages a frame carries, without any whose number an earlier frame
+    // carries already (a message put into a frame again after its authority
+    // left can turn up twice); the same on every machine
+    std::vector<Stream::Message> MessagesOfLocked(const Stream& stream, uint32_t frame);
+    void RequeueMessagesLocked(Stream& stream);
     void WriteAuthoredLocked(Stream& stream, int64_t throughFrame);
     void DelegateLocked(Stream& stream, uint8_t to);
     void ApplyDelegateLocked(Stream& stream, uint8_t to, uint32_t from);
@@ -478,6 +533,11 @@ class Session
     double OneWayMsLocked(uint8_t a, uint8_t b);
     bool AheadLocked(uint32_t frame);
 
+    // waits for a frame of a stream (or guesses it in Rollback mode); returns
+    // the frame's view while it isn't final (nullptr once it is), or sets
+    // *ended if the game ended
+    Stream::Used* FetchLocked(std::unique_lock<std::mutex>& lock, Stream& stream, uint32_t frame, bool* ended);
+
     // core callbacks (emulation thread)
     static int CoreSync(void* context, m64p_netplay_new_sync kind, void* data, unsigned int size);
     static int CoreConfigurePorts(void* context, const m64p_netplay_new_port local[4], m64p_netplay_new_port ports[4]);
@@ -487,6 +547,10 @@ class Session
     static void CoreFrameHash(void* context, unsigned int frame, uint64_t hash, unsigned int takenIn);
     static int CoreRollback(void* context, unsigned int nextFrame, unsigned int* confirmed, int* snapshot);
     static void CoreSnapshot(void* context, unsigned int frame, int kept);
+    static int CoreSendPluginMessage(void* context, const void* data, unsigned int size);
+    static const void* CoreGetPluginMessage(void* context, unsigned int frame, unsigned int index, unsigned int* size);
+    static int CoreSpeaker(void* context);
+    static const char* CorePortName(void* context, int port);
 
     int Sync(m64p_netplay_new_sync kind, void* data, unsigned int size);
     int ConfigurePorts(const m64p_netplay_new_port local[4], m64p_netplay_new_port ports[4]);
@@ -496,6 +560,10 @@ class Session
     void FrameHash(unsigned int frame, uint64_t hash, unsigned int takenIn);
     int Rollback(unsigned int nextFrame, unsigned int* confirmed, int* snapshot);
     void Snapshot(unsigned int frame, int kept);
+    int SendPluginMessage(const void* data, unsigned int size);
+    const void* GetPluginMessage(unsigned int frame, unsigned int index, unsigned int* size);
+    int Speaker(void);
+    const char* PortName(int port);
 };
 } // namespace NetplayNew
 

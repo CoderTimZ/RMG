@@ -724,6 +724,25 @@ static m64p_error plugin_connect_execution(m64p_dynlib_handle plugin_handle)
             execution.netplayExport = NULL;
         if (!GET_FUNC(ptr_NetplayImport, execution.netplayImport, "NetplayImport"))
             execution.netplayImport = NULL;
+        if (!GET_FUNC(ptr_NetplayPlayers, execution.netplayPlayers, "NetplayPlayers"))
+            execution.netplayPlayers = NULL;
+        if (!GET_FUNC(ptr_NetplayFrame, execution.netplayFrame, "NetplayFrame"))
+            execution.netplayFrame = NULL;
+        if (!GET_FUNC(ptr_NetplayMessage, execution.netplayMessage, "NetplayMessage"))
+            execution.netplayMessage = NULL;
+        if (!GET_FUNC(ptr_NetplayStateSize, execution.netplayStateSize, "NetplayStateSize") ||
+            !GET_FUNC(ptr_NetplaySaveState, execution.netplaySaveState, "NetplaySaveState") ||
+            !GET_FUNC(ptr_NetplayLoadState, execution.netplayLoadState, "NetplayLoadState") ||
+            !GET_FUNC(ptr_NetplayDropState, execution.netplayDropState, "NetplayDropState"))
+        {
+            /* all four or none */
+            execution.netplayStateSize = NULL;
+            execution.netplaySaveState = NULL;
+            execution.netplayLoadState = NULL;
+            execution.netplayDropState = NULL;
+        }
+        if (!GET_FUNC(ptr_NetplayStateHash, execution.netplayStateHash, "NetplayStateHash"))
+            execution.netplayStateHash = NULL;
 
         /* check the version info */
         (*execution.getVersion)(&PluginType, &PluginVersion, &APIVersion, NULL, NULL);
@@ -996,4 +1015,55 @@ void execution_netplay_import(const void* data, uint32_t size)
         return;
     if (execution.netplayImport(data, size) != 0)
         DebugMessage(M64MSG_WARNING, "The execution plugin couldn't import the host's settings for netplay");
+}
+
+void execution_netplay_players(const char* const names[4])
+{
+    if (l_ExecutionAttached && execution.netplayPlayers != NULL)
+        execution.netplayPlayers(names);
+}
+
+void execution_netplay_frame(uint32_t frame, uint32_t final_frames, int flags)
+{
+    if (l_ExecutionAttached && execution.netplayFrame != NULL)
+        execution.netplayFrame(frame, final_frames, flags);
+}
+
+void execution_netplay_message(const void* data, uint32_t size)
+{
+    if (l_ExecutionAttached && execution.netplayMessage != NULL)
+        execution.netplayMessage(data, size);
+}
+
+int execution_netplay_can_roll_back(void)
+{
+    return !l_ExecutionAttached || execution.netplaySaveState != NULL;
+}
+
+uint32_t execution_netplay_state_size(void)
+{
+    return (l_ExecutionAttached && execution.netplayStateSize != NULL) ? execution.netplayStateSize() : 0;
+}
+
+void execution_netplay_save_state(uint32_t frame, void* data)
+{
+    if (l_ExecutionAttached && execution.netplaySaveState != NULL)
+        execution.netplaySaveState(frame, data);
+}
+
+void execution_netplay_load_state(uint32_t frame, const void* data)
+{
+    if (l_ExecutionAttached && execution.netplayLoadState != NULL)
+        execution.netplayLoadState(frame, data);
+}
+
+void execution_netplay_drop_state(uint32_t frame)
+{
+    if (l_ExecutionAttached && execution.netplayDropState != NULL)
+        execution.netplayDropState(frame);
+}
+
+uint64_t execution_netplay_state_hash(void)
+{
+    return (l_ExecutionAttached && execution.netplayStateHash != NULL) ? execution.netplayStateHash() : 0;
 }

@@ -134,6 +134,10 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void setupNetplayNew(void);
     void showNetplaySessionWindow(Dialog::NetplaySessionWindow* window);
     void deleteNetplaySessionWindowWhenIdle(void);
+#ifdef NETPLAY_NEW_TESTS
+    // (tests) hosts or joins a session as RMG_NETPLAY_NEW_AUTO says; returns false to try again later
+    bool autoNetplayNew(void);
+#endif // NETPLAY_NEW_TESTS
 #endif // NETPLAY_NEW
 
     void closeEvent(QCloseEvent *) Q_DECL_OVERRIDE;
