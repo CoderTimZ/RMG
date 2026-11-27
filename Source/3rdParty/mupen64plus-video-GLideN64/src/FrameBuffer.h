@@ -206,6 +206,7 @@ private:
 		u32 vi_origin;
 		u32 vi_minhpass;
 		u32 vi_maxhpass;
+		bool vi_interlaced;
 		bool vi_lowerfield;
 		bool vi_fsaa;
 		bool vi_divot;

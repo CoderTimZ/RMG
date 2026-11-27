@@ -1252,6 +1252,7 @@ bool FrameBufferList::RdpUpdate::update(RdpUpdateResult & _result)
 	_result.vi_minhpass = h_start_clamped ? 0 : 8;
 	_result.vi_maxhpass = hres_clamped ? 0 : 7;
 	_result.vi_width = _SHIFTR(*REG.VI_WIDTH, 0, 12);
+	_result.vi_interlaced = validinterlace;
 	_result.vi_lowerfield = lowerfield;
 	_result.vi_origin = _SHIFTR(*REG.VI_ORIGIN, 0, 24);
 	_result.vi_fsaa = (*REG.VI_STATUS & 512) == 0;
@@ -1524,7 +1525,9 @@ void FrameBufferList::renderBuffer()
 	if (!rdpRes.vi_lowerfield) {
 		if (srcY0 > 0 && (pBuffer->m_width > 320 || pBuffer->m_height > 240))
 			--srcY0;
-		if (dstY0 > 0)
+		// Only an interlaced upper field moves up a line. A progressive picture has no lower field, so moving it
+		// would put it a line higher than VI_V_START says, as Parallel and angrylion place it.
+		if (dstY0 > 0 && rdpRes.vi_interlaced)
 			--dstY0;
 	}
 
