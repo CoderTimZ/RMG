@@ -25,7 +25,9 @@
  * core's emulation to those callbacks: it counts frames (one per VI), samples
  * the local controllers once per frame, answers controller reads with the
  * session's input, and routes the data every player has to share through
- * the frontend before emulation starts.
+ * the frontend before emulation starts. It also hashes every frame for
+ * desync detection, saves and restores the machine for rollback, and hands
+ * the execution plugin's messages over.
  *
  * This is separate from netplay.c, the server-based netplay. */
 

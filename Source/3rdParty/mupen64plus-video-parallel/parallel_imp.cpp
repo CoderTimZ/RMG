@@ -831,7 +831,9 @@ void vk_process_commands()
 
 // Waits until the GPU has written everything it was given into RDRAM. It
 // writes RDRAM asynchronously between full syncs; the new netplay's rollback
-// saves and restores RDRAM, which must not change under it.
+// saves and restores RDRAM, which must not change under it, and its desync
+// hash, when a game hasn't full synced for a long time, is taken of RDRAM
+// once the RDP is done.
 void vk_wait_idle()
 {
 	if (processor)

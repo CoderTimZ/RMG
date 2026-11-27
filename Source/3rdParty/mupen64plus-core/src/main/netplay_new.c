@@ -116,11 +116,13 @@ static int l_saved_plugin[4];
  *
  * A snapshot is the m64p savestate in memory (without the TLB lookup
  * tables), plus what savestates don't hold: the save files, pak switching,
- * the cheats' counter, the AI's DMA addresses, this file's frame state and
+ * the cheats' counter, the AI's DMA addresses, this file's frame state,
  * the video plugin's RDP state outside RDRAM (its hidden bits, TMEM and its
- * settings: a frame drawn again uses them) and the RSP plugin's registers
- * (they carry over from one task to the next, and a microcode can read what
- * the last task left there).
+ * settings: a frame drawn again uses them), the RSP plugin's state between
+ * tasks (an LLE RSP's registers carry over from one task to the next, and a
+ * microcode can read what the last task left there; the HLE RSP saves its
+ * own state and its fallback's) and the execution plugin's state
+ * (NetplaySaveState).
  * It's taken at the end of gen_interrupt, where savestates are saved, once
  * the frame has started: at the VI's interrupt, or at a later one if an RSP
  * task was running or the RDP was still in the middle of its commands then.
@@ -146,7 +148,7 @@ struct snapshot
     uint8_t* tracked[MAX_TRACKED];
     /* the video plugin's RDP state outside RDRAM */
     uint8_t* rdp_state;
-    /* the RSP plugin's registers */
+    /* the RSP plugin's state between tasks */
     uint8_t* rsp_state;
     /* the execution plugin's state (none if it keeps its saves itself) */
     uint8_t* exec_state;

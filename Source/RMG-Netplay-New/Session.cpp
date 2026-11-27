@@ -440,8 +440,8 @@ void Session::SetLag(uint8_t player, uint8_t lag)
 
 void Session::AdjustLagLocked(void)
 {
-    // The host sets every player's lag (their input delay in Lockstep) from
-    // what it measures, about once a second, so nobody has to:
+    // The host sets every player's lag (their input delay in Lockstep and
+    // Rollback) from what it measures, about once a second, so nobody has to:
     //
     // - A player's frames have to reach every other player with controllers
     //   before those players need them. Guests reach each other through the
@@ -3446,7 +3446,7 @@ const void* Session::GetPluginMessage(unsigned int frame, unsigned int index, un
 int Session::Speaker(void)
 {
     // the host talks to the outside for everyone (a session without its host
-    // is over, so this doesn't change during a game yet)
+    // is over, so this doesn't change during a game)
     std::lock_guard<std::mutex> lock(this->mutex);
     return this->gameRunning && this->info.isHost ? 1 : 0;
 }

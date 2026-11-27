@@ -359,7 +359,7 @@ typedef int (*ptr_NetplayImport)(const void* data, uint32_t size);
  * (a rollback goes back to the newest frame the core saved before the wrong guess, which can be before `final`), but
  * with the same input it does the same, so what it does outside the game was done already and is skipped.
  * flags: NETPLAY_FRAME_RERUN when the frame is run again after a rollback; NETPLAY_FRAME_SPEAKER when this machine is
- * the one that talks to services outside the session (one machine at a time, which can change during a game).
+ * the one that talks to services outside the session (one machine at a time: the host in RMG's new netplay).
  *
  * NetplayMessage(data, size): a message a plugin broadcast with the core's ExecutionNetplaySendMessage, on every
  * machine at the end of the same frame (and again when that frame is re-run). That frame is the one the session decides

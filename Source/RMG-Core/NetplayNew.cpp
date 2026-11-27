@@ -72,8 +72,9 @@ CORE_EXPORT std::string CoreGetNetplayNewRollbackProblem(std::string rspPlugin, 
     }
 
     // The same for an LLE RSP plugin's registers, which carry over from one
-    // task to the next. The HLE RSP plugin keeps none that matter (its
-    // re-run frames are exact without them).
+    // task to the next. The HLE RSP plugin isn't checked: it hands over its
+    // own state between tasks, plus its fallback RSP's registers when the
+    // fallback has them.
     std::string rsp = rspPlugin;
     std::transform(rsp.begin(), rsp.end(), rsp.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (!rspPlugin.empty() && rsp.find("rsp-hle") == std::string::npos &&

@@ -176,7 +176,8 @@ extern uint8_t execution_hook_page_flags[EXECUTION_HOOK_MAPS][EXECUTION_HOOK_PAG
 extern unsigned int execution_hook_page_count[EXECUTION_HOOK_MAPS];
 
 /* Set when the plugin calls jump() during a delay slot: the branch the delay slot belongs to is not taken, so execution
- * continues where the plugin jumped (the interpreters' branch code checks and clears it) */
+ * continues where the plugin jumped (the interpreters' branch code and the dynamic recompiler's execution_hook_new
+ * check and clear it) */
 extern int execution_branch_cancelled;
 
 /* Counts the plugin's calls of jump() (the dynamic recompiler tells them from exceptions with it) */
@@ -202,8 +203,8 @@ extern unsigned int plugin_rdp_state_size(void);
 extern void plugin_save_rdp_state(void* data);
 extern void plugin_load_rdp_state(const void* data);
 
-/* the RSP plugin's registers, which carry over between tasks (0 if it has
- * none to hand over) */
+/* the RSP plugin's state that carries over between tasks, like an LLE
+ * plugin's registers (0 if it has none to hand over) */
 extern unsigned int plugin_rsp_state_size(void);
 extern void plugin_save_rsp_state(void* data);
 extern void plugin_load_rsp_state(const void* data);
@@ -219,7 +220,8 @@ extern int execution_netplay_export(const void** data, uint32_t* size);
 extern void execution_netplay_import(const void* data, uint32_t size);
 extern void execution_netplay_frame(uint32_t frame, uint32_t final_frames, int flags);
 extern void execution_netplay_message(const void* data, uint32_t size);
-/* whether the plugin can be rolled back (it has no state of its own, or it saves and restores it) */
+/* whether the plugin can be rolled back (no plugin is attached, or it exports the four state functions,
+ * NetplayStateSize, NetplaySaveState, NetplayLoadState and NetplayDropState) */
 extern int execution_netplay_can_roll_back(void);
 extern uint32_t execution_netplay_state_size(void);
 extern void execution_netplay_save_state(uint32_t frame, void* data);

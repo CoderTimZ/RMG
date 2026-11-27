@@ -522,7 +522,7 @@ struct Scenario
     unsigned spectatorDesyncsAt = 0;
     // RMG_NETPLAY_NEW_DELAY_MS for this scenario (0: none)
     unsigned delayMs = 0;
-    // the host's execution plugin (Rollback refuses it)
+    // the execution plugin every machine has (none: empty)
     std::string hostExecutionPlugin;
     // the host sends a message every frame for 30 frames from this one (0: it doesn't)
     unsigned hostMessageBurstAt = 0;
@@ -1343,9 +1343,9 @@ int main()
 
     bool ok = true;
 
-    // Rollback isn't available with an execution plugin
+    // Rollback isn't available with an execution plugin that can't save its state
     {
-        std::printf("=== Rollback refused with an execution plugin\n");
+        std::printf("=== Rollback refused with an execution plugin that can't save its state\n");
         Scenario s;
         s.port = 47133;
         Session host([](const Event&) {});

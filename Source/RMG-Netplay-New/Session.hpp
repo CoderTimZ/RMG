@@ -194,7 +194,7 @@ struct LocalInfo
     std::string rspPlugin;
     std::string gfxPlugin;
     std::string executionPlugin;
-    // why this machine can't roll back (a video setting), or empty
+    // why this machine can't roll back (its video, RSP or execution plugin), or empty
     std::string rollbackProblem;
 };
 
@@ -233,7 +233,7 @@ struct Event
 // The host relays everything between guests (star topology). Every player
 // has a stream of input frames, one frame per VI. Each stream has exactly
 // one authority, the only machine that writes its frames: its owner in
-// Lockstep mode, one player in Authority mode, whoever is playing in Golf
+// Lockstep and Rollback modes, one player in Authority mode, whoever is playing in Golf
 // mode. An authority that isn't the owner writes the owner's frames from
 // the input updates the owner sends it. Handing a stream to another
 // authority names the first frame the new authority writes, so every frame

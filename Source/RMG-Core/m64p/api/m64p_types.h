@@ -381,7 +381,8 @@ typedef struct {
   /* Whether this machine talks to services outside the session (like a
    * bingo site) for the execution plugin. One machine does at a time; the
    * others' plugins only take part through messages. Asked at every frame
-   * boundary, so it can move to another machine during a game. */
+   * boundary (RMG's session answers 1 on the host, which a game keeps: a
+   * session without its host ends). */
   int (*speaker)(void* context);
 } m64p_netplay_new_callbacks;
 

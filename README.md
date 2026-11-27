@@ -18,7 +18,11 @@ You can download Rosalie's Mupen GUI on
 
 ## Netplay
 
-You can use netplay with the following methods:
+This fork builds a new netplay by default (CMake option `NETPLAY_NEW`): under Netplay > Host Game... or Join Game..., players connect straight to the host on a UDP port (6420 by default), which the host's router can be asked to forward with UPnP or NAT-PMP. No server is needed.
+
+The steps below are for the legacy, server based netplay, which is only built with the CMake option `NETPLAY` (off by default).
+
+You can use the legacy netplay with the following methods:
 
 ### Port Forwarding
 

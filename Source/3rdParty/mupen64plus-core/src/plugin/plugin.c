@@ -197,8 +197,8 @@ void plugin_wait_rdp_idle(void)
 }
 
 /* Optional: a video plugin that keeps RDP state outside RDRAM (the hidden
- * bits, TMEM) hands it over and takes it back, for the new netplay's
- * rollback, which saves and restores the machine */
+ * bits, TMEM and its settings) hands it over and takes it back, for the new
+ * netplay's rollback, which saves and restores the machine */
 typedef unsigned int (*ptr_RdpStateSize)(void);
 typedef void (*ptr_SaveRdpState)(void* data);
 typedef void (*ptr_LoadRdpState)(const void* data);
@@ -206,7 +206,8 @@ static ptr_RdpStateSize l_rdpStateSize = NULL;
 static ptr_SaveRdpState l_saveRdpState = NULL;
 static ptr_LoadRdpState l_loadRdpState = NULL;
 
-/* Optional: the same for an RSP plugin's registers */
+/* Optional: the same for an RSP plugin's state between tasks (an LLE plugin's
+ * registers, the HLE plugin's own state and its fallback's) */
 typedef unsigned int (*ptr_RspStateSize)(void);
 typedef void (*ptr_SaveRspState)(void* data);
 typedef void (*ptr_LoadRspState)(const void* data);
