@@ -43,6 +43,10 @@ m64p_error netplay_new_set_callbacks(const m64p_netplay_new_callbacks* callbacks
 /* whether a new netplay session is attached */
 int netplay_new_active(void);
 
+/* the frame being emulated: the number of VIs since emulation started, which
+ * goes back when frames are re-run after a rollback */
+unsigned int netplay_new_frame(void);
+
 /* whether this machine may write save files */
 int netplay_new_can_write_saves(void);
 

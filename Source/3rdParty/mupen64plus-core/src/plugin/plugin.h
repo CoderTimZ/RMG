@@ -39,7 +39,7 @@ extern CONTROL Controls[NUM_CONTROLLER];
 #define GFX_API_VERSION       0x20200
 #define AUDIO_API_VERSION     0x20000
 #define INPUT_API_VERSION     0x20101
-#define EXECUTION_API_VERSION 0x20100
+#define EXECUTION_API_VERSION 0x20200
 
 /* video plugin function pointers */
 typedef struct _gfx_plugin_functions
@@ -149,7 +149,6 @@ typedef struct _execution_plugin_functions
 	ptr_NetplayStart        netplayStart;
 	ptr_NetplayExport       netplayExport;
 	ptr_NetplayImport       netplayImport;
-	ptr_NetplayPlayers      netplayPlayers;
 	ptr_NetplayFrame        netplayFrame;
 	ptr_NetplayMessage      netplayMessage;
 	ptr_NetplayStateSize    netplayStateSize;
@@ -218,7 +217,6 @@ extern void execution_reset(int hard);
 extern void execution_netplay_start(int is_host);
 extern int execution_netplay_export(const void** data, uint32_t* size);
 extern void execution_netplay_import(const void* data, uint32_t size);
-extern void execution_netplay_players(const char* const names[4]);
 extern void execution_netplay_frame(uint32_t frame, uint32_t final_frames, int flags);
 extern void execution_netplay_message(const void* data, uint32_t size);
 /* whether the plugin can be rolled back (it has no state of its own, or it saves and restores it) */

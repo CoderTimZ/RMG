@@ -182,6 +182,10 @@ enum {
      * the recompiler may still hold guest registers in host registers, and
      * writes them back after the call */
     INTR_UNSAFE_CALL = 0x04,
+    /* an instruction the execution plugin hooks is running, between its
+     * Execute and ExecuteDone: a state saved or loaded there would split
+     * that pair (an interrupt can be taken inside a hooked branch) */
+    INTR_UNSAFE_EXECUTION = 0x08,
 };
 
 struct cp0

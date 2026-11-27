@@ -150,8 +150,9 @@ struct snapshot
     uint8_t* rsp_state;
     /* the execution plugin's state (none if it keeps its saves itself) */
     uint8_t* exec_state;
-    /* (self-test: hashes of the machine when the snapshot was taken) */
-    uint32_t check[16 + 512];
+    /* (self-test: hashes of the machine when the snapshot was taken, see
+     * selftest_hash_machine; NULL when the self-test is off) */
+    uint32_t* check;
     uint32_t ai_address[2];
     unsigned int hash_first;
     unsigned int hash_count;
@@ -168,8 +169,9 @@ static struct snapshot l_snapshots[MAX_SNAPSHOTS];
 static int l_snapshot_wanted = 0;
 /* a snapshot to go back to at the end of this gen_interrupt, or NULL */
 static struct snapshot* l_restore = NULL;
-/* the restore waits for an interrupt check outside any instruction */
-static int l_restore_deferred = 0;
+/* the self-test asked for it, not the session (which then doesn't know
+ * which snapshots the restore drops) */
+static int l_restore_selftest = 0;
 /* frames below this are being re-run */
 static unsigned int l_rerun_until = 0;
 /* the game read the controllers during this frame */
@@ -204,6 +206,8 @@ static void flush_saves(unsigned int confirmed);
  * session in Rollback mode (it can have just the host). */
 #define SELFTEST_FRAMES 64
 #define SELFTEST_PAGES (RDRAM_MAX_SIZE / 0x4000)
+/* what selftest_hash_machine fills in: 16 parts, then 512 RDRAM pages */
+#define SELFTEST_CHECKS (16 + 512)
 /* (exec: the execution plugin's own state, see NetplayStateHash) */
 enum { SELFTEST_CP0, SELFTEST_SP, SELFTEST_GPR, SELFTEST_FPR, SELFTEST_QUEUE, SELFTEST_DP, SELFTEST_EXEC, SELFTEST_PARTS };
 static const char* const l_selftest_names[SELFTEST_PARTS] = {"cp0", "sp", "gpr", "fpr", "queue", "dp", "exec"};
@@ -220,35 +224,13 @@ static unsigned int l_selftest_failed = 0;
 static unsigned int l_selftest_last = 0;
 /* RMG_NETPLAY_NEW_ROLLBACK_TEST_FROM: the first frame it goes back from (64) */
 static unsigned int l_selftest_from = 64;
-/* RMG_NETPLAY_NEW_ROLLBACK_TEST_CHECK=0: the self-test only measures. It
- * checks nothing (no hashing, no extra GPU waits), goes back 1, 2, 4 and 8
- * frames in turn, and logs what a live frame and a rollback of each depth
- * cost, from the restore until the re-run has caught up. */
-static int l_selftest_check = 1;
-static const unsigned int l_selftest_depths[4] = {1, 2, 4, 8};
-static unsigned int l_selftest_turn = 0;
-static uint64_t l_time_episode_start = 0;
-static unsigned int l_time_episode_depth = 0;
-static uint64_t l_time_episode_sum[9], l_time_episode_max[9];
-static unsigned int l_time_episode_count[9];
-static uint64_t l_time_live_prev = 0, l_time_live_sum = 0, l_time_live_max = 0;
-static unsigned int l_time_live_count = 0;
 /* how many frames rollback saved, and how many it couldn't (the game read
- * the controllers before the machine's state was whole) */
+ * the controllers before the machine's state was whole), for the log */
 static unsigned int l_snapshots_taken = 0;
 static unsigned int l_snapshots_missed = 0;
-/* (how long saving and restoring take, for the log) */
-static uint64_t l_snapshot_ticks = 0;
-static uint64_t l_restore_ticks = 0;
-static unsigned int l_restores = 0;
-/* (how long the execution plugin takes to save its state) */
-static uint64_t l_exec_save_ticks = 0;
-static uint64_t l_exec_save_max = 0;
 
 static void selftest_frame_end(int rerun);
-static void selftest_time_frame(int rerun);
 static void selftest_hash_machine(uint32_t* out);
-static void wait_rdp_idle(void);
 
 
 void netplay_new_local_controller_begin(int controller)
@@ -311,14 +293,22 @@ int netplay_new_active(void)
     return l_active;
 }
 
-int netplay_new_speaker(void)
+unsigned int netplay_new_frame(void)
+{
+    return l_frame;
+}
+
+/* whether this machine is the one that talks to services outside the
+ * session (see speaker in m64p_types.h) */
+static int netplay_new_speaker(void)
 {
     return l_active && l_callbacks.speaker != NULL && l_callbacks.speaker(l_callbacks.context);
 }
 
 /* For execution plugins (they look it up in the core library): broadcasts a
  * message to every machine's plugin, which each gets at the end of the same
- * frame (see NetplayMessage in m64p_plugin.h) */
+ * frame, some frames after the one the session puts it into (see
+ * NetplayMessage in m64p_plugin.h) */
 EXPORT int CALL ExecutionNetplaySendMessage(const void* data, uint32_t size)
 {
     if (!l_active || l_ended || l_callbacks.send_message == NULL || (data == NULL && size > 0) ||
@@ -348,9 +338,18 @@ static void deliver_messages(void)
 }
 
 /* For plugins (they look it up in the core library): 1 while a game of the
- * new netplay runs. GLideN64 then stops copying its frame buffers to RDRAM:
- * what it copies comes from its own buffers on the GPU, so it differs between
- * graphics cards and resolutions, and a rollback can't reproduce it. */
+ * new netplay runs, when what a video plugin writes to RDRAM has to be the
+ * same on every machine and come back the same after a rollback.
+ * GLideN64 then stops copying its frame buffers to RDRAM (what it copies
+ * comes from its own buffers on the GPU, so it differs between graphics
+ * cards and resolutions), forces the same value on every machine for its
+ * other settings that change what it writes to RDRAM (frame buffer
+ * emulation on, depth rendered in software, no copy from RDRAM, the plain
+ * aspect modes), and draws every display list while its window is resized
+ * (a skipped list's writes to RDRAM would be missing on that machine only).
+ * Parallel turns its superscaled readbacks off (they give the game pixels
+ * from its upscaled copy of RDRAM on the GPU, which a rollback doesn't
+ * save). */
 EXPORT int CALL NetplayNewGame(void)
 {
     return l_active;
@@ -389,7 +388,7 @@ void netplay_new_start(void)
     }
     l_snapshot_wanted = 0;
     l_restore = NULL;
-    l_restore_deferred = 0;
+    l_restore_selftest = 0;
     l_rerun_until = 0;
     l_read_this_frame = 0;
     l_rdp_state_size = 0;
@@ -400,36 +399,21 @@ void netplay_new_start(void)
         const char* test = getenv("RMG_NETPLAY_NEW_ROLLBACK_TEST");
         l_selftest = test != NULL ? atoi(test) : 0;
         {
-            const char* check = getenv("RMG_NETPLAY_NEW_ROLLBACK_TEST_CHECK");
-            l_selftest_check = check == NULL || atoi(check) != 0;
-        }
-        {
             const char* from = getenv("RMG_NETPLAY_NEW_ROLLBACK_TEST_FROM");
             l_selftest_from = from != NULL ? (unsigned int)atoi(from) : 64;
         }
-        l_selftest_turn = 0;
-        l_time_episode_start = 0;
-        l_time_live_prev = l_time_live_sum = l_time_live_max = 0;
-        l_time_live_count = 0;
-        memset(l_time_episode_sum, 0, sizeof(l_time_episode_sum));
-        memset(l_time_episode_max, 0, sizeof(l_time_episode_max));
-        memset(l_time_episode_count, 0, sizeof(l_time_episode_count));
         memset(l_selftest_runs, 0, sizeof(l_selftest_runs));
         l_selftest_checked = 0;
         l_selftest_failed = 0;
         l_selftest_last = 0;
         l_snapshots_taken = 0;
         l_snapshots_missed = 0;
-        l_snapshot_ticks = 0;
-        l_restore_ticks = 0;
-        l_restores = 0;
-        l_exec_save_ticks = 0;
-        l_exec_save_max = 0;
-        if (l_selftest > 0 && l_selftest_check)
+        if (l_selftest > 0)
             DebugMessage(M64MSG_INFO, "Rollback test: going back 4 frames every %d frames", l_selftest);
-        else if (l_selftest > 0)
-            DebugMessage(M64MSG_INFO, "Rollback timing: going back 1, 2, 4 and 8 frames in turn, every %d frames", l_selftest);
     }
+
+    /* a motor a re-run held back in an earlier game has nothing to flush to */
+    input_plugin_rumble_reset();
     l_tracked_count = 0;
     l_confirmed = 0;
     memset(l_storages, 0, sizeof(l_storages));
@@ -481,18 +465,8 @@ void netplay_new_initiate_execution_plugin(void)
 
     execution_netplay_start(l_callbacks.is_host);
 
-    /* who plays on which port, and frame 0 (whether this machine is the
-     * speaker matters before the plugin starts) */
-    {
-        const char* names[4];
-        for (int i = 0; i < 4; ++i)
-        {
-            names[i] = l_callbacks.port_name != NULL ? l_callbacks.port_name(l_callbacks.context, i) : NULL;
-            if (names[i] == NULL)
-                names[i] = "";
-        }
-        execution_netplay_players(names);
-    }
+    /* frame 0 (whether this machine is the speaker matters before the plugin
+     * starts) */
     execution_netplay_frame(0, 0, netplay_new_speaker() ? NETPLAY_FRAME_SPEAKER : 0);
 
     if (l_callbacks.is_host)
@@ -728,10 +702,9 @@ static uint64_t state_hash(void)
 
 /* For tracking down desyncs: with the environment variable
  * RMG_NETPLAY_NEW_HASH_LOG=1, every frame's hash is also logged in parts (CP0,
- * the RSP's memory, and RDRAM in 16 KB pages, by address), with the VI's
- * origin and width, which show where the frame buffer being displayed is.
- * Frames are numbered the same on every machine, so comparing two players'
- * logs shows the first frame and the memory that differ. */
+ * the RSP's memory, and RDRAM in 16 KB pages, by address). Frames are
+ * numbered the same on every machine, so comparing two players' logs shows
+ * the first frame and the memory that differ. */
 static uint32_t hash32(const void* data, size_t size)
 {
     return (uint32_t)XXH3_64bits(data, size);
@@ -757,14 +730,10 @@ static void log_state_hash(unsigned int frame, uint64_t sent, char where)
     if (!enabled)
         return;
 
-    /* the hash that was sent, where it was taken (at a full sync or at the
-     * end of the frame), and the same hash taken again now, which differs
-     * when something (a GPU plugin) is still writing RDRAM */
-    snprintf(line, sizeof(line), "hash %u at %c sent %016llx again %016llx vi %08x %u cp0 %08x sp %08x",
-             frame, where,
-             (unsigned long long)sent, (unsigned long long)state_hash(),
-             (unsigned int)g_dev.vi.regs[VI_ORIGIN_REG],
-             (unsigned int)g_dev.vi.regs[VI_WIDTH_REG],
+    /* the hash that was sent, and where it was taken (at a full sync, at the
+     * end of the frame, or forced after waiting for the RDP) */
+    snprintf(line, sizeof(line), "hash %u at %c sent %016llx cp0 %08x sp %08x",
+             frame, where, (unsigned long long)sent,
              (unsigned int)hash32(r4300_cp0_regs(&g_dev.r4300.cp0), CP0_REGS_COUNT * sizeof(uint32_t)),
              (unsigned int)hash32(g_dev.sp.mem, SP_MEM_SIZE));
     DebugMessage(M64MSG_VERBOSE, "%s", line);
@@ -878,18 +847,24 @@ int netplay_new_frame_end(void)
         ++l_hash_count;
 
         /* when the RDP is idle (or an HLE graphics plugin has drawn
-         * everything already) RDRAM is complete now; a game that doesn't
-         * full sync for a long time gets a hash anyway */
-        if (!l_rdp_busy || l_hash_count >= MAX_PENDING_HASHES)
+         * everything already) RDRAM is complete now */
+        if (!l_rdp_busy)
         {
             send_hashes('f');
+        }
+        /* a game that doesn't full sync for a long time gets a hash anyway,
+         * once a GPU plugin has finished writing RDRAM for the commands the
+         * RDP was given */
+        else if (l_hash_count >= MAX_PENDING_HASHES)
+        {
+            plugin_wait_rdp_idle();
+            send_hashes('w');
         }
     }
 
     rerun = netplay_new_rerunning();
 
-
-    if (l_selftest > 0 && l_selftest_check)
+    if (l_selftest > 0)
     {
         selftest_frame_end(rerun);
     }
@@ -912,9 +887,6 @@ int netplay_new_frame_end(void)
     {
         input_plugin_rumble_flush();
     }
-
-    if (l_selftest > 0 && !l_selftest_check)
-        selftest_time_frame(rerun);
 
     rollback_boundary();
 
@@ -1014,12 +986,6 @@ static void flush_saves(unsigned int confirmed)
     }
 }
 
-static void wait_rdp_idle(void)
-{
-    /* a GPU plugin may still be writing RDRAM for commands the RDP was given */
-    plugin_wait_rdp_idle();
-}
-
 static void free_snapshots(void)
 {
     int i, k;
@@ -1033,6 +999,7 @@ static void free_snapshots(void)
         free(l_snapshots[i].rdp_state);
         free(l_snapshots[i].rsp_state);
         free(l_snapshots[i].exec_state);
+        free(l_snapshots[i].check);
     }
     memset(l_snapshots, 0, sizeof(l_snapshots));
 }
@@ -1058,7 +1025,8 @@ static struct snapshot* find_snapshot(unsigned int frame)
     return NULL;
 }
 
-static void take_snapshot(void)
+/* returns 0 if the frame couldn't be saved */
+static int take_snapshot(void)
 {
     struct snapshot* s = NULL;
     size_t k;
@@ -1066,7 +1034,7 @@ static void take_snapshot(void)
     static int warned = 0;
 
     if (find_snapshot(l_frame) != NULL)
-        return;
+        return 1;
 
     for (i = 0; i < MAX_SNAPSHOTS && s == NULL; ++i)
     {
@@ -1079,14 +1047,20 @@ static void take_snapshot(void)
         if (!warned)
             DebugMessage(M64MSG_WARNING, "Netplay: no room for another rollback snapshot");
         warned = 1;
-        return;
+        return 0;
     }
 
     if (s->state == NULL)
     {
         s->state = malloc(savestates_rollback_size());
         if (s->state == NULL)
-            return;
+            return 0;
+    }
+    if (l_selftest > 0 && s->check == NULL)
+    {
+        s->check = malloc(SELFTEST_CHECKS * sizeof(*s->check));
+        if (s->check == NULL)
+            return 0;
     }
     for (k = 0; k < STORAGE_COUNT; ++k)
     {
@@ -1098,7 +1072,7 @@ static void take_snapshot(void)
         if (s->tracked[k] == NULL)
             s->tracked[k] = malloc(l_tracked[k].size);
         if (s->tracked[k] == NULL)
-            return;
+            return 0;
     }
     if (!l_rdp_state_known)
     {
@@ -1113,36 +1087,29 @@ static void take_snapshot(void)
     {
         s->exec_state = malloc(l_exec_state_size);
         if (s->exec_state == NULL)
-            return;
+            return 0;
     }
     if (l_rsp_state_size > 0 && s->rsp_state == NULL)
     {
         s->rsp_state = malloc(l_rsp_state_size);
         if (s->rsp_state == NULL)
-            return;
+            return 0;
     }
     if (l_rdp_state_size > 0 && s->rdp_state == NULL)
     {
         s->rdp_state = malloc(l_rdp_state_size);
         if (s->rdp_state == NULL)
-            return;
+            return 0;
     }
 
-    wait_rdp_idle();
+    /* a GPU plugin may still be writing RDRAM for commands the RDP was given */
+    plugin_wait_rdp_idle();
     savestates_rollback_save(s->state);
     if (l_rdp_state_size > 0)
         plugin_save_rdp_state(s->rdp_state);
     if (l_rsp_state_size > 0)
         plugin_save_rsp_state(s->rsp_state);
-    {
-        uint64_t start = SDL_GetPerformanceCounter();
-        uint64_t ticks;
-        execution_netplay_save_state(l_frame, s->exec_state);
-        ticks = SDL_GetPerformanceCounter() - start;
-        l_exec_save_ticks += ticks;
-        if (ticks > l_exec_save_max)
-            l_exec_save_max = ticks;
-    }
+    execution_netplay_save_state(l_frame, s->exec_state);
 
     for (k = 0; k < STORAGE_COUNT; ++k)
     {
@@ -1164,17 +1131,21 @@ static void take_snapshot(void)
 
     s->frame = l_frame;
     s->kept = 1;
-    if (l_selftest > 0 && l_selftest_check)
+    if (s->check != NULL)
         selftest_hash_machine(s->check);
     l_callbacks.snapshot(l_callbacks.context, l_frame, 1);
+    return 1;
 }
 
-static void restore_snapshot(struct snapshot* s)
+/* tell: the self-test asked for the restore, so the session has to hear
+ * about the snapshots it drops */
+static void restore_snapshot(struct snapshot* s, int tell)
 {
     size_t k;
     int i;
 
-    wait_rdp_idle();
+    /* a GPU plugin may still be writing RDRAM for commands the RDP was given */
+    plugin_wait_rdp_idle();
     savestates_rollback_load(s->state);
     if (l_rdp_state_size > 0 && s->rdp_state != NULL)
         plugin_load_rdp_state(s->rdp_state);
@@ -1203,11 +1174,11 @@ static void restore_snapshot(struct snapshot* s)
     l_read_this_frame = 0;
 
     /* (self-test: the machine must look exactly as when it was saved) */
-    if (l_selftest > 0 && l_selftest_check)
+    if (s->check != NULL)
     {
         static const char* const names[16] = {"cp0", "sp", "gpr", "fpr", "queue", "dp", "mi", "pi", "si", "ai", "vi",
                                                "spregs", "pif", "pc", "controllers", "aififo"};
-        uint32_t now[16 + 512];
+        uint32_t now[SELFTEST_CHECKS];
         char line[400];
         size_t length;
         int k;
@@ -1219,7 +1190,7 @@ static void restore_snapshot(struct snapshot* s)
             if (now[k] != s->check[k])
                 length += (size_t)snprintf(line + length, sizeof(line) - length, " %s", names[k]);
         }
-        for (k = 16; k < 16 + 512; ++k)
+        for (k = 16; k < SELFTEST_CHECKS; ++k)
         {
             if (now[k] != s->check[k])
             {
@@ -1232,17 +1203,24 @@ static void restore_snapshot(struct snapshot* s)
             DebugMessage(M64MSG_WARNING, "%s (%u pages)", line, pages);
     }
 
-    /* the frames after it are gone (the session forgot them already) */
+    /* The frames after it are gone (the session forgot them already, unless
+     * the self-test went back). This drops the execution plugin's saves of
+     * them too, so its NetplayLoadState needn't. */
     for (i = 0; i < MAX_SNAPSHOTS; ++i)
     {
         if (l_snapshots[i].kept && l_snapshots[i].frame > s->frame)
-            drop_snapshot(&l_snapshots[i], 0);
+            drop_snapshot(&l_snapshots[i], tell);
     }
+
+    /* The frame starts again. Its boundary went to the rollback instead
+     * (rollback_boundary tells the plugin about the frames after it), so
+     * this is its only NetplayFrame; the final frames are the ones of that
+     * last boundary. */
+    execution_netplay_frame(s->frame, l_confirmed,
+                            (netplay_new_rerunning() ? NETPLAY_FRAME_RERUN : 0) |
+                            (netplay_new_speaker() ? NETPLAY_FRAME_SPEAKER : 0));
 }
 
-/* At every frame boundary: asks the session whether to go back, and whether
- * to save the frame that starts now; drops the snapshots that can't be
- * needed anymore; writes save files that became final. */
 /* the self-test's view of the machine: its parts and RDRAM in 16 KB pages */
 static void selftest_hash_machine(uint32_t* out)
 {
@@ -1354,57 +1332,6 @@ static void selftest_frame_end(int rerun)
     }
 }
 
-/* the self-test's timing mode, at the end of every frame */
-static void selftest_time_frame(int rerun)
-{
-    uint64_t now = SDL_GetPerformanceCounter();
-    double ms = 1000.0 / (double)SDL_GetPerformanceFrequency();
-    unsigned int d;
-
-    if (rerun)
-    {
-        if (l_frame >= l_rerun_until && l_time_episode_start != 0)
-        {
-            uint64_t t = now - l_time_episode_start;
-            d = l_time_episode_depth < 9 ? l_time_episode_depth : 8;
-            l_time_episode_sum[d] += t;
-            if (t > l_time_episode_max[d])
-                l_time_episode_max[d] = t;
-            ++l_time_episode_count[d];
-            l_time_episode_start = 0;
-            l_time_live_prev = now;
-        }
-        return;
-    }
-
-    if (l_time_live_prev != 0)
-    {
-        uint64_t t = now - l_time_live_prev;
-        l_time_live_sum += t;
-        if (t > l_time_live_max)
-            l_time_live_max = t;
-        ++l_time_live_count;
-    }
-    l_time_live_prev = now;
-
-    if (l_time_live_count > 0 && l_time_live_count % 3000 == 0)
-    {
-        char line[400];
-        size_t n = (size_t)snprintf(line, sizeof(line), "Rollback timing: live frame %.2f ms avg, %.2f max (%u frames, snapshot %.2f ms avg);",
-                                    l_time_live_sum * ms / l_time_live_count, l_time_live_max * ms, l_time_live_count,
-                                    l_snapshots_taken ? l_snapshot_ticks * ms / l_snapshots_taken : 0.0);
-        for (d = 1; d <= 8; ++d)
-        {
-            if (l_time_episode_count[d] == 0)
-                continue;
-            n += (size_t)snprintf(line + n, sizeof(line) - n, " %u back: %.2f avg, %.2f max (%u);", d,
-                                  l_time_episode_sum[d] * ms / l_time_episode_count[d], l_time_episode_max[d] * ms,
-                                  l_time_episode_count[d]);
-        }
-        DebugMessage(M64MSG_INFO, "%s", line);
-    }
-}
-
 static void rollback_boundary(void)
 {
     unsigned int confirmed = l_frame;
@@ -1427,18 +1354,17 @@ static void rollback_boundary(void)
         if (l_frame >= l_selftest_from && l_frame % (unsigned int)l_selftest == 0 && l_frame > l_selftest_last)
         {
             struct snapshot* back = NULL;
-            unsigned int depth = l_selftest_check ? 4 : l_selftest_depths[l_selftest_turn % 4];
             for (i = 0; i < MAX_SNAPSHOTS; ++i)
             {
                 struct snapshot* s = &l_snapshots[i];
-                if (s->kept && s->frame + depth <= l_frame && (back == NULL || s->frame > back->frame))
+                if (s->kept && s->frame + 4 <= l_frame && (back == NULL || s->frame > back->frame))
                     back = s;
             }
             if (back != NULL)
             {
-                ++l_selftest_turn;
                 l_selftest_last = l_frame;
                 l_restore = back;
+                l_restore_selftest = 1;
                 l_rerun_until = l_frame;
                 return;
             }
@@ -1453,6 +1379,7 @@ static void rollback_boundary(void)
     if (target >= 0)
     {
         l_restore = find_snapshot((unsigned int)target);
+        l_restore_selftest = 0;
         if (l_restore == NULL)
         {
             end_session("a rollback needed a frame that wasn't saved");
@@ -1502,33 +1429,26 @@ void netplay_new_interrupt_end(void)
 
     if (l_restore != NULL)
     {
-        uint64_t start;
-
         /* Not from inside an instruction or a memory access (an MTC0, an
          * ERET, an MI register write): the recompiled code that called it
          * writes the guest registers it still holds back afterwards, over
-         * the restored ones. Restore at the next interrupt check instead,
-         * which this asks for right away (the event only exists in the
-         * abandoned timeline: restoring replaces the event queue). */
-        if (g_dev.r4300.cp0.interrupt_unsafe_state & (INTR_UNSAFE_R4300 | INTR_UNSAFE_CALL))
+         * the restored ones. Nor between the execution plugin's Execute and
+         * ExecuteDone for a hooked instruction (a hooked branch takes
+         * interrupts): its ExecuteDone would come after its restored state.
+         * Restore at the next interrupt check instead, which this asks for
+         * right away, again whenever the check it asked for came at another
+         * such point (the event only exists in the abandoned timeline:
+         * restoring replaces the event queue). */
+        if (g_dev.r4300.cp0.interrupt_unsafe_state & (INTR_UNSAFE_R4300 | INTR_UNSAFE_CALL | INTR_UNSAFE_EXECUTION))
         {
-            if (!l_restore_deferred && get_event(&g_dev.r4300.cp0.q, CHECK_INT) == NULL)
+            if (get_event(&g_dev.r4300.cp0.q, CHECK_INT) == NULL)
                 add_interrupt_event(&g_dev.r4300.cp0, CHECK_INT, 0);
-            l_restore_deferred = 1;
             return;
         }
-        l_restore_deferred = 0;
 
-        start = SDL_GetPerformanceCounter();
-        if (l_selftest > 0 && !l_selftest_check)
-        {
-            l_time_episode_start = start;
-            l_time_episode_depth = l_rerun_until - l_restore->frame;
-        }
-        restore_snapshot(l_restore);
+        restore_snapshot(l_restore, l_restore_selftest);
         l_restore = NULL;
-        l_restore_ticks += SDL_GetPerformanceCounter() - start;
-        ++l_restores;
+        l_restore_selftest = 0;
         return;
     }
 
@@ -1545,27 +1465,22 @@ void netplay_new_interrupt_end(void)
         /* An RSP task is running (its plugin holds state of its own), the
          * RDP is in the middle of a command list (the video plugin holds
          * its state, which restoring RDRAM can't put back), or the CPU is
-         * somewhere savestates can't be taken: wait for the next interrupt */
+         * somewhere savestates can't be taken (also between the execution
+         * plugin's Execute and ExecuteDone): wait for the next interrupt */
         if (g_dev.r4300.cp0.interrupt_unsafe_state ||
             !(g_dev.sp.regs[SP_STATUS_REG] & SP_STATUS_HALT) ||
             l_rdp_busy)
             return;
 
-        {
-            uint64_t start = SDL_GetPerformanceCounter();
-            take_snapshot();
-            l_snapshot_ticks += SDL_GetPerformanceCounter() - start;
-        }
-        ++l_snapshots_taken;
+        if (take_snapshot())
+            ++l_snapshots_taken;
+        else
+            ++l_snapshots_missed;
         l_snapshot_wanted = 0;
         if ((l_snapshots_taken + l_snapshots_missed) % 600 == 0)
         {
-            double frequency = (double)SDL_GetPerformanceFrequency();
-            DebugMessage(M64MSG_VERBOSE, "Netplay: %u frames saved for rollback (%.2f ms each, %.1f us of it the execution plugin's state, at most %.1f us), %u couldn't be; %u restores (%.2f ms each)",
-                         l_snapshots_taken, l_snapshot_ticks * 1000.0 / frequency / l_snapshots_taken,
-                         l_exec_save_ticks * 1000000.0 / frequency / l_snapshots_taken, l_exec_save_max * 1000000.0 / frequency,
-                         l_snapshots_missed,
-                         l_restores, l_restores ? l_restore_ticks * 1000.0 / frequency / l_restores : 0.0);
+            DebugMessage(M64MSG_VERBOSE, "Netplay: %u frames saved for rollback, %u couldn't be",
+                         l_snapshots_taken, l_snapshots_missed);
         }
     }
 }

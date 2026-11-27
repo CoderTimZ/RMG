@@ -171,8 +171,10 @@ void InterpretOpcode(struct r4300_core* r4300)
 {
 	uint32_t pc = *r4300_pc(r4300);
 	unsigned int exceptions;
+	const int hooked = execution_hooked(M64HOOK_EXECUTE, pc);
+	unsigned int unsafe = 0;
 
-	if (execution_hooked(M64HOOK_EXECUTE, pc))
+	if (hooked)
 	{
 		execution.execute(pc);
 		if (*r4300_pc(r4300) != pc) return; /* the plugin jumped elsewhere */
@@ -184,6 +186,14 @@ void InterpretOpcode(struct r4300_core* r4300)
 	if (op_address == NULL)
 		return;
 	uint32_t op = *op_address;
+
+	/* Between Execute and ExecuteDone, no save state or rollback (a hooked branch takes interrupts); a hooked delay
+	 * slot leaves the bit to its branch */
+	if (hooked)
+	{
+		unsafe = r4300->cp0.interrupt_unsafe_state & INTR_UNSAFE_EXECUTION;
+		r4300->cp0.interrupt_unsafe_state |= INTR_UNSAFE_EXECUTION;
+	}
 
 	switch ((op >> 26) & 0x3F) {
 	case 0: /* SPECIAL prefix */
@@ -766,6 +776,9 @@ void InterpretOpcode(struct r4300_core* r4300)
 		RESERVED(r4300, op);
 		break;
 	} /* switch ((op >> 26) & 0x3F) */
+
+	if (hooked && !unsafe)
+		r4300->cp0.interrupt_unsafe_state &= ~INTR_UNSAFE_EXECUTION;
 
 	/* Not when the instruction raised an exception: it didn't complete (and runs again after the handler) */
 	if (execution_hooked(M64HOOK_EXECUTE, pc) && execution_sync_exceptions == exceptions)

@@ -240,6 +240,11 @@ void input_plugin_rumble_flush(void)
     }
 }
 
+void input_plugin_rumble_reset(void)
+{
+    memset(l_rerun_rumble, 0, sizeof(l_rerun_rumble));
+}
+
 
 static void input_plugin_read_controller(void* opaque,
     const uint8_t* tx, const uint8_t* tx_buf,

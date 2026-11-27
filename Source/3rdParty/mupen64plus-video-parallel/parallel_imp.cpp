@@ -1,5 +1,6 @@
 // Adapted from https://github.com/Themaister/parallel-rdp/blob/master/integration_example.cpp
 #include "vulkan_headers.hpp"
+#include <algorithm>
 #include <cstring>
 #include "parallel_imp.h"
 #include "screen.h"
@@ -839,9 +840,16 @@ void vk_wait_idle()
 
 // The RDP's state outside RDRAM, saved and restored with the rest of the
 // machine by the new netplay's rollback
-// (the part of a command list not processed yet, the area drawn since the
-// last full sync, which sets how long the RDP takes, and the count the RDP's
-// noise is seeded from)
+// (where the command list parser is, the area drawn since the last full sync,
+// which sets how long the RDP takes, the count the RDP's noise is seeded from,
+// and what's left of a command that hasn't arrived whole)
+// Of the command list buffer, only that last part matters: vk_process_commands
+// runs the commands as they arrive and starts the buffer over once none is
+// left, and it's only ever read from cmd_cur to cmd_ptr. A snapshot is taken
+// between calls to it, when that's less than the longest command (22 double
+// words). The positions are kept as they were, since the check for a full
+// buffer depends on cmd_ptr.
+static const int pending_max = 32; // double words
 struct ParserState
 {
 	int32_t cmd_cur;
@@ -849,13 +857,14 @@ struct ParserState
 	uint32_t last_scissor_area;
 	uint32_t scissor_area_since_sync;
 	uint32_t noise_index;
+	uint32_t pending[2 * pending_max];
 };
 
 unsigned vk_state_size()
 {
 	if (!processor)
 		return 0;
-	return unsigned(sizeof(ParserState) + sizeof(rdp_commands) + sizeof(cmd_data) + processor->get_hidden_state_size());
+	return unsigned(sizeof(ParserState) + sizeof(rdp_commands) + processor->get_hidden_state_size());
 }
 
 void vk_save_state(void *data)
@@ -864,13 +873,14 @@ void vk_save_state(void *data)
 		return;
 	auto *bytes = static_cast<uint8_t *>(data);
 	// (this waits for the GPU, so everything queued is drawn and counted first)
-	processor->save_hidden_state(bytes + sizeof(ParserState) + sizeof(rdp_commands) + sizeof(cmd_data));
-	ParserState parser = { cmd_cur, cmd_ptr, last_scissor_area, scissor_area_since_sync, processor->get_noise_index() };
+	processor->save_hidden_state(bytes + sizeof(ParserState) + sizeof(rdp_commands));
+	ParserState parser = { cmd_cur, cmd_ptr, last_scissor_area, scissor_area_since_sync, processor->get_noise_index(), {} };
+	const int pending = std::min(cmd_ptr - cmd_cur, pending_max);
+	if (pending > 0)
+		memcpy(parser.pending, &cmd_data[2 * cmd_cur], size_t(pending) * 2 * sizeof(uint32_t));
 	memcpy(bytes, &parser, sizeof(parser));
 	bytes += sizeof(parser);
 	memcpy(bytes, &rdp_commands, sizeof(rdp_commands));
-	bytes += sizeof(rdp_commands);
-	memcpy(bytes, cmd_data, sizeof(cmd_data));
 }
 
 void vk_load_state(const void *data)
@@ -884,11 +894,12 @@ void vk_load_state(const void *data)
 	cmd_ptr = parser.cmd_ptr;
 	last_scissor_area = parser.last_scissor_area;
 	scissor_area_since_sync = parser.scissor_area_since_sync;
+	const int pending = std::min(cmd_ptr - cmd_cur, pending_max);
+	if (pending > 0)
+		memcpy(&cmd_data[2 * cmd_cur], parser.pending, size_t(pending) * 2 * sizeof(uint32_t));
 	bytes += sizeof(parser);
 	memcpy(&rdp_commands, bytes, sizeof(rdp_commands));
 	bytes += sizeof(rdp_commands);
-	memcpy(cmd_data, bytes, sizeof(cmd_data));
-	bytes += sizeof(cmd_data);
 	processor->load_hidden_state(bytes);
 	processor->set_noise_index(parser.noise_index);
 

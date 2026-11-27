@@ -8,7 +8,7 @@
 // ended up with.
 //
 //   RMG_NETPLAY_NEW_TEST_ADDRESS  address to join (default 127.0.0.1; try ::1 or localhost)
-//   RMG_NETPLAY_NEW_DROP_PERCENT  drop this many percent of input packets
+//   RMG_NETPLAY_NEW_DROP_PERCENT  drop this many percent of input packets (a scenario may set its own)
 //   RMG_NETPLAY_NEW_TEST_ONLY     run only the scenarios whose names contain this
 #include <RMG-Netplay-New/Session.hpp>
 #include <RMG-Core/m64p/api/m64p_plugin.h>
@@ -35,8 +35,12 @@ using namespace std::chrono_literals;
 constexpr unsigned Frames = 900;
 constexpr uint32_t NotRead = 0xFFFFFFFF;
 constexpr uint32_t EmptyPort = 0xDEADBEEF;
+// the most bytes the session puts into one Frames message (MaxFramesBytes)
+constexpr size_t MaxFramesBytes = 1200;
 
 static std::string g_address = "127.0.0.1";
+// RMG_NETPLAY_NEW_DROP_PERCENT as the test was started with
+static std::string g_dropPercent;
 
 using InputFunction = std::function<uint32_t(uint8_t player, unsigned frame)>;
 
@@ -80,9 +84,10 @@ struct Machine
     std::vector<std::string> sent;
     std::vector<std::vector<std::string>> delivered;
     bool speaker = false;
-    std::string portNames[4];
     // send a message on every frame from this one for 30 frames (0: don't)
     unsigned messageBurstAt = 0;
+    // also send the big messages and the many small ones of large_messages_of
+    bool largeMessages = false;
 };
 
 // what a machine's stand-in plugin broadcasts, on frames it samples (like a
@@ -105,6 +110,45 @@ static std::string message_of(bool isHost, uint8_t id, unsigned frame)
         return "g" + std::to_string(id) + ":" + std::to_string(frame);
     }
     return std::string();
+}
+
+// more of them: the host sends messages of 8 KB, 16 KB and the most a plugin
+// may send on three frames in a row, and 40 small ones on one frame (more
+// than a frame holds); each guest sends one of 6 KB
+static std::vector<std::string> large_messages_of(bool isHost, uint8_t id, unsigned frame)
+{
+    std::vector<std::string> messages;
+    auto padded = [](std::string message, size_t size) {
+        message.resize(size, '#');
+        return message;
+    };
+    if (isHost && frame >= 100 && frame <= 102)
+    {
+        size_t size = frame == 100 ? 8000 : frame == 101 ? 16000 : M64P_NETPLAY_NEW_MAX_MESSAGE;
+        messages.push_back(padded("h" + std::to_string(frame) + ":", size));
+    }
+    if (isHost && frame == 300)
+    {
+        for (int i = 0; i < 40; i++)
+        {
+            messages.push_back("h300:many" + std::to_string(i));
+        }
+    }
+    if (!isHost && frame == 250u + id)
+    {
+        messages.push_back(padded("g" + std::to_string(id) + ":" + std::to_string(frame), 6000));
+    }
+    return messages;
+}
+
+// SetMode, saying why it refused
+static void set_mode(Session& session, Mode mode, uint8_t authorityPlayer = HostPlayer)
+{
+    std::string error;
+    if (!session.SetMode(mode, authorityPlayer, error))
+    {
+        std::printf("  SetMode refused: %s\n", error.c_str());
+    }
 }
 
 static void set_env(const char* name, const char* value)
@@ -192,10 +236,6 @@ static void emulate(Machine& m, bool isHost, InputFunction inputOf)
     m.seen.assign(Frames, {NotRead, NotRead, NotRead, NotRead});
     m.delivered.assign(Frames, {});
     uint8_t lastAuthority = NoPlayer;
-    for (int port = 0; port < 4; port++)
-    {
-        m.portNames[port] = cb->port_name(cb->context, port);
-    }
     m.speaker = cb->speaker(cb->context) != 0;
 
     // a machine that fails stops the game for everyone, or they'd wait for it forever
@@ -325,6 +365,7 @@ static void emulate(Machine& m, bool isHost, InputFunction inputOf)
             cb->sample(cb->context, frame, localInput);
             nextSample = frame + 1;
 
+            std::vector<std::string> messages;
             std::string message = message_of(isHost, m.id, frame);
             if (message.empty() && m.messageBurstAt != 0 && frame >= m.messageBurstAt && frame < m.messageBurstAt + 30)
             {
@@ -332,12 +373,23 @@ static void emulate(Machine& m, bool isHost, InputFunction inputOf)
             }
             if (!message.empty())
             {
-                if (!cb->send_message(cb->context, message.data(), unsigned(message.size())))
+                messages.push_back(message);
+            }
+            if (m.largeMessages)
+            {
+                for (const std::string& large : large_messages_of(isHost, m.id, frame))
+                {
+                    messages.push_back(large);
+                }
+            }
+            for (const std::string& each : messages)
+            {
+                if (!cb->send_message(cb->context, each.data(), unsigned(each.size())))
                 {
                     std::printf("  [%s] FAIL: couldn't send a message at frame %u\n", m.label, frame);
                     m.ok = false;
                 }
-                m.sent.push_back(message);
+                m.sent.push_back(each);
             }
         }
 
@@ -474,6 +526,10 @@ struct Scenario
     std::string hostExecutionPlugin;
     // the host sends a message every frame for 30 frames from this one (0: it doesn't)
     unsigned hostMessageBurstAt = 0;
+    // everyone sends the messages of large_messages_of too
+    bool largeMessages = false;
+    // RMG_NETPLAY_NEW_DROP_PERCENT for this scenario (-1: as the test was started)
+    int dropPercent = -1;
     // runs on the test thread once the game is going
     std::function<void(Machine& host, Machine& player, Machine& spectator)> during;
     // extra checks
@@ -502,6 +558,10 @@ static bool run(const Scenario& scenario)
     if (scenario.delayMs != 0)
     {
         set_env("RMG_NETPLAY_NEW_DELAY_MS", std::to_string(scenario.delayMs).c_str());
+    }
+    if (scenario.dropPercent >= 0)
+    {
+        set_env("RMG_NETPLAY_NEW_DROP_PERCENT", std::to_string(scenario.dropPercent).c_str());
     }
     auto make = [](Machine& m) {
         m.session = std::make_unique<Session>([&m](const Event& event) {
@@ -570,6 +630,10 @@ static bool run(const Scenario& scenario)
     spectator.id = spectator.session->GetInfo().myId;
     player.leaveAt = scenario.playerLeavesAt;
     host.messageBurstAt = scenario.hostMessageBurstAt;
+    for (Machine* m : {&host, &player, &spectator})
+    {
+        m->largeMessages = scenario.largeMessages;
+    }
     player.busyUs = scenario.playerBusyUs;
     spectator.desyncAt = scenario.spectatorDesyncsAt;
 
@@ -591,7 +655,7 @@ static bool run(const Scenario& scenario)
     }
     if (scenario.internalName.empty() || scenario.mode != Mode::Golf)
     {
-        host.session->SetMode(scenario.mode, scenario.playerIsAuthority ? player.id : HostPlayer);
+        set_mode(*host.session, scenario.mode, scenario.playerIsAuthority ? player.id : HostPlayer);
     }
 
     std::string reason;
@@ -640,6 +704,7 @@ static bool run(const Scenario& scenario)
     spectator.emu.join();
 
     set_env("RMG_NETPLAY_NEW_DELAY_MS", nullptr);
+    set_env("RMG_NETPLAY_NEW_DROP_PERCENT", g_dropPercent.empty() ? nullptr : g_dropPercent.c_str());
 
     bool ok = host.ok && spectator.ok && (scenario.playerLeavesAt != 0 || player.ok);
 
@@ -769,24 +834,21 @@ static bool run(const Scenario& scenario)
             ok = false;
         }
 
-        // the host is the speaker, and everyone has the same player names
+        // the host is the speaker
         if (!host.speaker || player.speaker || spectator.speaker)
         {
             std::printf("  FAIL: the speaker isn't the host alone\n");
             ok = false;
         }
-        for (int port = 0; port < 4; port++)
+    }
+
+    // no Frames message got bigger than the session allows (bigger ones would
+    // be split, and wait for all their parts)
+    for (Machine* m : {&host, &player, &spectator})
+    {
+        if (m->session != nullptr && m->session->GetInfo().largestFrames > MaxFramesBytes)
         {
-            if (player.portNames[port] != host.portNames[port] || spectator.portNames[port] != host.portNames[port])
-            {
-                std::printf("  FAIL: port %d's name differs\n", port + 1);
-                ok = false;
-            }
-        }
-        if (host.portNames[0] != "Host" || host.portNames[2] != "Player" || !host.portNames[1].empty())
-        {
-            std::printf("  FAIL: the port names are %s, %s, %s, %s\n", host.portNames[0].c_str(), host.portNames[1].c_str(),
-                        host.portNames[2].c_str(), host.portNames[3].c_str());
+            std::printf("  FAIL: %s sent a Frames message of %zu bytes\n", m->label, m->session->GetInfo().largestFrames);
             ok = false;
         }
     }
@@ -880,6 +942,10 @@ int main()
     // progress shows up as it happens, also when the output goes to a file
     std::setvbuf(stdout, nullptr, _IONBF, 0);
 
+    if (const char* drop = std::getenv("RMG_NETPLAY_NEW_DROP_PERCENT"))
+    {
+        g_dropPercent = drop;
+    }
     if (const char* address = std::getenv("RMG_NETPLAY_NEW_TEST_ADDRESS"))
     {
         g_address = address;
@@ -988,7 +1054,7 @@ int main()
         s.playerIsAuthority = true;
         s.during = [](Machine& host, Machine&, Machine&) {
             std::this_thread::sleep_for(6s);
-            host.session->SetMode(Mode::Lockstep);
+            set_mode(*host.session, Mode::Lockstep);
         };
         s.check = [](Machine& host, Machine& player, Machine&) {
             if (host.authoritiesSeen.count(player.id) == 0 || host.authoritiesSeen.count(HostPlayer) == 0)
@@ -1047,7 +1113,7 @@ int main()
                 std::printf("  FAIL: the player didn't write the host's input and then the host\n");
                 return false;
             }
-            std::printf("  the host put %u messages into a frame again\n", host.session->GetInfo().messagesResent);
+            std::printf("  the host sent %u messages to the stream's authority again\n", host.session->GetInfo().messagesResent);
             return true;
         };
         scenarios.push_back(s);
@@ -1225,13 +1291,53 @@ int main()
         s.inputOf = changing_input;
         s.during = [](Machine& host, Machine& player, Machine&) {
             std::this_thread::sleep_for(3s);
-            host.session->SetMode(Mode::Lockstep);
+            set_mode(*host.session, Mode::Lockstep);
             std::this_thread::sleep_for(2s);
-            host.session->SetMode(Mode::Authority, player.id);
+            set_mode(*host.session, Mode::Authority, player.id);
             std::this_thread::sleep_for(2s);
-            host.session->SetMode(Mode::Rollback);
+            set_mode(*host.session, Mode::Rollback);
         };
         s.check = rolledBack;
+        scenarios.push_back(s);
+    }
+
+    // Big messages (up to the most a plugin may send), many small ones on
+    // one frame, and a guest's: the player writes the host's frames, so the
+    // frames that carry the host's messages go from the player through the
+    // host to the spectator, with a fifth of the input packets lost. Each
+    // message's bytes go once, on the reliable channel; the frames carry
+    // only the numbers, and nobody uses a frame before it has the bytes. The
+    // message check below covers that every message arrives exactly once, on
+    // the same frame everywhere.
+    {
+        Scenario s;
+        s.name = "Large messages, relayed, with 20% of input packets lost";
+        s.port = 47136;
+        s.mode = Mode::Authority;
+        s.playerIsAuthority = true;
+        s.largeMessages = true;
+        s.dropPercent = 20;
+        s.check = [](Machine& host, Machine&, Machine&) {
+            size_t largest = 0;
+            unsigned onOneFrame = 0;
+            for (unsigned f = 0; f < Frames; f++)
+            {
+                unsigned many = 0;
+                for (const std::string& message : host.delivered[f])
+                {
+                    largest = std::max(largest, message.size());
+                    many += message.rfind("h300:many", 0) == 0 ? 1 : 0;
+                }
+                onOneFrame = std::max(onOneFrame, many);
+            }
+            std::printf("  largest message %zu bytes; at most %u of the 40 small ones on one frame\n", largest, onOneFrame);
+            if (largest != M64P_NETPLAY_NEW_MAX_MESSAGE || onOneFrame == 0 || onOneFrame >= 40)
+            {
+                std::printf("  FAIL: the big message, or the small ones spread over frames, didn't arrive\n");
+                return false;
+            }
+            return true;
+        };
         scenarios.push_back(s);
     }
 
@@ -1262,6 +1368,39 @@ int main()
                        host.SetMode(Mode::Rollback, HostPlayer, error) && host.GetInfo().mode == Mode::Rollback;
         std::printf("  %s\n", allowed ? "PASS" : ("FAIL: " + error).c_str());
         ok = allowed && ok;
+        host.Leave();
+    }
+
+    // A spectator can't be the authority: closing their game would leave
+    // everyone waiting for the frames they write
+    {
+        std::printf("=== A spectator can't be the authority\n");
+        Session host([](const Event&) {});
+        Session watcher([](const Event&) {});
+        LocalInfo info{"Host", "v1", "rsp", "gfx", "", ""};
+        std::string error;
+        bool refused = host.Host(47137, info, "Test Game", "ABC", "", error);
+        info.name = "Watcher";
+        refused = refused && watcher.Join(g_address, 47137, info, error);
+        for (int i = 0; refused && i < 300 && (host.GetInfo().players.size() < 2 || watcher.GetInfo().myId == NoPlayer); i++)
+        {
+            std::this_thread::sleep_for(10ms);
+        }
+        uint8_t id = watcher.GetInfo().myId;
+        host.SetPorts(id, 0x0);
+        refused = refused && host.GetInfo().players.size() == 2 && !host.SetMode(Mode::Authority, id, error) &&
+                  !error.empty() && host.GetInfo().mode != Mode::Authority;
+        std::printf("  %s\n", error.c_str());
+        // with a port, they can
+        host.SetPorts(id, 0x2);
+        std::string unused;
+        bool allowed = host.SetMode(Mode::Authority, id, unused) && host.GetInfo().authorityPlayer == id;
+        // and when the host takes their ports away, the host is the authority again
+        host.SetPorts(id, 0x0);
+        bool reset = host.GetInfo().authorityPlayer == HostPlayer;
+        std::printf("  %s\n", refused && allowed && reset ? "PASS" : "FAIL");
+        ok = refused && allowed && reset && ok;
+        watcher.Leave();
         host.Leave();
     }
 

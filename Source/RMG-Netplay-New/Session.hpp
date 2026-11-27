@@ -32,7 +32,7 @@
 namespace NetplayNew
 {
 // bump whenever messages change; machines with different versions can't play together
-constexpr uint32_t ProtocolVersion = 7;
+constexpr uint32_t ProtocolVersion = 8;
 constexpr uint16_t DefaultPort     = 6420;
 // players and spectators, including the host
 constexpr int MaxPlayers = 8;
@@ -52,7 +52,8 @@ enum class Mode : uint8_t
     Golf = 2,
     // like Lockstep, but instead of waiting for another player's input,
     // guess it (their last input) and go back to correct the game when the
-    // guess was wrong. Not possible with an execution plugin.
+    // guess was wrong. With an execution plugin, only when it can save its
+    // state.
     Rollback = 3,
 };
 
@@ -86,7 +87,7 @@ struct PlayerInfo
     std::string name;
     // bit i set: this player has N64 port i+1. No ports: spectator
     uint8_t ports = 0;
-    // input delay in frames (VIs), used in Lockstep mode
+    // input delay in frames (VIs), used in Lockstep and Rollback modes
     uint8_t lag = 0;
     // round trip time to the host in milliseconds
     uint16_t ping = 0;
@@ -162,10 +163,15 @@ struct SessionInfo
     // during a game, on this machine (Rollback mode)
     RollbackStats rollback;
 
-    // during a game, on the host: execution plugin messages it put into a
-    // frame again because the authority it sent them to left without
-    // writing them
+    // during a game, on the host: execution plugin messages it sent to a
+    // stream's authority again because a player who wrote that stream left
+    // (the messages may have gone with them)
     uint32_t messagesResent = 0;
+
+#ifdef NETPLAY_NEW_TESTS
+    // (tests) the largest Frames message this machine sent, in bytes
+    size_t largestFrames = 0;
+#endif // NETPLAY_NEW_TESTS
 
     const PlayerInfo* Find(uint8_t id) const
     {
@@ -204,7 +210,6 @@ enum class EventType
     GameEnded,
     // waiting for another player's input; text names them
     Waiting,
-    WaitingDone,
     // the game was paused or resumed; text names who did it
     Paused,
     Resumed,
@@ -271,13 +276,16 @@ class Session
 
     // host: assigns N64 ports (a bitmask) to a player, taking them from anyone else
     void SetPorts(uint8_t player, uint8_t ports);
+#ifdef NETPLAY_NEW_TESTS
     // host: fixes a player's input delay in frames, which the automatic lag
     // then leaves alone (the window doesn't offer this; the tests use it)
     void SetLag(uint8_t player, uint8_t lag);
+#endif // NETPLAY_NEW_TESTS
     // host: who writes input, also during a game; authorityPlayer is for
-    // Authority mode. Returns false, with the reason, if the mode can't be used.
+    // Authority mode: the host or a player with ports (a spectator who
+    // closed their game would leave everyone waiting). Returns false, with
+    // the reason, if the mode can't be used.
     bool SetMode(Mode mode, uint8_t authorityPlayer, std::string& error);
-    void SetMode(Mode mode, uint8_t authorityPlayer = HostPlayer);
     // whether Rollback mode can be used with these players; reason says why not
     bool CanRollback(std::string& reason);
     // host: whether the game can start; reason says why not
@@ -337,14 +345,11 @@ class Session
         std::vector<std::deque<uint8_t>> pendingEvents;
         // the execution plugins' messages in each frame (only frames that
         // have some), and when this machine is the authority, the ones
-        // waiting for the next frame it writes. The host numbers them.
-        struct Message
-        {
-            uint32_t seq = 0;
-            std::vector<uint8_t> data;
-        };
-        std::map<uint32_t, std::vector<Message>> messages;
-        std::deque<Message> pendingMessages;
+        // waiting for the next frame it writes: their numbers (the host
+        // numbers them), with their bytes in messageBodies. A frame doesn't
+        // count as arrived until the bytes of all its messages have too.
+        std::map<uint32_t, std::vector<uint32_t>> messages;
+        std::deque<uint32_t> pendingMessages;
         // host: when it last asked the authority to hand this stream over
         uint64_t lastRequest = 0;
         // Rollback: the input this machine used for frames that weren't
@@ -354,10 +359,10 @@ class Session
         {
             std::vector<uint32_t> values;
             std::vector<uint8_t> events;
-            // the messages delivered with it (copies), and whether the plugin
-            // read them (see GetPluginMessage): a guess made for the input
-            // alone is right if its input is
-            std::vector<Message> messages;
+            // the messages delivered with it (their numbers), and whether the
+            // plugin read them (see GetPluginMessage): a guess made for the
+            // input alone is right if its input is
+            std::vector<uint32_t> messages;
             bool messagesRead = false;
         };
         std::map<uint32_t, Used> used;
@@ -384,8 +389,10 @@ class Session
     {
         // the round trip time's variation to the host, in milliseconds
         uint32_t jitter = 0;
+#ifdef NETPLAY_NEW_TESTS
         // SetLag fixed this player's lag
         bool fixed = false;
+#endif // NETPLAY_NEW_TESTS
         // how many checks in a row found the lag higher than needed
         int lowerChecks = 0;
         // how long their frames take to emulate (the 90th percentile of
@@ -446,18 +453,15 @@ class Session
     std::map<uint8_t, RemoteFrame> remoteFrames;
     double lead = 0.0;
 
-    // messages: who played on each port when the game started; on the host,
-    // the last number given to a message and the messages that aren't in a
-    // final frame yet (by number: the stream and the data), which it puts
-    // into a frame again if the authority it sent them to leaves
-    std::string portNames[4];
+    // messages: every message's bytes by number, kept for the whole game
+    // (the host sends each to everyone once, on the reliable channel, and
+    // frames carry only the numbers); on the host, the last number given to
+    // a message and the messages that aren't in a final frame yet (number ->
+    // stream), which it sends to the stream's authority again if a player
+    // who wrote the stream leaves
+    std::map<uint32_t, std::vector<uint8_t>> messageBodies;
     uint32_t messageSeq = 0;
-    struct InflightMessage
-    {
-        uint8_t stream;
-        std::vector<uint8_t> data;
-    };
-    std::map<uint32_t, InflightMessage> inflightMessages;
+    std::map<uint32_t, uint8_t> inflightMessages;
     // the message get_message returned last
     std::vector<uint8_t> messageBuffer;
 
@@ -489,8 +493,7 @@ class Session
     std::vector<uint8_t> BuildStateLocked(void);
     void BroadcastLocked(const std::vector<uint8_t>& message, uint8_t exceptPlayer = NoPlayer);
     void SendToPlayerLocked(uint8_t player, Channel channel, const std::vector<uint8_t>& message);
-    void StartGameLocked(Mode mode, const uint8_t owners[4], const std::map<uint8_t, uint8_t>& authorities,
-                         const std::string names[4]);
+    void StartGameLocked(Mode mode, const uint8_t owners[4], const std::map<uint8_t, uint8_t>& authorities);
     void EndGameLocked(void);
     std::vector<uint8_t> BuildFramesLocked(uint8_t recipient);
     void SendFramesLocked(void);
@@ -500,20 +503,27 @@ class Session
 
     // authority
     uint32_t LagLocked(const Stream& stream);
-    void AdjustLagLocked(uint64_t now);
+    void AdjustLagLocked(void);
     int64_t BusyLocked(void);
     void SetFrameLocked(Stream& stream, uint32_t frame, const std::vector<uint32_t>& values, const std::vector<uint8_t>& events,
-                        std::vector<Stream::Message> messages = {});
+                        std::vector<uint32_t> messages = {});
+    // moves the stream's `count` past the frames that arrived, if the bytes
+    // of all their messages have too
+    void AdvanceLocked(Stream& stream);
+    bool HasBodiesLocked(const Stream& stream, uint32_t frame);
     void RouteEventLocked(Stream& stream, size_t port, uint8_t event);
     // messages: the stream they go into (the host's, or the first if the
-    // host plays no port), and passing one on to its authority
+    // host plays no port); (host) numbering a new one and sending its bytes
+    // to everyone; and passing one on to its stream's authority
     Stream* MessageStreamLocked(void);
-    void RouteMessageLocked(Stream& stream, Stream::Message message);
+    void AddMessageLocked(Stream& stream, std::vector<uint8_t> data);
+    void RouteMessageLocked(Stream& stream, uint32_t seq);
     void ForgetFinalMessagesLocked(Stream& stream, uint32_t from, uint32_t to);
     // the messages a frame carries, without any whose number an earlier frame
-    // carries already (a message put into a frame again after its authority
-    // left can turn up twice); the same on every machine
-    std::vector<Stream::Message> MessagesOfLocked(const Stream& stream, uint32_t frame);
+    // (or the same one) carries already (a message sent to an authority again
+    // after a player who wrote the stream left can turn up twice); the same
+    // on every machine
+    std::vector<uint32_t> MessagesOfLocked(const Stream& stream, uint32_t frame);
     void RequeueMessagesLocked(Stream& stream);
     void WriteAuthoredLocked(Stream& stream, int64_t throughFrame);
     void DelegateLocked(Stream& stream, uint8_t to);
@@ -550,7 +560,6 @@ class Session
     static int CoreSendPluginMessage(void* context, const void* data, unsigned int size);
     static const void* CoreGetPluginMessage(void* context, unsigned int frame, unsigned int index, unsigned int* size);
     static int CoreSpeaker(void* context);
-    static const char* CorePortName(void* context, int port);
 
     int Sync(m64p_netplay_new_sync kind, void* data, unsigned int size);
     int ConfigurePorts(const m64p_netplay_new_port local[4], m64p_netplay_new_port ports[4]);
@@ -563,7 +572,6 @@ class Session
     int SendPluginMessage(const void* data, unsigned int size);
     const void* GetPluginMessage(unsigned int frame, unsigned int index, unsigned int* size);
     int Speaker(void);
-    const char* PortName(int port);
 };
 } // namespace NetplayNew
 

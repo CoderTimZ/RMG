@@ -11,6 +11,7 @@
 
 #include "Utilities/QtMessageBox.hpp"
 
+#include <RMG-Core/CachedRomHeaderAndSettings.hpp>
 #include <RMG-Core/Cheats.hpp>
 #include <RMG-Core/NetplayNew.hpp>
 #include <RMG-Core/Plugins.hpp>
@@ -204,7 +205,8 @@ NetplaySessionWindow::NetplaySessionWindow(QWidget* parent, const QMap<QString, 
     this->modeComboBox = new QComboBox(this);
     this->modeComboBox->setToolTip("Lockstep: everyone sends their own input, and one player lagging lags everyone.\n"
                                    "Rollback: like Lockstep, but other players' input is guessed instead of waited for, and the\n"
-                                   "game goes back to correct a wrong guess, so there's less input delay. Not with execution plugins.\n"
+                                   "game goes back to correct a wrong guess, so there's less input delay. With an execution plugin,\n"
+                                   "only when the plugin can save its state.\n"
                                    "Authority: one player sends everyone's input; only players who lag fall behind.\n"
                                    "Golf: like Authority, but whoever starts playing becomes the authority.");
     this->pauseButton = new QPushButton("Pause", this);
@@ -300,12 +302,12 @@ NetplayNew::LocalInfo NetplaySessionWindow::localInfo(QString nickname, QString 
         info.executionPlugin.clear();
     }
 
-    info.rollbackProblem = CoreGetNetplayNewRollbackProblem(info.gfxPlugin);
+    info.rollbackProblem = CoreGetNetplayNewRollbackProblem(info.rspPlugin, info.gfxPlugin);
 
     // an execution plugin keeps state of its own, which rollback can only
     // restore when the plugin saves it
     if (info.rollbackProblem.empty() && !info.executionPlugin.empty() &&
-        !CorePluginHasFunction(CorePluginType::Execution, info.executionPlugin, "NetplaySaveState"))
+        !CoreNetplayNewExecutionPluginSavesState(info.executionPlugin))
     {
         info.rollbackProblem = "execution plugin can't save its state for rollback";
     }
@@ -317,7 +319,15 @@ bool NetplaySessionWindow::Host(QString nickname, QString romFile, QString gameN
 {
     std::string errorString;
     this->romFile = romFile;
-    this->port    = port;
+
+    // (the core refuses them too; the guests find the same file by its MD5)
+    CoreRomType type = CoreRomType::Cartridge;
+    if (CoreGetCachedRomHeaderAndSettings(romFile.toStdU32String(), &type, nullptr, nullptr, nullptr) &&
+        type == CoreRomType::Disk)
+    {
+        error = "64DD disks aren't supported in netplay";
+        return false;
+    }
 
     if (!this->session->Host(port, this->localInfo(nickname, romFile), gameName.toStdString(), gameMD5.toStdString(),
                              gameInternalName.toStdString(), errorString))
@@ -361,8 +371,6 @@ bool NetplaySessionWindow::Host(QString nickname, QString romFile, QString gameN
 bool NetplaySessionWindow::Join(QString nickname, QString address, uint16_t port, QString& error)
 {
     std::string errorString;
-    this->port = port;
-
     this->nickname = nickname;
     if (!this->session->Join(address.toStdString(), port, this->localInfo(nickname, QString()), errorString))
     {
@@ -477,9 +485,6 @@ void NetplaySessionWindow::handleEvent(const NetplayNew::Event& event)
 
     case NetplayNew::EventType::Waiting:
         emit this->ShowMessage("Waiting for " + text + "...");
-        break;
-
-    case NetplayNew::EventType::WaitingDone:
         break;
 
     case NetplayNew::EventType::Paused:
@@ -753,6 +758,12 @@ void NetplaySessionWindow::refresh(void)
         this->modeComboBox->addItem("Golf", QVariant::fromValue(QPair<int, int>(int(NetplayNew::Mode::Golf), NetplayNew::HostPlayer)));
         for (const NetplayNew::PlayerInfo& player : info.players)
         {
+            // not a spectator: they can close their game at any time, and
+            // everyone would wait for them (the host's closing it ends it anyway)
+            if (player.ports == 0 && player.id != NetplayNew::HostPlayer)
+            {
+                continue;
+            }
             this->modeComboBox->addItem("Authority: " + QString::fromStdString(player.name),
                                         QVariant::fromValue(QPair<int, int>(int(NetplayNew::Mode::Authority), player.id)));
         }

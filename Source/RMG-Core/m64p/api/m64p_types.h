@@ -247,11 +247,11 @@ typedef struct {
  *
  * Messages: an execution plugin can broadcast a message (bytes of its own
  * format) to every machine's plugin with send_message(). The session puts
- * it into an input frame, and at the end of that frame every machine's core
- * hands it to its plugin (get_message), so every game applies it at the
- * same point. */
+ * it into an input frame, and at the end of a later frame of the session's
+ * choosing (the same everywhere) every machine's core hands it to its
+ * plugin (get_message), so every game applies it at the same point. */
 
-#define M64P_NETPLAY_NEW_API_VERSION 0x010500
+#define M64P_NETPLAY_NEW_API_VERSION 0x010600
 
 /* the largest message send_message() takes */
 #define M64P_NETPLAY_NEW_MAX_MESSAGE 32768
@@ -334,7 +334,12 @@ typedef struct {
    * full speed (1/60 s, or 1/50 s for PAL) and M64P_NETPLAY_NEW_RERUN if
    * the frame was re-run after a rollback. Returns M64P_NETPLAY_NEW_SKIP_LIMITER
    * (when this machine needs to catch up) and M64P_NETPLAY_NEW_SLOW_DOWN, or
-   * -1 if the session ended. */
+   * -1 if the session ended.
+   * The time is measured from the start of the last live frame (re-run
+   * frames don't restart it), so a live frame's busy_us includes the
+   * restore and the frames re-run before it, and a re-run frame's includes
+   * the ones re-run before it. That's on purpose: the automatic lag then
+   * covers what rollbacks cost this machine. */
   int (*frame_end)(void* context, unsigned int frame, unsigned int busy_us, unsigned int frame_us, int flags);
 
   /* A hash of the emulated machine for the end of a frame (RDRAM, the CP0
@@ -378,10 +383,6 @@ typedef struct {
    * others' plugins only take part through messages. Asked at every frame
    * boundary, so it can move to another machine during a game. */
   int (*speaker)(void* context);
-
-  /* The name of the player on a port (0-3) when the game started, the same
-   * on every machine, or "" if the port has none. Valid until the game ends. */
-  const char* (*port_name)(void* context, int port);
 } m64p_netplay_new_callbacks;
 
 /* ----------------------------------------- */

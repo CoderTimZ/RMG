@@ -66,6 +66,10 @@ extern const struct rumble_backend_interface
 /* sends the rumble that frames re-run after a rollback held back */
 void input_plugin_rumble_flush(void);
 
+/* forgets the rumble held back (when a game of the new netplay starts: what
+ * an earlier game held back points to that game's controllers) */
+void input_plugin_rumble_reset(void);
+
 /* PIF data processing functions */
 
 extern const struct joybus_device_interface

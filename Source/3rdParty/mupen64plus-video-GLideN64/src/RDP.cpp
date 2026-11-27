@@ -570,7 +570,12 @@ inline u32 READ_RDP_DATA(u32 address)
 
 void RDP_ProcessRDPList()
 {
-	if (ConfigOpen || dwnd().isResizeWindow()) {
+	// In a game of RMG's new netplay every command list is drawn, as in RSP_ProcessDList
+	const bool netplay = Config_isNetplayNewGame();
+	if (netplay && dwnd().isResizeWindow())
+		dwnd().resizeWindow();
+
+	if ((ConfigOpen && !netplay) || dwnd().isResizeWindow()) {
 		dp_current = dp_end;
 		gDPFullSync();
 		return;

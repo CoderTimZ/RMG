@@ -227,8 +227,7 @@ void FrameBuffer::copyRdram()
 	// Auxiliary frame buffer (not in a game of RMG's new netplay: the marker is written when this plugin creates the
 	// buffer, which happens again after the window is resized, so it would make one player's RDRAM differ; the copy
 	// below checks the buffer's validity instead)
-	const bool netplay = Config_netplayNewGame != nullptr && Config_netplayNewGame() != 0;
-	if (isAuxiliary() && config.frameBufferEmulation.copyAuxToRDRAM == 0 && !netplay) {
+	if (isAuxiliary() && config.frameBufferEmulation.copyAuxToRDRAM == 0 && !Config_isNetplayNewGame()) {
 		// Write small amount of data to the start of the buffer.
 		// This is necessary for auxilary buffers: game can restore content of RDRAM when buffer is not needed anymore
 		// Thus content of RDRAM on moment of buffer creation will be the same as when buffer becomes obsolete.

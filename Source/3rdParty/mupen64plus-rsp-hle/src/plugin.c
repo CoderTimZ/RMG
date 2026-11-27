@@ -22,6 +22,7 @@
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -78,6 +79,14 @@ static ptr_DoRspCycles l_DoRspCycles = NULL;
 static ptr_RomClosed l_RomClosed = NULL;
 static ptr_PluginShutdown l_PluginShutdown = NULL;
 
+/* optional, for the core's new netplay (see RspStateSize below) */
+typedef unsigned int (*ptr_RspStateSize)(void);
+typedef void (*ptr_SaveRspState)(void* data);
+typedef void (*ptr_LoadRspState)(const void* data);
+static ptr_RspStateSize l_RspStateSize = NULL;
+static ptr_SaveRspState l_SaveRspState = NULL;
+static ptr_LoadRspState l_LoadRspState = NULL;
+
 /* definitions of pointers to Core functions */
 static ptr_ConfigOpenSection      ConfigOpenSection = NULL;
 static ptr_ConfigDeleteSection    ConfigDeleteSection = NULL;
@@ -106,6 +115,9 @@ static void teardown_rsp_fallback()
     l_InitiateRSP = NULL;
     l_RomClosed = NULL;
     l_PluginShutdown = NULL;
+    l_RspStateSize = NULL;
+    l_SaveRspState = NULL;
+    l_LoadRspState = NULL;
 }
 
 static void setup_rsp_fallback(const char* rsp_fallback_path)
@@ -176,6 +188,16 @@ static void setup_rsp_fallback(const char* rsp_fallback_path)
     if ((*PluginStartup)(l_CoreHandle, l_DebugCallContext, l_DebugCallback) != M64ERR_SUCCESS) {
         HleErrorMessage(NULL, "Error: %s plugin library '%s' failed to start.", plugin_name, rsp_fallback_path);
         goto close_handle;
+    }
+
+    /* optional functions (all or none) */
+    l_RspStateSize = (ptr_RspStateSize) osal_dynlib_getproc(handle, "RspStateSize");
+    l_SaveRspState = (ptr_SaveRspState) osal_dynlib_getproc(handle, "SaveRspState");
+    l_LoadRspState = (ptr_LoadRspState) osal_dynlib_getproc(handle, "LoadRspState");
+    if (l_RspStateSize == NULL || l_SaveRspState == NULL || l_LoadRspState == NULL) {
+        l_RspStateSize = NULL;
+        l_SaveRspState = NULL;
+        l_LoadRspState = NULL;
     }
 
     /* OK we're done ! */
@@ -468,6 +490,50 @@ EXPORT void CALL InitiateRSP(RSP_INFO Rsp_Info, unsigned int* CycleCount)
     if (l_InitiateRSP) {
         l_InitiateRSP(Rsp_Info, CycleCount);
     }
+}
+
+/*
+ * Optional, for the core's new netplay: the RSP's state that carries over
+ * from one task to the next, which rollback saves and restores with the
+ * machine. The core asks only this plugin for it, so it includes the
+ * registers of the fallback RSP, which runs the tasks this plugin doesn't
+ * (with DisplayListToGraphicsPlugin off, every display list), when the
+ * fallback has them to give. This plugin's own state between tasks comes
+ * first: the audio lists' settings and buffers (they stand for what the
+ * microcode keeps in DMEM, which a list doesn't have to set again) and the
+ * microcodes it has recognized (by their address only, so after a rollback a
+ * different microcode at the same address would otherwise be taken for the
+ * one the abandoned frames had there).
+ */
+#define HLE_STATE_OFFSET offsetof(struct hle_t, alist_buffer)
+#define HLE_STATE_SIZE (sizeof(struct hle_t) - HLE_STATE_OFFSET)
+
+static unsigned int fallback_state_size(void)
+{
+    return (l_RspStateSize != NULL) ? l_RspStateSize() : 0;
+}
+
+EXPORT unsigned int CALL RspStateSize(void)
+{
+    return (unsigned int)HLE_STATE_SIZE + fallback_state_size();
+}
+
+EXPORT void CALL SaveRspState(void* data)
+{
+    unsigned char* bytes = (unsigned char*)data;
+
+    memcpy(bytes, (const unsigned char*)&g_hle + HLE_STATE_OFFSET, HLE_STATE_SIZE);
+    if (fallback_state_size() > 0)
+        l_SaveRspState(bytes + HLE_STATE_SIZE);
+}
+
+EXPORT void CALL LoadRspState(const void* data)
+{
+    const unsigned char* bytes = (const unsigned char*)data;
+
+    memcpy((unsigned char*)&g_hle + HLE_STATE_OFFSET, bytes, HLE_STATE_SIZE);
+    if (fallback_state_size() > 0)
+        l_LoadRspState(bytes + HLE_STATE_SIZE);
 }
 
 EXPORT void CALL RomClosed(void)

@@ -17,6 +17,7 @@ public:
 	bool changeWindow();
 	bool resizeWindow();
 	void closeWindow();
+	void rebindImages();
 	void setWindowSize(u32 _width, u32 _height);
 	void setCaptureScreen(const char * const _strDirectory);
 	void setToggleFullscreen() { m_bToggleFullscreen = true; }
@@ -73,8 +74,6 @@ protected:
 
 private:
 	GraphicsDrawer m_drawer;
-
-	void _rebindImages();
 
 	virtual bool _start() = 0;
 	virtual void _stop() = 0;

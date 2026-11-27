@@ -181,13 +181,21 @@ void Config::validate()
 	// written); fills are always written (with the color copy from RDRAM on,
 	// they weren't, and that copy clears RDRAM); and the "adjust" aspect
 	// modes, which clip by the window's shape and so move the
-	// software-rendered depth by a pixel, become the plain ones.
-	if (Config_netplayNewGame != nullptr && Config_netplayNewGame() != 0) {
+	// software-rendered depth by a pixel, become the plain ones. FBInfo is
+	// off (when the CPU reads a frame buffer through it, the GPU's pixels are
+	// copied into RDRAM; the custom settings turn it on for some games), and
+	// vertices are always clipped in software (as by default: the depth
+	// rendered in software is drawn from the clipped triangles).
+	// (The custom settings for a game are loaded before this, so they can't
+	// undo it.)
+	if (Config_isNetplayNewGame()) {
 		frameBufferEmulation.enable = 1;
 		frameBufferEmulation.copyToRDRAM = ctDisable;
 		frameBufferEmulation.copyAuxToRDRAM = 0;
 		frameBufferEmulation.copyDepthToRDRAM = cdSoftwareRender;
 		frameBufferEmulation.copyFromRDRAM = 0;
+		frameBufferEmulation.fbInfoDisabled = 1;
+		generalEmulation.enableClipping = 1;
 		if (frameBufferEmulation.aspect == aAdjust43)
 			frameBufferEmulation.aspect = a43;
 		else if (frameBufferEmulation.aspect == aAdjust169)

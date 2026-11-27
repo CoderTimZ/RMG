@@ -414,6 +414,11 @@ static bool open_plugin_config(CorePluginType type, void* parent, bool romConfig
 
 CORE_EXPORT bool CorePluginHasFunction(CorePluginType type, std::string settingsValue, const char* function)
 {
+    return CorePluginHasFunctions(type, settingsValue, {function});
+}
+
+CORE_EXPORT bool CorePluginHasFunctions(CorePluginType type, std::string settingsValue, const std::vector<std::string>& functions)
+{
     std::string path = get_plugin_path(type, settingsValue);
     if (path.empty() || path == "(None)")
     {
@@ -425,7 +430,9 @@ CORE_EXPORT bool CorePluginHasFunction(CorePluginType type, std::string settings
     {
         return false;
     }
-    bool found = CoreGetLibrarySymbol(handle, function) != nullptr;
+    bool found = std::all_of(functions.begin(), functions.end(), [handle](const std::string& function) {
+        return CoreGetLibrarySymbol(handle, function.c_str()) != nullptr;
+    });
     CoreCloseLibrary(handle);
     return found;
 }

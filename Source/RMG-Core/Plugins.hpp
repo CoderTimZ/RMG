@@ -39,6 +39,9 @@ std::vector<CorePlugin> CoreGetAllPlugins(void);
 // exports a function
 bool CorePluginHasFunction(CorePluginType type, std::string settingsValue, const char* function);
 
+// whether the plugin a setting names exports all of these functions
+bool CorePluginHasFunctions(CorePluginType type, std::string settingsValue, const std::vector<std::string>& functions);
+
 // applies updated plugin settings,
 // i.e when you've changed a plugin
 bool CoreApplyPluginSettings(void);

@@ -23,9 +23,15 @@ bool CoreSetNetplayNewCallbacks(const m64p_netplay_new_callbacks* callbacks);
 // returns whether a new netplay session is attached
 bool CoreHasNetplayNew(void);
 
-// returns why the new netplay's Rollback mode can't be used with this video
-// plugin and its settings, or an empty string
-std::string CoreGetNetplayNewRollbackProblem(std::string gfxPlugin);
+// returns why the new netplay's Rollback mode can't be used with these RSP
+// and video plugins (the values of settings like Core_GFX_Plugin), or an
+// empty string
+std::string CoreGetNetplayNewRollbackProblem(std::string rspPlugin, std::string gfxPlugin);
+
+// returns whether an execution plugin (the value of a setting like
+// Core_EXECUTION_Plugin) can save its state for the new netplay's Rollback
+// mode: the core uses its state functions only when it has all of them
+bool CoreNetplayNewExecutionPluginSavesState(std::string executionPlugin);
 
 #ifdef CORE_INTERNAL
 // hands the callbacks to the core, right before a game starts

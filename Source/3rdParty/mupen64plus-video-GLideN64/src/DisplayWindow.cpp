@@ -99,6 +99,8 @@ bool DisplayWindow::changeWindow()
 	_changeWindow();
 	updateScale();
 	m_drawer._initData();
+	if (Config_isNetplayNewGame())
+		rebindImages();
 	m_bToggleFullscreen = false;
 	return true;
 }
@@ -132,17 +134,20 @@ bool DisplayWindow::resizeWindow()
 			return false;
 	updateScale();
 	m_drawer._initData();
-	_rebindImages();
+	if (Config_isNetplayNewGame())
+		rebindImages();
 	m_bResizeWindow = false;
 	return true;
 }
 
-void DisplayWindow::_rebindImages()
+void DisplayWindow::rebindImages()
 {
-	// _initData() starts with no frame buffers, so the color and depth images the game bound stay unbound until it
-	// binds them again, which can be in a later display list of the same frame. Until then, what it draws is dropped,
-	// with the depth that's rendered into RDRAM in software. Binding them again keeps RDRAM the same as when the window
-	// wasn't resized (which keeps the players of a netplay game in sync).
+	// Binds the color and depth images gDP has again. _initData() starts with no frame buffers, so the ones the game
+	// bound stay unbound until it binds them again, which can be in a later display list of the same frame; until then,
+	// what it draws is dropped, with the depth that's rendered into RDRAM in software. In a game of RMG's new netplay
+	// that would make RDRAM differ from when the window wasn't resized or switched to or from fullscreen, so they're
+	// bound again then (elsewhere the game binds them itself, as upstream). Loading a rollback state also binds them,
+	// since gDP's images then come from the state and the current buffers from the abandoned frames.
 	if (config.frameBufferEmulation.enable == 0 || gDP.colorImage.address == 0 || gDP.colorImage.width == 0)
 		return;
 	if (gDP.depthImageAddress != 0)

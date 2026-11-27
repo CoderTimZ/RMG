@@ -950,14 +950,18 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     // configure text and filename data for save slots
     this->updateSaveStateSlotActions(inEmulation, isPaused);
 
+    // in the new netplay, the video and RSP plugins' settings can't change
+    // during a game: GLideN64 skips display lists while its settings are
+    // open and reloads them when they close, which can change the game
+    // on this machine only (a desync)
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_GraphicsSettings));
-    this->action_Settings_Graphics->setEnabled(CorePluginsHasConfig(CorePluginType::Gfx));
+    this->action_Settings_Graphics->setEnabled(CorePluginsHasConfig(CorePluginType::Gfx) && !CoreHasNetplayNew());
     this->action_Settings_Graphics->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_AudioSettings));
     this->action_Settings_Audio->setEnabled(CorePluginsHasConfig(CorePluginType::Audio));
     this->action_Settings_Audio->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_RspSettings));
-    this->action_Settings_Rsp->setEnabled(CorePluginsHasConfig(CorePluginType::Rsp));
+    this->action_Settings_Rsp->setEnabled(CorePluginsHasConfig(CorePluginType::Rsp) && !CoreHasNetplayNew());
     this->action_Settings_Rsp->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_InputSettings));
     this->action_Settings_Input->setEnabled(CorePluginsHasConfig(CorePluginType::Input));
@@ -1975,6 +1979,11 @@ void MainWindow::on_Action_System_GSButton(void)
 
 void MainWindow::on_Action_Settings_Graphics(void)
 {
+    // (see updateActions)
+    if (CoreHasNetplayNew())
+    {
+        return;
+    }
     CorePluginsOpenConfig(CorePluginType::Gfx, this);
 }
 
@@ -1985,6 +1994,11 @@ void MainWindow::on_Action_Settings_Audio(void)
 
 void MainWindow::on_Action_Settings_Rsp(void)
 {
+    // (see updateActions)
+    if (CoreHasNetplayNew())
+    {
+        return;
+    }
     CorePluginsOpenConfig(CorePluginType::Rsp, this);
 }
 

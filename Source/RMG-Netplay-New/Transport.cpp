@@ -128,8 +128,10 @@ static std::vector<ENetAddress> resolve(const std::string& name, uint16_t port)
 // keep the connection's settings the same for every peer
 static void configure_peer(ENetPeer* peer)
 {
-    // never throttle (drop) unreliable packets: input frames are tiny
-    // and carry their own redundancy, so dropping them only adds delay
+    // never throttle (drop) unreliable packets: input frames are small (a
+    // Frames message stays under the MTU and carries only the numbers of
+    // execution plugin messages, whose bytes go on the reliable channel) and
+    // carry their own redundancy, so dropping them only adds delay
     enet_peer_throttle_configure(peer, ENET_PEER_PACKET_THROTTLE_INTERVAL, 0, 0);
     // notice a lost connection within a few seconds
     enet_peer_timeout(peer, 32, 3000, 8000);
@@ -248,8 +250,12 @@ uint64_t transport_now_ms(void)
 
 bool Transport::Start(ENetHost* host, Handlers handlers)
 {
+#ifdef NETPLAY_NEW_TESTS
     const char* delay = std::getenv("RMG_NETPLAY_NEW_DELAY_MS");
     this->delayMs  = delay != nullptr ? static_cast<uint32_t>(std::max(0, std::atoi(delay))) : 0;
+    const char* drop = std::getenv("RMG_NETPLAY_NEW_DROP_PERCENT");
+    this->dropPercent = drop != nullptr ? std::atoi(drop) : 0;
+#endif // NETPLAY_NEW_TESTS
     this->delayed.clear();
     this->host     = host;
     this->handlers = std::move(handlers);
@@ -331,15 +337,12 @@ void Transport::Send(PeerId id, Channel channel, const std::vector<uint8_t>& dat
         return;
     }
 
-    // for testing on a perfect network: RMG_NETPLAY_NEW_DROP_PERCENT=N drops N% of outgoing input packets
-    static const int dropPercent = [] {
-        const char* value = std::getenv("RMG_NETPLAY_NEW_DROP_PERCENT");
-        return value != nullptr ? std::atoi(value) : 0;
-    }();
-    if (channel == Channel::Input && dropPercent > 0 && std::rand() % 100 < dropPercent)
+#ifdef NETPLAY_NEW_TESTS
+    if (channel == Channel::Input && this->dropPercent > 0 && static_cast<int>(this->dropRandom() % 100) < this->dropPercent)
     {
         return;
     }
+#endif // NETPLAY_NEW_TESTS
 
     if (this->delayMs > 0)
     {
@@ -371,7 +374,11 @@ void Transport::SendNow(PeerId id, Channel channel, const std::vector<uint8_t>& 
         return;
     }
 
-    enet_uint32 flags = (channel == Channel::Control) ? ENET_PACKET_FLAG_RELIABLE : ENET_PACKET_FLAG_UNSEQUENCED;
+    // (an input packet bigger than the MTU, which the session avoids, would
+    // be split into unreliable parts too, rather than reliable ones that hold
+    // up the control channel)
+    enet_uint32 flags = (channel == Channel::Control) ? ENET_PACKET_FLAG_RELIABLE
+                                                      : (ENET_PACKET_FLAG_UNSEQUENCED | ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
     ENetPacket* packet = enet_packet_create(data.data(), data.size(), flags);
     if (packet == nullptr)
     {
@@ -409,7 +416,7 @@ uint32_t Transport::GetRoundTripTime(PeerId id)
     {
         return 0;
     }
-    // (with the test delay, both ways)
+    // (with the test delay, both ways; 0 unless testing)
     return peer->roundTripTime + 2 * this->delayMs;
 }
 

@@ -724,8 +724,6 @@ static m64p_error plugin_connect_execution(m64p_dynlib_handle plugin_handle)
             execution.netplayExport = NULL;
         if (!GET_FUNC(ptr_NetplayImport, execution.netplayImport, "NetplayImport"))
             execution.netplayImport = NULL;
-        if (!GET_FUNC(ptr_NetplayPlayers, execution.netplayPlayers, "NetplayPlayers"))
-            execution.netplayPlayers = NULL;
         if (!GET_FUNC(ptr_NetplayFrame, execution.netplayFrame, "NetplayFrame"))
             execution.netplayFrame = NULL;
         if (!GET_FUNC(ptr_NetplayMessage, execution.netplayMessage, "NetplayMessage"))
@@ -1015,12 +1013,6 @@ void execution_netplay_import(const void* data, uint32_t size)
         return;
     if (execution.netplayImport(data, size) != 0)
         DebugMessage(M64MSG_WARNING, "The execution plugin couldn't import the host's settings for netplay");
-}
-
-void execution_netplay_players(const char* const names[4])
-{
-    if (l_ExecutionAttached && execution.netplayPlayers != NULL)
-        execution.netplayPlayers(names);
 }
 
 void execution_netplay_frame(uint32_t frame, uint32_t final_frames, int flags)

@@ -114,11 +114,12 @@ void RSP_ProcessDList()
 	// In a game of RMG's new netplay every display list is drawn: one that's skipped doesn't write what it draws into
 	// RDRAM (fills, software-rendered depth), which would make that player's game differ from the others'. A resize the
 	// window is waiting for (normally done at the next screen update, which frames re-run after a rollback don't have)
-	// is done now instead.
-	if (dwnd().isResizeWindow() && Config_netplayNewGame != nullptr && Config_netplayNewGame() != 0)
+	// is done now instead, and an open settings dialog doesn't stop drawing.
+	const bool netplay = Config_isNetplayNewGame();
+	if (netplay && dwnd().isResizeWindow())
 		dwnd().resizeWindow();
 
-	if (ConfigOpen || dwnd().isResizeWindow()) {
+	if ((ConfigOpen && !netplay) || dwnd().isResizeWindow()) {
 		*REG.MI_INTR |= MI_INTR_DP;
 		CheckInterrupts();
 		return;

@@ -76,7 +76,6 @@ class NetplaySessionWindow : public QDialog
     std::unique_ptr<NetplayNew::Session> session;
     QMap<QString, CoreRomSettings> roms;
     QString romFile;
-    uint16_t port = 0;
     QString nickname;
     // the host's addresses to share (the router's part is added as it's known)
     QString addressText;

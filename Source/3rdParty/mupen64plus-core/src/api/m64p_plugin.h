@@ -350,25 +350,27 @@ typedef int (*ptr_NetplayExport)(const void** data, uint32_t* size);
 typedef int (*ptr_NetplayImport)(const void* data, uint32_t size);
 /* Optional, for the new netplay (each is used when the plugin exports it):
  *
- * NetplayPlayers(names): right after NetplayStart, the name of the player on each of the 4 ports ("" for none), the
- * same on every machine. The strings are valid until RomClosed.
- *
  * NetplayFrame(frame, final, flags): at the start of every frame, also before InitiateExecution (frame 0), and while
- * frames are re-run after a rollback. Frames before `final` are final: their input won't change. A plugin does what
- * reaches outside the game (sending to a server, writing files, logging) only for final frames: it waits for them, and
+ * frames are re-run after a rollback: once for each frame run, the first frame run again included (right after its
+ * NetplayLoadState). The frame's number is the one Frame() gets at its end (during the new netplay, the session's frame
+ * number, which goes back for frames run again). Frames before `final` are final: their input won't change. A plugin
+ * does what reaches outside the game (sending to a server, writing files, logging) only for final frames: it waits for them, and
  * forgets what it was going to do for frames it goes back from (NetplayLoadState). A final frame can still be run again
  * (a rollback goes back to the newest frame the core saved before the wrong guess, which can be before `final`), but
  * with the same input it does the same, so what it does outside the game was done already and is skipped.
  * flags: NETPLAY_FRAME_RERUN when the frame is run again after a rollback; NETPLAY_FRAME_SPEAKER when this machine is
  * the one that talks to services outside the session (one machine at a time, which can change during a game).
  *
- * NetplayMessage(data, size): a message a plugin broadcast with the core's ExecutionNetplaySendMessage, at the end of
- * the frame the session put it into, on every machine (and again when that frame is re-run). Plugins apply what a
+ * NetplayMessage(data, size): a message a plugin broadcast with the core's ExecutionNetplaySendMessage, on every
+ * machine at the end of the same frame (and again when that frame is re-run). That frame is the one the session decides
+ * (see get_message in m64p_types.h): the new netplay's session hands a message over MessageDelayFrames after the frame
+ * it put the message into, so that frame has arrived everywhere by then, also in Rollback mode. Plugins apply what a
  * server tells them here, rather than when it arrives, so every game applies it at the same point.
  *
  * Rollback: the core saves the plugin's state with each state it saves for rollback (NetplaySaveState, at the start of
  * the frame), restores it when it goes back to that frame (NetplayLoadState, the frames after it are then run again)
- * and drops it when it can't go back that far anymore (NetplayDropState). NetplayStateSize() is the size of the buffer
+ * and drops it when it can't go back that far anymore (NetplayDropState). When it goes back, the core also drops the
+ * saves of the frames after that one (NetplayDropState for each), so NetplayLoadState needn't. NetplayStateSize() is the size of the buffer
  * the core keeps for the plugin with each saved frame (it can be 0, for a plugin that keeps its saves itself). A game
  * with an execution plugin can only use Rollback mode if the plugin exports these four.
  *
@@ -376,7 +378,6 @@ typedef int (*ptr_NetplayImport)(const void* data, uint32_t size);
  * plugin's state, which must be the same at the end of a frame run again as at the end of its first run. */
 #define NETPLAY_FRAME_RERUN   1
 #define NETPLAY_FRAME_SPEAKER 2
-typedef void(*ptr_NetplayPlayers)(const char* const* names);
 typedef void(*ptr_NetplayFrame)(uint32_t frame, uint32_t final_frames, int flags);
 typedef void(*ptr_NetplayMessage)(const void* data, uint32_t size);
 typedef uint32_t(*ptr_NetplayStateSize)(void);
@@ -411,7 +412,6 @@ EXPORT void CALL Reset(int hard);
 EXPORT void CALL NetplayStart(int is_host);
 EXPORT int CALL NetplayExport(const void** data, uint32_t* size);
 EXPORT int CALL NetplayImport(const void* data, uint32_t size);
-EXPORT void CALL NetplayPlayers(const char* const* names);
 EXPORT void CALL NetplayFrame(uint32_t frame, uint32_t final_frames, int flags);
 EXPORT void CALL NetplayMessage(const void* data, uint32_t size);
 EXPORT uint32_t CALL NetplayStateSize(void);

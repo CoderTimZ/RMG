@@ -51,6 +51,8 @@ ptr_ConfigGetParamInt ConfigGetParamInt = NULL;
 ptr_ConfigGetParamBool ConfigGetParamBool = NULL;
 ptr_ConfigSetParameter ConfigSetParameter = NULL;
 ptr_ConfigReceiveNetplayConfig ConfigReceiveNetplayConfig = NULL;
+// RMG's core has it: nonzero while a game of its new netplay runs
+static int (*NetplayNewGame)(void) = NULL;
 
 static bool vk_initialized;
 static bool warn_hle;
@@ -171,6 +173,7 @@ EXPORT m64p_error CALL PluginStartup(m64p_dynlib_handle _CoreLibHandle, void *Co
     ConfigGetParamBool = (ptr_ConfigGetParamBool)DLSYM(CoreLibHandle, "ConfigGetParamBool");
     ConfigSetParameter = (ptr_ConfigSetParameter)DLSYM(CoreLibHandle, "ConfigSetParameter");
     ConfigReceiveNetplayConfig = (ptr_ConfigReceiveNetplayConfig)DLSYM(CoreLibHandle, "ConfigReceiveNetplayConfig");
+    NetplayNewGame = (int (*)(void))DLSYM(CoreLibHandle, "NetplayNewGame");
 
     ConfigOpenSection("Video-Parallel", &configVideoParallel);
     ConfigSetDefaultInt(configVideoParallel, KEY_UPSCALING, 1, "Amount of rescaling: 1=None, 2=2x, 4=4x, 8=8x");
@@ -316,12 +319,20 @@ EXPORT int CALL RomOpen(void)
     vk_overscan_enable = ConfigGetParamBool(configVideoParallel, KEY_OVERSCANCROPENABLE);
     vk_vertical_stretch = ConfigGetParamInt(configVideoParallel, KEY_VERTICAL_STRETCH);
 
-    m64p_error netplay_init = ConfigReceiveNetplayConfig(NULL, 0);
-    if (netplay_init != M64ERR_NOT_INIT)
+    // the old netplay (the core's, built with NETPLAY=ON)
+    if (ConfigReceiveNetplayConfig != NULL && ConfigReceiveNetplayConfig(NULL, 0) != M64ERR_NOT_INIT)
     {
         DebugMessage(M64MSG_INFO, "Netplay enabled, disabling vsync");
         window_vsync   = 0; // force disable vsync during netplay
         vk_ssreadbacks = 0; // can cause desyncs
+    }
+
+    // In a game of RMG's new netplay every machine's RDRAM must stay the
+    // same: superscaled readbacks write what's drawn at the upscaled
+    // resolution into RDRAM, which then depends on each player's upscaling
+    if (NetplayNewGame != NULL && NetplayNewGame() != 0)
+    {
+        vk_ssreadbacks = 0;
     }
 
     plugin_init();
@@ -413,7 +424,8 @@ extern "C" EXPORT void CALL WaitRdpIdle(void)
 }
 
 // optional, for the core's new netplay: the RDP's state outside RDRAM (its
-// hidden bits and TMEM), which rollback saves and restores with the machine
+// hidden bits, TMEM, its settings and the command parser's state, see
+// vk_save_state), which rollback saves and restores with the machine
 extern "C" EXPORT unsigned int CALL RdpStateSize(void)
 {
     return vk_initialized ? vk_state_size() : 0;

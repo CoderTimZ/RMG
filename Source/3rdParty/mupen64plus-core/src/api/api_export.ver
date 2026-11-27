@@ -35,6 +35,8 @@ CoreAttachPlugin;
 CoreCheatEnabled;
 CoreDetachPlugin;
 ExecutionInvalidateCode;
+ExecutionNetplaySendMessage;
+NetplayNewGame;
 CoreDoCommand;
 CoreErrorMessage;
 CoreGetAPIVersions;

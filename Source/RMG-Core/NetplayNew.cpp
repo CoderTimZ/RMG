@@ -10,9 +10,9 @@
 #define CORE_INTERNAL
 #include "NetplayNew.hpp"
 #include "Library.hpp"
+#include "Plugins.hpp"
 #include "Error.hpp"
 
-#include "Settings.hpp"
 #include "m64p/Api.hpp"
 
 #include <algorithm>
@@ -55,27 +55,41 @@ CORE_EXPORT bool CoreHasNetplayNew(void)
     return l_HasCallbacks;
 }
 
-CORE_EXPORT std::string CoreGetNetplayNewRollbackProblem(std::string gfxPlugin)
+CORE_EXPORT std::string CoreGetNetplayNewRollbackProblem(std::string rspPlugin, std::string gfxPlugin)
 {
-    std::transform(gfxPlugin.begin(), gfxPlugin.end(), gfxPlugin.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    // (GLideN64 copies nothing to RDRAM in a game of the new netplay, and
+    // Parallel doesn't read superscaled pixels back: the core tells them,
+    // see NetplayNewGame)
 
-    // (GLideN64 copies nothing to RDRAM in a game of the new netplay: the
-    // core tells it, see NetplayNewGame)
-
-    // Parallel's upscaling keeps an upscaled copy of RDRAM on the GPU, which
-    // rollback doesn't save. That's fine while the game only reads native
-    // RDRAM (at worst a frame after a rollback shows upscaled pixels from the
-    // abandoned frames), but superscaled reads give the game pixels made
-    // from that copy.
-    if (gfxPlugin.find("parallel") != std::string::npos &&
-        CoreSettingsGetIntValue("Video-Parallel", "Upscaling", 1) > 1 &&
-        CoreSettingsGetBoolValue("Video-Parallel", "SuperscaledReads", false))
+    // A rollback restores the RDP's settings and TMEM, which a video plugin
+    // keeps outside RDRAM, only if the plugin hands them over (angrylion
+    // doesn't). Without them, a frame run again doesn't draw what it drew
+    // the first time.
+    if (!gfxPlugin.empty() &&
+        !CorePluginHasFunctions(CorePluginType::Gfx, gfxPlugin, {"RdpStateSize", "SaveRdpState", "LoadRdpState"}))
     {
-        return "Parallel's superscaled reads are on (turn them off, or set Upscaling to 1x, native)";
+        return "video plugin can't save the RDP's state for rollback";
+    }
+
+    // The same for an LLE RSP plugin's registers, which carry over from one
+    // task to the next. The HLE RSP plugin keeps none that matter (its
+    // re-run frames are exact without them).
+    std::string rsp = rspPlugin;
+    std::transform(rsp.begin(), rsp.end(), rsp.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (!rspPlugin.empty() && rsp.find("rsp-hle") == std::string::npos &&
+        !CorePluginHasFunctions(CorePluginType::Rsp, rspPlugin, {"RspStateSize", "SaveRspState", "LoadRspState"}))
+    {
+        return "RSP plugin can't save its state for rollback";
     }
 
     return std::string();
+}
+
+CORE_EXPORT bool CoreNetplayNewExecutionPluginSavesState(std::string executionPlugin)
+{
+    // (mupen64plus-core's plugin.c takes all four or none)
+    return CorePluginHasFunctions(CorePluginType::Execution, executionPlugin,
+                                  {"NetplayStateSize", "NetplaySaveState", "NetplayLoadState", "NetplayDropState"});
 }
 
 //

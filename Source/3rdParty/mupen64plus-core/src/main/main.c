@@ -1108,7 +1108,9 @@ void new_vi(void)
     timed_sections_refresh();
 #endif
 
-    execution.frame(l_CurrentVI);
+    /* during the new netplay, the frame's number in the session, which goes
+     * back for frames re-run after a rollback (l_CurrentVI doesn't count them) */
+    execution.frame(netplay_new_active() ? netplay_new_frame() : l_CurrentVI);
 
     if (!rerun) {
         if (l_CurrentVI % 30 == 0) {
@@ -1311,6 +1313,18 @@ static void load_dd_rom(uint8_t* rom, size_t* rom_size, uint8_t* disk_region)
 no_dd:
     free(dd_ipl_rom_filename);
     *rom_size = 0;
+}
+
+/* whether the frontend gives the game a 64DD disk (see load_dd_disk) */
+static int dd_disk_loaded(void)
+{
+    char* dd_disk_filename = (g_media_loader.get_dd_disk == NULL)
+        ? NULL
+        : g_media_loader.get_dd_disk(g_media_loader.cb_data);
+    int loaded = dd_disk_filename != NULL && strlen(dd_disk_filename) > 0;
+
+    free(dd_disk_filename);
+    return loaded;
 }
 
 static int load_dd_disk(struct dd_disk* dd_disk, const struct storage_backend_interface** dd_idisk)
@@ -1642,15 +1656,13 @@ void main_change_gb_cart(int control_id)
 */
 
 
-/* Whether the dynamic recompiler calls the execution plugin (see new_dynarec_execution_supported) */
-static int dynarec_supports_execution_plugin(void)
-{
-#if defined(NEW_DYNAREC) && !defined(NO_ASM)
-    return new_dynarec_execution_supported();
+/* Whether the dynamic recompiler calls the execution plugin: only the new one on x86-64 does (see
+ * new_dynarec_execution_supported) */
+#if defined(NEW_DYNAREC) && NEW_DYNAREC == NEW_DYNAREC_X64 && !defined(NO_ASM)
+#define DYNAREC_CALLS_EXECUTION_PLUGIN 1
 #else
-    return 0;
+#define DYNAREC_CALLS_EXECUTION_PLUGIN 0
 #endif
-}
 
 m64p_error main_run(void)
 {
@@ -1692,6 +1704,14 @@ m64p_error main_run(void)
             break;
     }
 
+    /* The new netplay can't play the 64DD: its disk saves are neither shared
+     * with the other players nor held back until their frames are final */
+    if (netplay_new_active() && dd_disk_loaded())
+    {
+        DebugMessage(M64MSG_ERROR, "Netplay: 64DD disks aren't supported in netplay. Remove the disk and start the game again.");
+        return M64ERR_UNSUPPORTED;
+    }
+
     if (netplay_new_active())
         netplay_new_start();
 
@@ -1729,13 +1749,15 @@ m64p_error main_run(void)
     //During netplay, player 1 is the source of truth for these settings
     netplay_sync_settings(&count_per_op, &count_per_op_denom_pot, &disable_extra_mem, &si_dma_duration, &emumode, &no_compiled_jump);
 
+#if !DYNAREC_CALLS_EXECUTION_PLUGIN
     /* The execution plugin follows the game's code through the interpreters, and the new dynamic recompiler on
      * x86-64 (the other dynamic recompilers send it nothing) */
-    if (emumode == EMUMODE_DYNAREC && execution_plugin_attached() && !dynarec_supports_execution_plugin())
+    if (emumode == EMUMODE_DYNAREC && execution_plugin_attached())
     {
         DebugMessage(M64MSG_INFO, "Using the cached interpreter instead of the dynamic recompiler for the execution plugin");
         emumode = EMUMODE_INTERPRETER;
     }
+#endif
 
     /* During the new netplay, the host is the source of truth for everything that changes how the game runs */
     if (netplay_new_active())
@@ -1761,10 +1783,13 @@ m64p_error main_run(void)
         count_per_op_denom_pot = netplay_settings.count_per_op_denom_pot;
         disable_extra_mem = netplay_settings.disable_extra_mem;
         si_dma_duration = netplay_settings.si_dma_duration;
-        if (netplay_settings.emumode == EMUMODE_DYNAREC && execution_plugin_attached() && !dynarec_supports_execution_plugin())
+#if !DYNAREC_CALLS_EXECUTION_PLUGIN
+        if (netplay_settings.emumode == EMUMODE_DYNAREC && execution_plugin_attached())
         {
-            DebugMessage(M64MSG_WARNING, "Netplay: the host's CPU emulator is used, the dynamic recompiler, which can't call the execution plugin here");
+            /* (the host's build can, this one can't) */
+            DebugMessage(M64MSG_WARNING, "Netplay: the game runs with the host's CPU emulator, the dynamic recompiler, which can't call the execution plugin in this build; the plugin won't see the game's code here, and this game may drift apart from the others");
         }
+#endif
         emumode = netplay_settings.emumode;
         no_compiled_jump = netplay_settings.no_compiled_jump;
         ROM_SETTINGS.savetype = (unsigned char)netplay_settings.save_type;

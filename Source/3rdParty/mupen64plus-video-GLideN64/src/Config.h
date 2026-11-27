@@ -288,6 +288,10 @@ extern Config config;
 // Set by the mupen64plus API when the core has it: whether a game of RMG's
 // new netplay runs (see Config::validate)
 extern int (*Config_netplayNewGame)(void);
+inline bool Config_isNetplayNewGame()
+{
+	return Config_netplayNewGame != nullptr && Config_netplayNewGame() != 0;
+}
 
 void Config_LoadConfig();
 #if defined(M64P_GLIDENUI) || !defined(MUPENPLUSAPI)

@@ -3295,6 +3295,23 @@ static void execution_execute_done(uint32_t pc, unsigned int exceptions)
     execution.executeDone(pc);
 }
 
+/* Between Execute and ExecuteDone of a hooked instruction, no save state or rollback: a hooked branch takes
+ * interrupts (see INTR_UNSAFE_EXECUTION). Returns whether the bit was set already (a hooked delay slot leaves it to its
+ * branch), for execution_unsafe_end. */
+static unsigned int execution_unsafe_begin(struct r4300_core* r4300, uint32_t pc)
+{
+  unsigned int unsafe = r4300->cp0.interrupt_unsafe_state & INTR_UNSAFE_EXECUTION;
+  if(execution_hooked(M64HOOK_EXECUTE, pc))
+    r4300->cp0.interrupt_unsafe_state |= INTR_UNSAFE_EXECUTION;
+  return unsafe;
+}
+
+static void execution_unsafe_end(struct r4300_core* r4300, unsigned int unsafe)
+{
+  if(!unsafe)
+    r4300->cp0.interrupt_unsafe_state &= ~INTR_UNSAFE_EXECUTION;
+}
+
 /* Runs an instruction that isn't a jump or branch through the cached interpreter's function for it, in the
  * recompiler's fake_pc (which the recompiler's own calls of those functions use), leaving pcaddr after it */
 static void execution_run_instruction(struct r4300_core* r4300, uint32_t pc, uint32_t iw)
@@ -3315,7 +3332,7 @@ static void execution_run_instruction(struct r4300_core* r4300, uint32_t pc, uin
 static void execution_step(struct r4300_core* r4300, uint32_t pc)
 {
   struct new_dynarec_hot_state* state = &r4300->new_dynarec_hot_state;
-  unsigned int exceptions;
+  unsigned int exceptions, unsafe;
   uint32_t* mem;
   if(!execution_execute(r4300, pc)) return;
   mem=fast_mem_access(r4300, pc);
@@ -3325,7 +3342,11 @@ static void execution_step(struct r4300_core* r4300, uint32_t pc)
   }
   exceptions=execution_sync_exceptions;
   if(execution_jump_opcode(*mem)) state->pcaddr=pc+4;
-  else execution_run_instruction(r4300, pc, *mem);
+  else {
+    unsafe=execution_unsafe_begin(r4300, pc);
+    execution_run_instruction(r4300, pc, *mem);
+    execution_unsafe_end(r4300, unsafe);
+  }
   execution_execute_done(pc, exceptions);
 }
 
@@ -3500,7 +3521,9 @@ void* execution_hook_new(void)
       TLB_refill_exception(r4300, pc, 2);
     else
     {
+      unsigned int unsafe;
       exceptions = execution_sync_exceptions;
+      unsafe = execution_unsafe_begin(r4300, pc);
       if(execution_jump_opcode(*mem))
         execution_run_jump(r4300, pc, *mem);
       else
@@ -3508,6 +3531,7 @@ void* execution_hook_new(void)
         state->cycle_count += CLOCK_DIVIDER;
         execution_run_instruction(r4300, pc, *mem);
       }
+      execution_unsafe_end(r4300, unsafe);
       execution_execute_done(pc, exceptions);
     }
   }

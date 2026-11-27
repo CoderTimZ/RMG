@@ -258,6 +258,7 @@ void exec_cached_ops(struct r4300_core* r4300)
     struct precomp_instr* inst = *r4300_pc_struct(r4300);
     uint32_t pc = inst->addr;
     unsigned int exceptions;
+    unsigned int unsafe;
 
     /* Most instructions: nothing for the plugin */
     if (!(execution_hooked(M64HOOK_EXECUTE, pc) | execution_reload_pending))
@@ -291,7 +292,16 @@ void exec_cached_ops(struct r4300_core* r4300)
 
     exceptions = execution_sync_exceptions;
 
+    /* Between Execute and ExecuteDone, no save state or rollback (a hooked branch takes interrupts); a hooked delay
+     * slot leaves the bit to its branch */
+    unsafe = r4300->cp0.interrupt_unsafe_state & INTR_UNSAFE_EXECUTION;
+    if (execution_hooked(M64HOOK_EXECUTE, pc))
+        r4300->cp0.interrupt_unsafe_state |= INTR_UNSAFE_EXECUTION;
+
     (*r4300_pc_struct(r4300))->ops();
+
+    if (!unsafe)
+        r4300->cp0.interrupt_unsafe_state &= ~INTR_UNSAFE_EXECUTION;
 
     /* Not when the instruction raised an exception: it didn't complete (and runs again after the handler) */
     if (execution_hooked(M64HOOK_EXECUTE, pc) && execution_sync_exceptions == exceptions)

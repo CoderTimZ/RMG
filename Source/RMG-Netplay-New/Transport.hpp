@@ -15,6 +15,7 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -111,10 +112,16 @@ class Transport
     std::vector<ENetAddress> candidates;
     bool everConnected = false;
 
-    // for testing on one machine: RMG_NETPLAY_NEW_DELAY_MS=N holds every
-    // outgoing message back N milliseconds (in order), as a slower network
-    // would, and the round trip times include it
+    // for testing on one machine (only with NETPLAY_NEW_TESTS):
+    // RMG_NETPLAY_NEW_DELAY_MS=N holds every outgoing message back N
+    // milliseconds (in order), as a slower network would, and the round trip
+    // times include it; RMG_NETPLAY_NEW_DROP_PERCENT=N drops N% of the
+    // outgoing input packets. Both are read when the transport starts.
     uint32_t delayMs = 0;
+#ifdef NETPLAY_NEW_TESTS
+    int dropPercent = 0;
+    std::minstd_rand dropRandom;
+#endif // NETPLAY_NEW_TESTS
     struct DelayedMessage
     {
         uint64_t due;

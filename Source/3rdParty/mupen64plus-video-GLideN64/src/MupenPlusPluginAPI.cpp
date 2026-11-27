@@ -6,6 +6,7 @@
 #include "gSP.h"
 #include "RDP.h"
 #include "VI.h"
+#include "DisplayWindow.h"
 #include <cstring>
 #include <type_traits>
 
@@ -141,6 +142,10 @@ EXPORT void CALL LoadRdpState(const void *data)
 	// what the GPU was set up with came from other settings
 	gDP.changed = ~0U;
 	gSP.changed = ~0U;
+
+	// The current color and depth buffers are still the ones the abandoned frames bound: bind the ones gDP has now,
+	// or what's drawn before the game binds its own goes to the wrong buffers (with the depth rendered into RDRAM).
+	dwnd().rebindImages();
 }
 
 } // extern "C"
