@@ -121,14 +121,16 @@ static osal_inline void netplay_set_plugin(uint8_t control_id, uint8_t plugin)
 {
 }
 
+/* Without the old netplay it's never running, which plugins (Parallel) check for
+ * with M64ERR_NOT_INIT, as the real functions return when it isn't */
 static osal_inline m64p_error netplay_send_config(char* data, int size)
 {
-    return M64ERR_INCOMPATIBLE;
+    return M64ERR_NOT_INIT;
 }
 
 static osal_inline m64p_error netplay_receive_config(char* data, int size)
 {
-    return M64ERR_INCOMPATIBLE;
+    return M64ERR_NOT_INIT;
 }
 
 #endif
