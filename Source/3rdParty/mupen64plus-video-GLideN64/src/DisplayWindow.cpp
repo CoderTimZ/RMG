@@ -164,62 +164,108 @@ void DisplayWindow::updateScale()
 	m_scaleY = static_cast<f32>(m_height) / static_cast<f32>(VI.height);
 }
 
-void DisplayWindow::_setBufferSize()
+void DisplayWindow::_getCrop(u32 _crop[4]) const
+{
+	const u32 frameHeight = VI.PAL ? 576 : 480;
+	if ((m_crop[0] + m_crop[1]) * 4 > 640 * 3 || (m_crop[2] + m_crop[3]) * 4 > frameHeight * 3) {
+		_crop[0] = _crop[1] = _crop[2] = _crop[3] = 0;
+		return;
+	}
+	for (u32 i = 0; i < 4; ++i)
+		_crop[i] = m_crop[i];
+}
+
+void DisplayWindow::_getCropPixels(u32 _width, u32 _height, s32 _pixels[4]) const
+{
+	u32 crop[4];
+	_getCrop(crop);
+	const u32 frameHeight = VI.PAL ? 576 : 480;
+	_pixels[0] = static_cast<s32>((crop[0] * _width + 320) / 640);
+	_pixels[1] = static_cast<s32>((crop[1] * _width + 320) / 640);
+	_pixels[2] = static_cast<s32>((crop[2] * _height + frameHeight / 2) / frameHeight);
+	_pixels[3] = static_cast<s32>((crop[3] * _height + frameHeight / 2) / frameHeight);
+}
+
+void DisplayWindow::_fitPicture(u32 _screenWidth, u32 _screenHeight)
 {
 	m_bAdjustScreen = false;
 	m_adjustScale = 1.0f; // (only the "adjust" modes change it: switching away from one left its scale)
 	switch (config.frameBufferEmulation.aspect) {
 	case Config::aStretch: // stretch
-		m_width = m_screenWidth;
-		m_height = m_screenHeight;
+		m_width = _screenWidth;
+		m_height = _screenHeight;
 		break;
 	case Config::a43: // force 4/3
-		if (m_screenWidth * 3 / 4 > m_screenHeight) {
-			m_height = m_screenHeight;
-			m_width = m_screenHeight * 4 / 3;
-		} else if (m_screenHeight * 4 / 3 > m_screenWidth) {
-			m_width = m_screenWidth;
-			m_height = m_screenWidth * 3 / 4;
+		if (_screenWidth * 3 / 4 > _screenHeight) {
+			m_height = _screenHeight;
+			m_width = _screenHeight * 4 / 3;
+		} else if (_screenHeight * 4 / 3 > _screenWidth) {
+			m_width = _screenWidth;
+			m_height = _screenWidth * 3 / 4;
 		} else {
-			m_width = m_screenWidth;
-			m_height = m_screenHeight;
+			m_width = _screenWidth;
+			m_height = _screenHeight;
 		}
 		break;
 	case Config::a169: // force 16/9
-		if (m_screenWidth * 9 / 16 > m_screenHeight) {
-			m_height = m_screenHeight;
-			m_width = m_screenHeight * 16 / 9;
-		} else if (m_screenHeight * 16 / 9 > m_screenWidth) {
-			m_width = m_screenWidth;
-			m_height = m_screenWidth * 9 / 16;
+		if (_screenWidth * 9 / 16 > _screenHeight) {
+			m_height = _screenHeight;
+			m_width = _screenHeight * 16 / 9;
+		} else if (_screenHeight * 16 / 9 > _screenWidth) {
+			m_width = _screenWidth;
+			m_height = _screenWidth * 9 / 16;
 		} else {
-			m_width = m_screenWidth;
-			m_height = m_screenHeight;
+			m_width = _screenWidth;
+			m_height = _screenHeight;
 		}
 		break;
 	case Config::aAdjust43: // adjust
-		m_width = m_screenWidth;
-		m_height = m_screenHeight;
-		if (m_screenWidth * 3 / 4 > m_screenHeight) {
-			f32 width43 = m_screenHeight * 4.0f / 3.0f;
-			m_adjustScale = width43 / m_screenWidth;
+		m_width = _screenWidth;
+		m_height = _screenHeight;
+		if (_screenWidth * 3 / 4 > _screenHeight) {
+			f32 width43 = _screenHeight * 4.0f / 3.0f;
+			m_adjustScale = width43 / _screenWidth;
 			m_bAdjustScreen = true;
 		}
 		break;
 	case Config::aAdjust169: // adjust
-		m_width = m_screenWidth;
-		m_height = m_screenHeight;
-		if (m_screenWidth * 9 / 16 > m_screenHeight) {
-			f32 width169 = m_screenHeight * 16.0f / 9.0f;
-			m_adjustScale = width169 / m_screenWidth;
+		m_width = _screenWidth;
+		m_height = _screenHeight;
+		if (_screenWidth * 9 / 16 > _screenHeight) {
+			f32 width169 = _screenHeight * 16.0f / 9.0f;
+			m_adjustScale = width169 / _screenWidth;
 			m_bAdjustScreen = true;
 		}
 		break;
 	default:
 		assert(false && "Unknown aspect ratio");
-		m_width = m_screenWidth;
-		m_height = m_screenHeight;
+		m_width = _screenWidth;
+		m_height = _screenHeight;
 	}
+}
+
+// With the frontend's crop, the picture is drawn larger than the screen, the size that makes its cropped part fit,
+// and placed so the cropped edges fall outside the screen, where they're clipped: it's fitted into the screen that
+// would hold all of it at that size, and its cropped part centered in the real one.
+void DisplayWindow::_setBufferSize()
+{
+	u32 crop[4];
+	_getCrop(crop);
+	const u32 frameHeight = VI.PAL ? 576 : 480;
+	const u32 keptWidth = 640 - crop[0] - crop[1];
+	const u32 keptHeight = frameHeight - crop[2] - crop[3];
+	_fitPicture((m_screenWidth * 640 + keptWidth / 2) / keptWidth, (m_screenHeight * frameHeight + keptHeight / 2) / keptHeight);
+
+	s32 pixels[4];
+	_getCropPixels(m_width, m_height, pixels);
+	m_shownWidth = static_cast<s32>(m_width) - pixels[0] - pixels[1];
+	m_shownHeight = static_cast<s32>(m_height) - pixels[2] - pixels[3];
+	m_shownX = (static_cast<s32>(m_screenWidth) - m_shownWidth) / 2;
+	m_shownY = (static_cast<s32>(m_screenHeight) - m_shownHeight) / 2;
+	// (the frame copies that use the picture's place count down from the top of the screen area, so it's the top
+	// crop that's above the shown part)
+	m_pictureX = m_shownX - pixels[0];
+	m_pictureY = m_shownY - pixels[2];
 }
 
 void DisplayWindow::readScreen(void **_pDest, long *_pWidth, long *_pHeight)

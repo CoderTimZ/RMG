@@ -40,6 +40,17 @@ public:
 	bool isAdjustScreen() const { return m_bAdjustScreen; }
 	bool isResizeWindow() const { return m_bResizeWindow; }
 
+	// Where the picture (m_width x m_height) is drawn in the screen area, from its top left (how the frame copies count):
+	// centered, or with the
+	// frontend's crop, offset so the cropped edges fall outside the screen (and the screen shows the rest, centered)
+	s32 getPictureX() const { return m_pictureX; }
+	s32 getPictureY() const { return m_pictureY; }
+	// The part of the screen area the picture shows in (all of the picture less the crop), from its bottom left
+	s32 getShownX() const { return m_shownX; }
+	s32 getShownY() const { return m_shownY; }
+	s32 getShownWidth() const { return m_shownWidth; }
+	s32 getShownHeight() const { return m_shownHeight; }
+
 	GraphicsDrawer & getDrawer() { return m_drawer; }
 
 	static DisplayWindow & get();
@@ -48,6 +59,13 @@ protected:
 	DisplayWindow() = default;
 
 	void _setBufferSize();
+	// The picture's size (m_width x m_height) for a screen of the given size, by the aspect ratio setting
+	void _fitPicture(u32 _screenWidth, u32 _screenHeight);
+	// The pixels the frontend's crop takes from each edge of a picture of the given size (left, right, top, bottom)
+	void _getCropPixels(u32 _width, u32 _height, s32 _pixels[4]) const;
+	// The frontend's crop in the VI's pixels and lines (left, right, top, bottom), or none when it would leave less
+	// than a quarter of the picture
+	void _getCrop(u32 _crop[4]) const;
 
 	bool m_bCaptureScreen = false;
 	bool m_bToggleFullscreen = false;
@@ -69,6 +87,15 @@ protected:
 	f32 m_scaleX = 0.0f;
 	f32 m_scaleY = 0.0f;
 	f32 m_adjustScale = 1.0f;
+
+	// the crop the frontend wants (VidExt_GetCrop), in the VI's pixels and lines: left, right, top, bottom
+	u32 m_crop[4] = {};
+	s32 m_pictureX = 0;
+	s32 m_pictureY = 0;
+	s32 m_shownX = 0;
+	s32 m_shownY = 0;
+	s32 m_shownWidth = 0;
+	s32 m_shownHeight = 0;
 
 	wchar_t m_strScreenDirectory[PLUGIN_PATH_SIZE];
 

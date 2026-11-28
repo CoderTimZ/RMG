@@ -2,6 +2,7 @@
 #include "gfx_m64p.h"
 #include <stddef.h>
 #include <stdbool.h>
+#include <string.h>
 
 /* global variables */
 bool window_fullscreen;
@@ -20,6 +21,7 @@ static ptr_VidExt_VK_GetSurface CoreVideo_VK_GetSurface = NULL;
 static ptr_VidExt_VK_GetInstanceExtensions CoreVideo_VK_GetInstanceExtensions = NULL;
 static ptr_VidExt_SetVideoMode CoreVideo_SetVideoMode = NULL;
 static ptr_VidExt_GL_SwapBuffers CoreVideo_SwapCounter = NULL;
+static ptr_VidExt_GetCrop CoreVideo_GetCrop = NULL; /* optional: newer cores only */
 
 bool screen_init()
 {
@@ -33,6 +35,7 @@ bool screen_init()
     CoreVideo_VK_GetInstanceExtensions = (ptr_VidExt_VK_GetInstanceExtensions)DLSYM(CoreLibHandle, "VidExt_VK_GetInstanceExtensions");
     CoreVideo_SetVideoMode = (ptr_VidExt_SetVideoMode)DLSYM(CoreLibHandle, "VidExt_SetVideoMode");
     CoreVideo_SwapCounter = (ptr_VidExt_GL_SwapBuffers)DLSYM(CoreLibHandle, "VidExt_GL_SwapBuffers");
+    CoreVideo_GetCrop = (ptr_VidExt_GetCrop)DLSYM(CoreLibHandle, "VidExt_GetCrop");
 
     if (CoreVideo_InitWithRenderMode(M64P_RENDER_VULKAN) != M64ERR_SUCCESS)
     {
@@ -71,4 +74,11 @@ m64p_error screen_get_surface(VkInstance instance, VkSurfaceKHR* vkSurface)
 m64p_error screen_get_instance_extensions(const char ** ext[], uint32_t* ext_num)
 {
     return CoreVideo_VK_GetInstanceExtensions(ext, ext_num);
+}
+
+void screen_get_crop(m64p_video_crop* crop)
+{
+    memset(crop, 0, sizeof(*crop));
+    if (CoreVideo_GetCrop != NULL)
+        CoreVideo_GetCrop(crop);
 }

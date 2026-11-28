@@ -67,6 +67,8 @@
 #include <cmath>
 
 #include <RMG-Core/CachedRomHeaderAndSettings.hpp>
+#include <RMG-Core/RomSettings.hpp>
+#include <RMG-Core/RomHeader.hpp>
 #include <RMG-Core/SpeedLimiter.hpp>
 #include <RMG-Core/Directories.hpp>
 #include <RMG-Core/SpeedFactor.hpp>
@@ -2025,6 +2027,12 @@ void MainWindow::on_Action_Settings_Settings(void)
     // up-to-date
     this->updateActions(emulationThread->isRunning(), isPaused);
 
+    // the crop takes effect right away
+    if (this->ui_VidExtRenderMode != VidExtRenderMode::Invalid)
+    {
+        this->loadVideoCrop();
+    }
+
     // update core callbacks settings
     this->coreCallBacks->LoadSettings();
 
@@ -2466,6 +2474,9 @@ void MainWindow::on_VidExt_Init(VidExtRenderMode renderMode)
         QSurfaceFormat::setDefaultFormat(format);
     }
 
+    // the crop the video plugin applies to its picture (it reads it from the core every frame)
+    this->loadVideoCrop();
+
     if (renderMode == VidExtRenderMode::OpenGL)
     {
         this->ui_Widget_OpenGL = new Widget::OGLWidget(this);
@@ -2600,14 +2611,26 @@ void MainWindow::on_VidExt_ResizeWindow(int width, int height)
     }
 
     // account for HiDPI scaling: the requested size is in device pixels,
-    // window sizes are in scaled units, so round up to at least the requested
-    // size (it can come out a pixel larger, which the video plugin can center in)
+    // window sizes are in scaled units (which Qt rounds to device pixels):
+    // the scaled size that comes out exactly the requested size, or else
+    // round up to at least it (it can come out a pixel larger, which the
+    // video plugin can center in)
+    const qreal ratio = this->devicePixelRatio();
+    const auto toScaledUnits = [ratio](int size)
+    {
+        const int rounded = static_cast<int>(std::lround(size / ratio));
+        if (static_cast<int>(std::lround(rounded * ratio)) == size)
+        {
+            return rounded;
+        }
+        return static_cast<int>(std::ceil(static_cast<double>(size) / ratio));
+    };
     int renderWidth  = width;
     int renderHeight = height;
-    if (this->devicePixelRatio() != 1)
+    if (ratio != 1)
     {
-        renderWidth  = static_cast<int>(std::ceil(static_cast<double>(width)  / this->devicePixelRatio()));
-        renderHeight = static_cast<int>(std::ceil(static_cast<double>(height) / this->devicePixelRatio()));
+        renderWidth  = toScaledUnits(width);
+        renderHeight = toScaledUnits(height);
     }
 
     // the space the menubar, toolbar and statusbar take up
@@ -3240,3 +3263,53 @@ void MainWindow::on_Action_NetplayNew_ShowSession(void)
     }
 }
 #endif // NETPLAY_NEW
+
+void MainWindow::loadVideoCrop(void)
+{
+    CoreRomHeader romHeader;
+    CoreRomSettings romSettings;
+    const bool hasHeader = CoreGetCurrentRomHeader(romHeader);
+    const bool pal = hasHeader && romHeader.SystemType == CoreSystemType::PAL;
+
+    bool enabled = CoreSettingsGetBoolValue(SettingsID::GUI_Crop);
+    int left, right, top, bottom;
+    if (pal)
+    {
+        left   = CoreSettingsGetIntValue(SettingsID::GUI_CropPalLeft);
+        right  = CoreSettingsGetIntValue(SettingsID::GUI_CropPalRight);
+        top    = CoreSettingsGetIntValue(SettingsID::GUI_CropPalTop);
+        bottom = CoreSettingsGetIntValue(SettingsID::GUI_CropPalBottom);
+    }
+    else
+    {
+        left   = CoreSettingsGetIntValue(SettingsID::GUI_CropNtscLeft);
+        right  = CoreSettingsGetIntValue(SettingsID::GUI_CropNtscRight);
+        top    = CoreSettingsGetIntValue(SettingsID::GUI_CropNtscTop);
+        bottom = CoreSettingsGetIntValue(SettingsID::GUI_CropNtscBottom);
+    }
+
+    // the game's own crop, in its own video mode's units, replaces the global one
+    // (it's kept for the game's ID, so ROM hacks of the game use it too)
+    if (hasHeader && CoreGetCurrentDefaultRomSettings(romSettings))
+    {
+        const std::string section = CoreGetRomCropSettingsSection(romHeader, romSettings);
+        if (CoreSettingsGetBoolValue(SettingsID::Game_OverrideCrop, section))
+        {
+            enabled = true;
+            left    = CoreSettingsGetIntValue(SettingsID::Game_CropLeft, section);
+            right   = CoreSettingsGetIntValue(SettingsID::Game_CropRight, section);
+            top     = CoreSettingsGetIntValue(SettingsID::Game_CropTop, section);
+            bottom  = CoreSettingsGetIntValue(SettingsID::Game_CropBottom, section);
+        }
+    }
+
+    if (!enabled)
+    {
+        left = right = top = bottom = 0;
+    }
+
+    if (!CoreSetVideoCrop(left, right, top, bottom))
+    {
+        this->showErrorMessage("CoreSetVideoCrop() Failed", QString::fromStdString(CoreGetError()));
+    }
+}

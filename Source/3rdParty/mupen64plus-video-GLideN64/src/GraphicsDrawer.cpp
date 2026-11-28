@@ -1630,10 +1630,11 @@ void GraphicsDrawer::drawOSD()
 	gfxContext.bindFramebuffer(bufferTarget::DRAW_FRAMEBUFFER, ObjectHandle::defaultFramebuffer);
 
 	DisplayWindow & wnd = DisplayWindow::get();
-	const s32 X = (wnd.getScreenWidth() - wnd.getWidth()) / 2;
-	const s32 Y = static_cast<s32>(wnd.getHeightOffset());
-	const s32 W = static_cast<s32>(wnd.getWidth());
-	const s32 H = static_cast<s32>(wnd.getHeight());
+	// (the part of the screen the picture shows in, less the frontend's crop)
+	const s32 X = wnd.getShownX();
+	const s32 Y = static_cast<s32>(wnd.getHeightOffset()) + wnd.getShownY();
+	const s32 W = wnd.getShownWidth();
+	const s32 H = wnd.getShownHeight();
 
 	gfxContext.setViewport(X, Y, W, H);
 	gfxContext.setScissor(X, Y, W, H);

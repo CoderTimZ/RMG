@@ -331,8 +331,29 @@ static void get_pixel_size(uint32_t *width, uint32_t *height)
 		*height = 1;
 }
 
+// The crop the frontend wants (VidExt_GetCrop), read every frame: in the VI's pixels and lines, like the frame's size
+static m64p_video_crop video_crop = {};
+
+// The frontend's crop, in the frame's units, or none when it would leave less than a quarter of the frame
+static m64p_video_crop get_video_crop(uint32_t frame_width, uint32_t frame_height)
+{
+	m64p_video_crop crop = video_crop;
+	if (crop.Left < 0 || crop.Right < 0 || crop.Top < 0 || crop.Bottom < 0 ||
+	    uint32_t(crop.Left + crop.Right) * 4 > frame_width * 3 ||
+	    uint32_t(crop.Top + crop.Bottom) * 4 > frame_height * 3)
+		return {};
+	return crop;
+}
+
+// The frame's pixels a crop of the given amount takes from a frame drawn the given size
+static int32_t crop_pixels(int amount, uint32_t drawn_size, uint32_t frame_size)
+{
+	return int32_t((uint64_t(amount) * drawn_size + frame_size / 2) / frame_size);
+}
+
 // The window size that shows the game's pixels 1:1 at its upscaled resolution, times the window scale (so at 1x with
-// no upscaling, a 320x240 game gets a 320x240 window). Widescreen stretches it to 4/3 its width.
+// no upscaling, a 320x240 game gets a 320x240 window), less the frontend's crop. Widescreen stretches it to 4/3 its
+// width.
 static void get_window_size(uint32_t *width, uint32_t *height)
 {
 	uint32_t pixel_width, pixel_height;
@@ -342,6 +363,12 @@ static void get_window_size(uint32_t *width, uint32_t *height)
 	uint32_t scale = (vk_window_scale > 0 ? uint32_t(vk_window_scale) : 1) * upscale;
 	*width = window_widescreen ? (pixel_width * scale * 4 + 1) / 3 : pixel_width * scale;
 	*height = pixel_height * scale;
+
+	uint32_t frame_width, frame_height;
+	get_frame_size(&frame_width, &frame_height);
+	m64p_video_crop crop = get_video_crop(frame_width, frame_height);
+	*width -= crop_pixels(crop.Left, *width, frame_width) + crop_pixels(crop.Right, *width, frame_width);
+	*height -= crop_pixels(crop.Top, *height, frame_height) + crop_pixels(crop.Bottom, *height, frame_height);
 }
 
 // Whether the ROM is for a PAL console, from the country code at byte 0x3E of its header. The core keeps the ROM as
@@ -365,16 +392,13 @@ static uint32_t distance(uint32_t a, uint32_t b)
 	return a > b ? a - b : b - a;
 }
 
-// Fits the frame into the surface (the viewport passed in), centered with letterboxes or pillarboxes as needed.
-// Outside widescreen, the frame snaps to a whole multiple of its size in the game's pixels when the surface is within
-// a couple of pixels of one, so it isn't scaled by a fraction of a pixel: at fractional display scaling (125%, 150%)
-// the window is sized in scaled units and can come out a pixel larger than asked for. Offsets are whole pixels so the
-// frame stays on the pixel grid. Returns whether it snapped.
-static bool calculate_viewport(float* x, float* y, float* width, float* height)
+// The size of the whole frame fitted into a surface of the given size, keeping its shape. Outside widescreen, the frame
+// snaps to a whole multiple of its size in the game's pixels when the surface is within a couple of pixels of one, so
+// it isn't scaled by a fraction of a pixel: at fractional display scaling (125%, 150%) the window is sized in scaled
+// units and can come out a pixel larger than asked for. Returns whether it snapped.
+static bool fit_frame(uint32_t surface_width, uint32_t surface_height, uint32_t frame_width, uint32_t frame_height,
+                      uint32_t* fitted_width, uint32_t* fitted_height)
 {
-	uint32_t frame_width, frame_height;
-	get_frame_size(&frame_width, &frame_height);
-
 	uint32_t pixel_width, pixel_height;
 	get_pixel_size(&pixel_width, &pixel_height);
 	bool snapped = false;
@@ -383,8 +407,6 @@ static bool calculate_viewport(float* x, float* y, float* width, float* height)
 	uint64_t display_width = window_widescreen ? uint64_t(frame_width) * 4 : frame_width;
 	uint64_t display_height = window_widescreen ? uint64_t(frame_height) * 3 : frame_height;
 
-	uint32_t surface_width = uint32_t(*width);
-	uint32_t surface_height = uint32_t(*height);
 	uint32_t w = surface_width;
 	uint32_t h = surface_height;
 
@@ -408,8 +430,41 @@ static bool calculate_viewport(float* x, float* y, float* width, float* height)
 		}
 	}
 
-	*x += float((surface_width - w) / 2);
-	*y += float((surface_height - h) / 2);
+	*fitted_width = w;
+	*fitted_height = h;
+	return snapped;
+}
+
+// Fits the frame into the surface (the viewport passed in), centered with letterboxes or pillarboxes as needed. With
+// the frontend's crop, the frame is drawn larger than the surface, the size that makes its cropped part fit, and
+// placed so the cropped edges fall outside the surface, where they're clipped: the frame is fitted into the surface
+// that would hold all of it at that size (so it still snaps to whole pixels) and its cropped part centered. Offsets
+// are whole pixels so the frame stays on the pixel grid. Returns whether it snapped.
+static bool calculate_viewport(float* x, float* y, float* width, float* height)
+{
+	uint32_t frame_width, frame_height;
+	get_frame_size(&frame_width, &frame_height);
+	m64p_video_crop crop = get_video_crop(frame_width, frame_height);
+
+	const uint32_t surface_width = uint32_t(*width);
+	const uint32_t surface_height = uint32_t(*height);
+	const uint32_t kept_width = frame_width - uint32_t(crop.Left + crop.Right);
+	const uint32_t kept_height = frame_height - uint32_t(crop.Top + crop.Bottom);
+	const uint32_t whole_width = uint32_t((uint64_t(surface_width) * frame_width + kept_width / 2) / kept_width);
+	const uint32_t whole_height = uint32_t((uint64_t(surface_height) * frame_height + kept_height / 2) / kept_height);
+
+	uint32_t w, h;
+	bool snapped = fit_frame(whole_width, whole_height, frame_width, frame_height, &w, &h);
+
+	const int32_t left = crop_pixels(crop.Left, w, frame_width);
+	const int32_t right = crop_pixels(crop.Right, w, frame_width);
+	const int32_t top = crop_pixels(crop.Top, h, frame_height);
+	const int32_t bottom = crop_pixels(crop.Bottom, h, frame_height);
+	const int32_t shown_width = int32_t(w) - left - right;
+	const int32_t shown_height = int32_t(h) - top - bottom;
+
+	*x += float((int32_t(surface_width) - shown_width) / 2 - left);
+	*y += float((int32_t(surface_height) - shown_height) / 2 - top);
 	*width = float(w);
 	*height = float(h);
 	return snapped;
@@ -472,8 +527,17 @@ static void render_frame(Vulkan::Device &device)
 		if (image.get() != NULL)
 		{
 			VkViewport vp = cmd->get_viewport();
+			const int32_t surface_width = int32_t(vp.width);
+			const int32_t surface_height = int32_t(vp.height);
 			bool snapped = calculate_viewport(&vp.x, &vp.y, &vp.width, &vp.height);
-			frame_rect = { { int32_t(vp.x), int32_t(vp.y) }, { uint32_t(vp.width), uint32_t(vp.height) } };
+
+			// screenshots are of what shows: the frame, less what the crop leaves outside the surface
+			const int32_t shown_x0 = std::max(int32_t(vp.x), 0);
+			const int32_t shown_y0 = std::max(int32_t(vp.y), 0);
+			const int32_t shown_x1 = std::min(int32_t(vp.x + vp.width), surface_width);
+			const int32_t shown_y1 = std::min(int32_t(vp.y + vp.height), surface_height);
+			frame_rect = { { shown_x0, shown_y0 },
+			               { uint32_t(std::max(shown_x1 - shown_x0, 0)), uint32_t(std::max(shown_y1 - shown_y0, 0)) } };
 
 			// At a whole multiple of the game's pixels, sample them 1:1 (or repeat them) with nearest sampling.
 			// Otherwise the frame is scaled by a fraction: widescreen stretches it by 4/3, which whole pixels can't
@@ -533,6 +597,17 @@ void vk_rasterize()
 	bool pal = v_sync != 0 ? v_sync > RDP::VI_V_SYNC_NTSC + 25 : output_is_pal;
 	if (x_scale == 0)
 		x_scale = output_x_scale;
+
+	// the frontend's crop: a change resizes the window to keep the cropped frame 1:1
+	m64p_video_crop crop = {};
+	screen_get_crop(&crop);
+	if (memcmp(&crop, &video_crop, sizeof(crop)) != 0)
+	{
+		video_crop = crop;
+		uint32_t width, height;
+		get_window_size(&width, &height);
+		screen_resize_window(width, height);
+	}
 
 	if (pal == output_is_pal && x_scale == output_x_scale)
 	{
@@ -938,6 +1013,8 @@ bool vk_init()
 	output_is_pal = rom_is_pal();
 	output_x_scale = 0x200;
 	pending_frames = 0;
+	video_crop = {};
+	screen_get_crop(&video_crop);
 	get_window_size(&window_width, &window_height);
 
 	/* we have to create a window before we initialize Vulkan */

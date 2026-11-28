@@ -28,6 +28,7 @@
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Error.hpp>
 #include <RMG-Core/Rom.hpp>
+#include <RMG-Core/RomSettings.hpp>
 
 using namespace UserInterface::Dialog;
 using namespace Utilities;
@@ -44,15 +45,17 @@ enum class SettingsDialogTab
     InterfaceLog = 3,
     InterfaceOSD = 4,
     InterfaceNetplay = 5,
-    Hotkey     = 6,
-    Core       = 7,
-    Game       = 8,
-    GameCore   = 9,
-    GamePlugin = 10,
-    Plugin     = 11,
-    Directory  = 12,
-    N64DD      = 13,
-    Invalid    = 14
+    InterfaceCrop = 6,
+    Hotkey     = 7,
+    Core       = 8,
+    Game       = 9,
+    GameCore   = 10,
+    GamePlugin = 11,
+    GameCrop   = 12,
+    Plugin     = 13,
+    Directory  = 14,
+    N64DD      = 15,
+    Invalid    = 16
 };
 
 
@@ -94,6 +97,7 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
     if (this->showGameSettings)
     {
         this->gameSection = CoreGetRomSettingsSection(this->currentGameSettings);
+        this->gameCropSection = CoreGetRomCropSettingsSection(this->currentGameHeader, this->currentGameSettings);
 
         // no need to show emulation info text,
         // when we're not running/paused
@@ -192,6 +196,9 @@ void SettingsDialog::restoreDefaults(int stackedWidgetIndex)
     case SettingsDialogTab::InterfaceNetplay:
         this->loadDefaultInterfaceNetplaySettings();
         break;
+    case SettingsDialogTab::InterfaceCrop:
+        this->loadDefaultInterfaceCropSettings();
+        break;
     case SettingsDialogTab::Hotkey:
         this->loadDefaultHotkeySettings();
         break;
@@ -206,6 +213,9 @@ void SettingsDialog::restoreDefaults(int stackedWidgetIndex)
         break;
     case SettingsDialogTab::GamePlugin:
         this->loadDefaultGamePluginSettings();
+        break;
+    case SettingsDialogTab::GameCrop:
+        this->loadDefaultGameCropSettings();
         break;
     case SettingsDialogTab::Plugin:
         this->loadDefaultPluginSettings();
@@ -249,6 +259,9 @@ void SettingsDialog::loadSettings(int stackedWidgetIndex)
     case SettingsDialogTab::InterfaceNetplay:
         this->loadInterfaceNetplaySettings();
         break;
+    case SettingsDialogTab::InterfaceCrop:
+        this->loadInterfaceCropSettings();
+        break;
     case SettingsDialogTab::Hotkey:
         this->loadHotkeySettings();
         break;
@@ -263,6 +276,9 @@ void SettingsDialog::loadSettings(int stackedWidgetIndex)
         break;
     case SettingsDialogTab::GamePlugin:
         this->loadGamePluginSettings();
+        break;
+    case SettingsDialogTab::GameCrop:
+        this->loadGameCropSettings();
         break;
     case SettingsDialogTab::Plugin:
         this->loadPluginSettings();
@@ -694,6 +710,7 @@ void SettingsDialog::saveSettings(void)
         this->saveGameSettings();
         this->saveGameCoreSettings();
         this->saveGamePluginSettings();
+        this->saveGameCropSettings();
     }
     this->savePluginSettings();
     this->saveDirectorySettings();
@@ -705,6 +722,7 @@ void SettingsDialog::saveSettings(void)
     this->saveInterfaceLogSettings();
     this->saveInterfaceOSDSettings();
     this->saveInterfaceNetplaySettings();
+    this->saveInterfaceCropSettings();
     CoreSettingsSave();
 }
 
@@ -1576,4 +1594,106 @@ void SettingsDialog::on_changeNTSCPifRomButton_clicked(void)
 void SettingsDialog::on_changePALPifRomButton_clicked(void)
 {
     this->chooseFile(this->palPifRomLineEdit, tr("Open PAL PIF ROM"), "PIF ROMs (*.rom)", { "D4232DC935CAD0650AC2664D52281F3A", "2B6EEC586FAA43F3462333B844834554" });
+}
+
+//
+// Crop Settings (see MainWindow::loadVideoCrop)
+//
+
+void SettingsDialog::loadInterfaceCropSettings(void)
+{
+    this->cropGroupBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_Crop));
+    this->cropNtscLeftSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_CropNtscLeft));
+    this->cropNtscRightSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_CropNtscRight));
+    this->cropNtscTopSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_CropNtscTop));
+    this->cropNtscBottomSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_CropNtscBottom));
+    this->cropPalLeftSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_CropPalLeft));
+    this->cropPalRightSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_CropPalRight));
+    this->cropPalTopSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_CropPalTop));
+    this->cropPalBottomSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_CropPalBottom));
+}
+
+void SettingsDialog::loadGameCropSettings(void)
+{
+    this->gameOverrideCropGroupBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Game_OverrideCrop, this->gameCropSection));
+    this->gameCropLeftSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::Game_CropLeft, this->gameCropSection));
+    this->gameCropRightSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::Game_CropRight, this->gameCropSection));
+    this->gameCropTopSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::Game_CropTop, this->gameCropSection));
+    this->gameCropBottomSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::Game_CropBottom, this->gameCropSection));
+
+    const bool pal = this->currentGameHeader.SystemType == CoreSystemType::PAL;
+    QString text = QString("This game is %1: its picture is 640x%2.").arg(pal ? "PAL" : "NTSC").arg(pal ? 576 : 480);
+    if (this->gameCropSection != this->gameSection)
+    {
+        text += QString(" The crop applies to every ROM with game ID %1, so ROM hacks of the game use it too.")
+                    .arg(QString::fromStdString(this->currentGameHeader.GameID));
+    }
+    this->gameCropSharedLabel->setText(text);
+}
+
+void SettingsDialog::loadDefaultInterfaceCropSettings(void)
+{
+    this->cropGroupBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_Crop));
+    this->cropNtscLeftSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_CropNtscLeft));
+    this->cropNtscRightSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_CropNtscRight));
+    this->cropNtscTopSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_CropNtscTop));
+    this->cropNtscBottomSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_CropNtscBottom));
+    this->cropPalLeftSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_CropPalLeft));
+    this->cropPalRightSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_CropPalRight));
+    this->cropPalTopSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_CropPalTop));
+    this->cropPalBottomSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_CropPalBottom));
+}
+
+void SettingsDialog::loadDefaultGameCropSettings(void)
+{
+    this->gameOverrideCropGroupBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Game_OverrideCrop));
+    this->gameCropLeftSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::Game_CropLeft));
+    this->gameCropRightSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::Game_CropRight));
+    this->gameCropTopSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::Game_CropTop));
+    this->gameCropBottomSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::Game_CropBottom));
+}
+
+void SettingsDialog::saveInterfaceCropSettings(void)
+{
+    CoreSettingsSetValue(SettingsID::GUI_Crop, this->cropGroupBox->isChecked());
+    CoreSettingsSetValue(SettingsID::GUI_CropNtscLeft, this->cropNtscLeftSpinBox->value());
+    CoreSettingsSetValue(SettingsID::GUI_CropNtscRight, this->cropNtscRightSpinBox->value());
+    CoreSettingsSetValue(SettingsID::GUI_CropNtscTop, this->cropNtscTopSpinBox->value());
+    CoreSettingsSetValue(SettingsID::GUI_CropNtscBottom, this->cropNtscBottomSpinBox->value());
+    CoreSettingsSetValue(SettingsID::GUI_CropPalLeft, this->cropPalLeftSpinBox->value());
+    CoreSettingsSetValue(SettingsID::GUI_CropPalRight, this->cropPalRightSpinBox->value());
+    CoreSettingsSetValue(SettingsID::GUI_CropPalTop, this->cropPalTopSpinBox->value());
+    CoreSettingsSetValue(SettingsID::GUI_CropPalBottom, this->cropPalBottomSpinBox->value());
+}
+
+void SettingsDialog::saveGameCropSettings(void)
+{
+    const bool overrideEnabled = this->gameOverrideCropGroupBox->isChecked();
+    const int left   = this->gameCropLeftSpinBox->value();
+    const int right  = this->gameCropRightSpinBox->value();
+    const int top    = this->gameCropTopSpinBox->value();
+    const int bottom = this->gameCropBottomSpinBox->value();
+
+    const bool isDefault = overrideEnabled == CoreSettingsGetDefaultBoolValue(SettingsID::Game_OverrideCrop) &&
+                           left   == CoreSettingsGetDefaultIntValue(SettingsID::Game_CropLeft) &&
+                           right  == CoreSettingsGetDefaultIntValue(SettingsID::Game_CropRight) &&
+                           top    == CoreSettingsGetDefaultIntValue(SettingsID::Game_CropTop) &&
+                           bottom == CoreSettingsGetDefaultIntValue(SettingsID::Game_CropBottom);
+
+    // the game ID's own section holds nothing else (the game settings' section was cleared before saving)
+    if (this->gameCropSection != this->gameSection)
+    {
+        CoreSettingsDeleteSection(this->gameCropSection);
+    }
+
+    if (isDefault)
+    {
+        return;
+    }
+
+    CoreSettingsSetValue(SettingsID::Game_OverrideCrop, this->gameCropSection, overrideEnabled);
+    CoreSettingsSetValue(SettingsID::Game_CropLeft, this->gameCropSection, left);
+    CoreSettingsSetValue(SettingsID::Game_CropRight, this->gameCropSection, right);
+    CoreSettingsSetValue(SettingsID::Game_CropTop, this->gameCropSection, top);
+    CoreSettingsSetValue(SettingsID::Game_CropBottom, this->gameCropSection, bottom);
 }

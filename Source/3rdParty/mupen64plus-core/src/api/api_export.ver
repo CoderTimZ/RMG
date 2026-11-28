@@ -84,4 +84,5 @@ VidExt_ResizeWindow;
 VidExt_GL_GetDefaultFramebuffer;
 VidExt_VK_GetSurface;
 VidExt_VK_GetInstanceExtensions;
+VidExt_GetCrop;
 local: *; };

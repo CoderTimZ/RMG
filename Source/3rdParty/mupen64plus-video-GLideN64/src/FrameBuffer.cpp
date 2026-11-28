@@ -1091,8 +1091,8 @@ void FrameBufferList::_renderScreenSizeBuffer()
 	const u32 screenWidth = wnd.getScreenWidth();
 	const u32 screenHeight = wnd.getScreenHeight();
 	const u32 wndHeightOffset = wnd.getHeightOffset();
-	const s32 hOffset = (screenWidth - wndWidth) / 2;
-	const s32 vOffset = (screenHeight - wndHeight) / 2 + wndHeightOffset;
+	const s32 hOffset = wnd.getPictureX();
+	const s32 vOffset = wnd.getPictureY() + static_cast<s32>(wndHeightOffset);
 	s32 dstCoord[4] = { hOffset, vOffset, hOffset + static_cast<s32>(wndWidth), vOffset + static_cast<s32>(wndHeight) };
 
 	gfxContext.bindFramebuffer(bufferTarget::DRAW_FRAMEBUFFER, ObjectHandle::defaultFramebuffer);
@@ -1335,8 +1335,8 @@ void FrameBufferList::OverscanBuffer::init()
 		m_FBO = gfxContext.createFramebuffer();
 
 	DisplayWindow & wnd = dwnd();
-	m_hOffset = (wnd.getScreenWidth() - wnd.getWidth()) / 2;
-	m_vOffset = (wnd.getScreenHeight() - wnd.getHeight()) / 2;
+	m_hOffset = wnd.getPictureX();
+	m_vOffset = wnd.getPictureY();
 	m_scale = wnd.getScaleX();
 	m_drawingWidth = wnd.getWidth();
 	m_bufferWidth = wnd.getScreenWidth();

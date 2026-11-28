@@ -182,6 +182,18 @@ typedef uint32_t (*ptr_VidExt_GL_GetDefaultFramebuffer)(void);
 EXPORT uint32_t CALL VidExt_GL_GetDefaultFramebuffer(void);
 #endif
 
+/* VidExt_GetCrop()
+ *
+ * Gives the crop the frontend wants the video plugin to apply to its picture: the
+ * plugin draws the picture without that much of its edges, sized to fit its window
+ * (and asks for a window that size). Plugins can call it every frame, so a change
+ * takes effect right away. Optional: older cores don't have it.
+ */
+typedef m64p_error (*ptr_VidExt_GetCrop)(m64p_video_crop*);
+#if defined(M64P_CORE_PROTOTYPES)
+EXPORT m64p_error CALL VidExt_GetCrop(m64p_video_crop*);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

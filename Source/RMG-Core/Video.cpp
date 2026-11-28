@@ -137,3 +137,26 @@ CORE_EXPORT bool CoreGetVideoMode(CoreVideoMode& mode)
     mode = static_cast<CoreVideoMode>(videoMode);
     return true;
 }
+
+CORE_EXPORT bool CoreSetVideoCrop(int left, int right, int top, int bottom)
+{
+    std::string error;
+    m64p_error ret;
+
+    if (!m64p::Core.IsHooked())
+    {
+        return false;
+    }
+
+    m64p_video_crop crop = { left, right, top, bottom };
+    const bool hasCrop = left != 0 || right != 0 || top != 0 || bottom != 0;
+    ret = m64p::Core.DoCommand(M64CMD_SET_VIDEO_CROP, hasCrop ? sizeof(crop) : 0, hasCrop ? &crop : nullptr);
+    if (ret != M64ERR_SUCCESS)
+    {
+        error = "CoreSetVideoCrop m64p::Core.DoCommand(M64CMD_SET_VIDEO_CROP) Failed: ";
+        error += m64p::Core.ErrorMessage(ret);
+        CoreSetError(error);
+    }
+
+    return ret == M64ERR_SUCCESS;
+}

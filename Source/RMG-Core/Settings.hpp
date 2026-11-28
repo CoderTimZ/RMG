@@ -42,6 +42,18 @@ enum class SettingsID
     GUI_ConfirmExitWhileInGame,
     GUI_Version,
 
+    // GUI Crop Settings (see RenderCropWidget: the VI's pixels across, and its lines,
+    // 480 for NTSC and 576 for PAL)
+    GUI_Crop,
+    GUI_CropNtscLeft,
+    GUI_CropNtscRight,
+    GUI_CropNtscTop,
+    GUI_CropNtscBottom,
+    GUI_CropPalLeft,
+    GUI_CropPalRight,
+    GUI_CropPalTop,
+    GUI_CropPalBottom,
+
     // Netplay Settings
     Netplay_Nickname,
     Netplay_ServerJsonUrl,
@@ -120,6 +132,13 @@ enum class SettingsID
     Game_CPU_Emulator,
     Game_CountPerOpDenomPot,
     Game_RandomizeInterrupt,
+
+    // Game Crop Override Settings (in the units of the game's own video mode)
+    Game_OverrideCrop,
+    Game_CropLeft,
+    Game_CropRight,
+    Game_CropTop,
+    Game_CropBottom,
 
     // Game Plugin Settings
     Game_GFX_Plugin,

@@ -164,6 +164,34 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_GUI, "Version", CoreGetVersion()};
         break;
 
+    case SettingsID::GUI_Crop:
+        setting = {SETTING_SECTION_GUI, "Crop", false};
+        break;
+    case SettingsID::GUI_CropNtscLeft:
+        setting = {SETTING_SECTION_GUI, "CropNtscLeft", 0};
+        break;
+    case SettingsID::GUI_CropNtscRight:
+        setting = {SETTING_SECTION_GUI, "CropNtscRight", 0};
+        break;
+    case SettingsID::GUI_CropNtscTop:
+        setting = {SETTING_SECTION_GUI, "CropNtscTop", 0};
+        break;
+    case SettingsID::GUI_CropNtscBottom:
+        setting = {SETTING_SECTION_GUI, "CropNtscBottom", 0};
+        break;
+    case SettingsID::GUI_CropPalLeft:
+        setting = {SETTING_SECTION_GUI, "CropPalLeft", 0};
+        break;
+    case SettingsID::GUI_CropPalRight:
+        setting = {SETTING_SECTION_GUI, "CropPalRight", 0};
+        break;
+    case SettingsID::GUI_CropPalTop:
+        setting = {SETTING_SECTION_GUI, "CropPalTop", 0};
+        break;
+    case SettingsID::GUI_CropPalBottom:
+        setting = {SETTING_SECTION_GUI, "CropPalBottom", 0};
+        break;
+
     case SettingsID::Netplay_Nickname:
         setting = {SETTING_SECTION_NETPLAY, "Nickname", std::string("NetplayUser")};
         break;
@@ -374,6 +402,22 @@ static l_Setting get_setting(SettingsID settingId)
         break;
     case SettingsID::Game_RandomizeInterrupt:
         setting = {"", "RandomizeInterrupt", true};
+        break;
+
+    case SettingsID::Game_OverrideCrop:
+        setting = {"", "OverrideCrop", false};
+        break;
+    case SettingsID::Game_CropLeft:
+        setting = {"", "CropLeft", 0};
+        break;
+    case SettingsID::Game_CropRight:
+        setting = {"", "CropRight", 0};
+        break;
+    case SettingsID::Game_CropTop:
+        setting = {"", "CropTop", 0};
+        break;
+    case SettingsID::Game_CropBottom:
+        setting = {"", "CropBottom", 0};
         break;
 
     case SettingsID::Game_GFX_Plugin:

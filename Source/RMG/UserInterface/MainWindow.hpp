@@ -154,6 +154,9 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void updateUI(bool inEmulation, bool isPaused);
 
     void storeGeometry(void);
+
+    // tells the video plugin the crop that applies to the running game (see CoreSetVideoCrop)
+    void loadVideoCrop(void);
     void loadGeometry(void);
 
     void initializeEmulationThread(void);

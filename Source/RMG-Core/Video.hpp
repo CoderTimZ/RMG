@@ -29,4 +29,8 @@ bool CoreToggleFullscreen(void);
 // retrieves current video mode
 bool CoreGetVideoMode(CoreVideoMode& mode);
 
+// sets how much of the picture's edges the video plugin leaves out, in the VI's
+// pixels (640 across) and lines (480 for NTSC, 576 for PAL); all 0 for none
+bool CoreSetVideoCrop(int left, int right, int top, int bottom);
+
 #endif // CORE_VIDEO_HPP

@@ -387,6 +387,12 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
             if (ParamPtr != NULL && ParamInt != sizeof(m64p_netplay_new_callbacks))
                 return M64ERR_INPUT_INVALID;
             return netplay_new_set_callbacks((const m64p_netplay_new_callbacks*)ParamPtr);
+        case M64CMD_SET_VIDEO_CROP:
+            /* ParamPtr is the crop, or NULL for none: the video plugin reads it with VidExt_GetCrop */
+            if (ParamPtr != NULL && ParamInt != sizeof(m64p_video_crop))
+                return M64ERR_INPUT_INVALID;
+            VidExt_SetCrop((const m64p_video_crop*)ParamPtr);
+            return M64ERR_SUCCESS;
         default:
             return M64ERR_INPUT_INVALID;
     }

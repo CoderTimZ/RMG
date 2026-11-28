@@ -60,6 +60,7 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     CoreRomSettings currentGameSettings;
     CoreRomSettings defaultGameSettings;
     std::string     gameSection;
+    std::string     gameCropSection;
 
     int             keybindButtonTimerId  = -1;
     int             keybindButtonTimeLeft = 5;
@@ -90,6 +91,8 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     void loadInterfaceLogSettings(void);
     void loadInterfaceOSDSettings(void);
     void loadInterfaceNetplaySettings(void);
+    void loadInterfaceCropSettings(void);
+    void loadGameCropSettings(void);
 
     void loadDefaultCoreSettings(void);
     void loadDefaultGameSettings(void);
@@ -105,6 +108,8 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     void loadDefaultInterfaceLogSettings(void);
     void loadDefaultInterfaceOSDSettings(void);
     void loadDefaultInterfaceNetplaySettings(void);
+    void loadDefaultInterfaceCropSettings(void);
+    void loadDefaultGameCropSettings(void);
 
     void saveSettings(void);
     void saveCoreSettings(void);
@@ -121,6 +126,8 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     void saveInterfaceLogSettings(void);
     void saveInterfaceOSDSettings(void);
     void saveInterfaceNetplaySettings(void);
+    void saveInterfaceCropSettings(void);
+    void saveGameCropSettings(void);
 
     void commonHotkeySettings(SettingsDialogAction);
     void commonPluginSettings(SettingsDialogAction);

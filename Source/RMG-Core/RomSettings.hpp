@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <string>
 
+#include "RomHeader.hpp"
+
 struct CoreRomSettings
 {
     // rom goodname
@@ -66,5 +68,9 @@ bool CoreApplyRomSettingsOverlay(void);
 // returns the section that holds the ROM's game settings: its internal name
 // or its MD5, following the save filename format setting
 std::string CoreGetRomSettingsSection(const CoreRomSettings& settings);
+
+// returns the section that holds the ROM's crop override: one for its game ID, which
+// ROM hacks of the game share, or its game settings' section when it has none
+std::string CoreGetRomCropSettingsSection(const CoreRomHeader& header, const CoreRomSettings& settings);
 
 #endif // CORE_ROMSETTINGS_HPP

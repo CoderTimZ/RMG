@@ -353,10 +353,11 @@ void TextDrawer::drawText(const char *_pText, float _x, float _y) const
 	gfxContext.setBlending(blend::SRC_ALPHA, blend::ONE_MINUS_SRC_ALPHA);
 	m_program->activate();
 
-	const s32 X = (wnd.getScreenWidth() - wnd.getWidth()) / 2;
-	const s32 Y = (wnd.getScreenHeight() - wnd.getHeight()) / 2 + wnd.getHeightOffset();
-	const s32 W = static_cast<s32>(wnd.getWidth());
-	const s32 H = static_cast<s32>(wnd.getHeight());
+	// (the part of the screen the picture shows in, less the frontend's crop)
+	const s32 X = wnd.getShownX();
+	const s32 Y = wnd.getShownY() + static_cast<s32>(wnd.getHeightOffset());
+	const s32 W = wnd.getShownWidth();
+	const s32 H = wnd.getShownHeight();
 
 	gfxContext.setViewport(X, Y, W, H);
 	gfxContext.setScissor(X, Y, W, H);

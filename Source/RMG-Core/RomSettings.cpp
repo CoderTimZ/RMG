@@ -204,3 +204,22 @@ CORE_EXPORT std::string CoreGetRomSettingsSection(const CoreRomSettings& setting
 
     return settings.MD5;
 }
+
+CORE_EXPORT std::string CoreGetRomCropSettingsSection(const CoreRomHeader& header, const CoreRomSettings& settings)
+{
+    // the cartridge's game ID, which ROM hacks and revisions of a game keep (and
+    // its last letter is the region, so the crop's units are the same for all)
+    bool validGameID = header.GameID.size() == 4;
+    for (const char c : header.GameID)
+    {
+        validGameID = validGameID && ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'));
+    }
+
+    if (validGameID)
+    {
+        return "Rosalie's Mupen GUI Crop " + header.GameID;
+    }
+
+    // homebrew often has no game ID
+    return CoreGetRomSettingsSection(settings);
+}

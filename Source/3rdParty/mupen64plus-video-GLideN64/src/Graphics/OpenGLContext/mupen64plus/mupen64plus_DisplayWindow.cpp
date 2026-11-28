@@ -8,6 +8,8 @@
 #include <GLideN64.h>
 #include <Config.h>
 #include <N64.h>
+#include <VI.h>
+#include <cstring>
 #include <gSP.h>
 #include <Log.h>
 #include <Revision.h>
@@ -44,6 +46,10 @@ private:
 	bool _supportsWithRateFunctions = true;
 #endif // M64P_GLIDENUI
 	graphics::ObjectHandle _getDefaultFramebuffer() override;
+
+	void _readCrop(u32 _crop[4]) const;
+	void _getCroppedWindowSize(u32 _width, u32 _height, u32 * _croppedWidth, u32 * _croppedHeight);
+	void _followCrop();
 };
 
 DisplayWindow & DisplayWindow::get()
@@ -93,6 +99,11 @@ bool DisplayWindowMupen64plus::_start()
 	m_screenWidth = config.video.windowedWidth;
 	m_screenHeight = config.video.windowedHeight;
 	m_screenRefresh = config.video.fullscreenRefresh;
+
+	// the window shows the picture less the frontend's crop at the same scale, so it's that much smaller
+	_readCrop(m_crop);
+	if (!m_bFullscreen)
+		_getCroppedWindowSize(m_screenWidth, m_screenHeight, &m_screenWidth, &m_screenHeight);
 
 	_getDisplaySize();
 	_setBufferSize();
@@ -149,6 +160,8 @@ void DisplayWindowMupen64plus::_restart()
 
 void DisplayWindowMupen64plus::_swapBuffers()
 {
+	_followCrop();
+
 	// if emulator defined a render callback function, call it before buffer swap
 	if (renderCallback != nullptr) {
 		gfxContext.resetShaderProgram();
@@ -296,4 +309,57 @@ graphics::ObjectHandle DisplayWindowMupen64plus::_getDefaultFramebuffer()
 	if (CoreVideo_GL_GetDefaultFramebuffer != nullptr)
 		return graphics::ObjectHandle(CoreVideo_GL_GetDefaultFramebuffer());
 	return graphics::ObjectHandle::null;
+}
+
+// The crop the frontend wants (VidExt_GetCrop), or none from a core that doesn't have it
+void DisplayWindowMupen64plus::_readCrop(u32 _crop[4]) const
+{
+	_crop[0] = _crop[1] = _crop[2] = _crop[3] = 0;
+	m64p_video_crop crop = {};
+	if (CoreVideo_GetCrop == nullptr || CoreVideo_GetCrop(&crop) != M64ERR_SUCCESS)
+		return;
+	if (crop.Left < 0 || crop.Right < 0 || crop.Top < 0 || crop.Bottom < 0)
+		return;
+	_crop[0] = static_cast<u32>(crop.Left);
+	_crop[1] = static_cast<u32>(crop.Right);
+	_crop[2] = static_cast<u32>(crop.Top);
+	_crop[3] = static_cast<u32>(crop.Bottom);
+}
+
+// The window size that shows the picture a window of the given size shows, less the crop, at the same scale
+void DisplayWindowMupen64plus::_getCroppedWindowSize(u32 _width, u32 _height, u32 * _croppedWidth, u32 * _croppedHeight)
+{
+	_fitPicture(_width, _height);
+	s32 pixels[4];
+	_getCropPixels(m_width, m_height, pixels);
+	*_croppedWidth = static_cast<u32>(static_cast<s32>(_width) - pixels[0] - pixels[1]);
+	*_croppedHeight = static_cast<u32>(static_cast<s32>(_height) - pixels[2] - pixels[3]);
+}
+
+// Follows a change of the frontend's crop: the picture is laid out again (see resizeWindow), and a window, which
+// shows the cropped picture at its scale, is resized for the new crop at the same scale
+void DisplayWindowMupen64plus::_followCrop()
+{
+	u32 crop[4];
+	_readCrop(crop);
+	if (memcmp(crop, m_crop, sizeof(crop)) == 0)
+		return;
+
+	// the window's size without the old crop
+	s32 pixels[4];
+	_getCropPixels(m_width, m_height, pixels);
+	u32 width = static_cast<u32>(static_cast<s32>(m_screenWidth) + pixels[0] + pixels[1]);
+	u32 height = static_cast<u32>(static_cast<s32>(m_screenHeight) + pixels[2] + pixels[3]);
+
+	memcpy(m_crop, crop, sizeof(crop));
+	if (!m_bFullscreen) {
+		_getCroppedWindowSize(width, height, &width, &height);
+		_setBufferSize();
+		if (CoreVideo_ResizeWindow != nullptr)
+			CoreVideo_ResizeWindow(static_cast<int>(width), static_cast<int>(height));
+	}
+
+	m_resizeWidth = m_screenWidth;
+	m_resizeHeight = m_screenHeight;
+	m_bResizeWindow = true;
 }

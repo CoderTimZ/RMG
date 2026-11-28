@@ -174,7 +174,8 @@ typedef enum {
   M64CMD_ROM_SET_SETTINGS,
   M64CMD_DISK_OPEN,
   M64CMD_DISK_CLOSE,
-  M64CMD_NETPLAY_NEW_SET_CALLBACKS
+  M64CMD_NETPLAY_NEW_SET_CALLBACKS,
+  M64CMD_SET_VIDEO_CROP
 } m64p_command;
 
 typedef struct {
@@ -623,6 +624,15 @@ typedef struct {
   m64p_error    (*VidExtFuncVKGetSurface)(void**, void*);
   m64p_error    (*VidExtFuncVKGetInstanceExtensions)(const char**[], uint32_t*);
 } m64p_video_extension_functions;
+
+/* How much of the picture's edges the video plugin leaves out (see M64CMD_SET_VIDEO_CROP and VidExt_GetCrop), in the
+ * VI's pixels (the picture is 640 across) and lines (480 for NTSC, 576 for PAL); all 0 for none */
+typedef struct {
+  int Left;
+  int Right;
+  int Top;
+  int Bottom;
+} m64p_video_crop;
 
 #endif /* define M64P_TYPES_H */
 

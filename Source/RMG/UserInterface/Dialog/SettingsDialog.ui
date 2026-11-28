@@ -680,6 +680,153 @@
                </item>
               </layout>
              </widget>
+             <widget class="QWidget" name="innerInterfaceCropTab">
+              <attribute name="title">
+               <string>Crop</string>
+              </attribute>
+              <layout class="QVBoxLayout" name="interfaceCropLayout">
+               <item>
+                <widget class="QGroupBox" name="cropGroupBox">
+                 <property name="title">
+                  <string>Crop the picture's edges</string>
+                 </property>
+                 <property name="checkable">
+                  <bool>true</bool>
+                 </property>
+                 <property name="checked">
+                  <bool>false</bool>
+                 </property>
+                 <layout class="QVBoxLayout" name="cropGroupLayout">
+                  <item>
+                   <widget class="QLabel" name="cropUnitsLabel">
+                    <property name="text">
+                     <string>In the picture's pixels (640 across) and lines (480 for NTSC games, 576 for PAL games), whatever the video plugin's resolution or aspect ratio. The video plugin crops the picture: GLideN64 and Parallel do.</string>
+                    </property>
+                    <property name="wordWrap">
+                     <bool>true</bool>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <layout class="QGridLayout" name="cropGridLayout">
+                    <item row="0" column="1">
+                     <widget class="QLabel" name="cropHeaderLeftLabel">
+                      <property name="text">
+                       <string>Left</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="0" column="2">
+                     <widget class="QLabel" name="cropHeaderRightLabel">
+                      <property name="text">
+                       <string>Right</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="0" column="3">
+                     <widget class="QLabel" name="cropHeaderTopLabel">
+                      <property name="text">
+                       <string>Top</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="0" column="4">
+                     <widget class="QLabel" name="cropHeaderBottomLabel">
+                      <property name="text">
+                       <string>Bottom</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="1" column="0">
+                     <widget class="QLabel" name="cropNtscLabel">
+                      <property name="text">
+                       <string>NTSC</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="1" column="1">
+                   <widget class="QSpinBox" name="cropNtscLeftSpinBox">
+                    <property name="maximum">
+                     <number>300</number>
+                    </property>
+                   </widget>
+                    </item>
+                    <item row="1" column="2">
+                   <widget class="QSpinBox" name="cropNtscRightSpinBox">
+                    <property name="maximum">
+                     <number>300</number>
+                    </property>
+                   </widget>
+                    </item>
+                    <item row="1" column="3">
+                   <widget class="QSpinBox" name="cropNtscTopSpinBox">
+                    <property name="maximum">
+                     <number>200</number>
+                    </property>
+                   </widget>
+                    </item>
+                    <item row="1" column="4">
+                   <widget class="QSpinBox" name="cropNtscBottomSpinBox">
+                    <property name="maximum">
+                     <number>200</number>
+                    </property>
+                   </widget>
+                    </item>
+                    <item row="2" column="0">
+                     <widget class="QLabel" name="cropPalLabel">
+                      <property name="text">
+                       <string>PAL</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="2" column="1">
+                   <widget class="QSpinBox" name="cropPalLeftSpinBox">
+                    <property name="maximum">
+                     <number>300</number>
+                    </property>
+                   </widget>
+                    </item>
+                    <item row="2" column="2">
+                   <widget class="QSpinBox" name="cropPalRightSpinBox">
+                    <property name="maximum">
+                     <number>300</number>
+                    </property>
+                   </widget>
+                    </item>
+                    <item row="2" column="3">
+                   <widget class="QSpinBox" name="cropPalTopSpinBox">
+                    <property name="maximum">
+                     <number>200</number>
+                    </property>
+                   </widget>
+                    </item>
+                    <item row="2" column="4">
+                   <widget class="QSpinBox" name="cropPalBottomSpinBox">
+                    <property name="maximum">
+                     <number>200</number>
+                    </property>
+                   </widget>
+                    </item>
+                   </layout>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item>
+                <spacer name="interfaceCropSpacer">
+                 <property name="orientation">
+                  <enum>Qt::Orientation::Vertical</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>20</width>
+                   <height>40</height>
+                  </size>
+                 </property>
+                </spacer>
+               </item>
+              </layout>
+             </widget>
             </widget>
            </item>
           </layout>
@@ -2573,6 +2720,121 @@
                   </widget>
                  </item>
                 </layout>
+               </item>
+              </layout>
+             </widget>
+             <widget class="QWidget" name="innerGameCropTab">
+              <attribute name="title">
+               <string>Crop</string>
+              </attribute>
+              <layout class="QVBoxLayout" name="gameCropLayout">
+               <item>
+                <widget class="QGroupBox" name="gameOverrideCropGroupBox">
+                 <property name="title">
+                  <string>Override crop</string>
+                 </property>
+                 <property name="checkable">
+                  <bool>true</bool>
+                 </property>
+                 <property name="checked">
+                  <bool>false</bool>
+                 </property>
+                 <layout class="QVBoxLayout" name="gameCropGroupLayout">
+                  <item>
+                   <widget class="QLabel" name="gameCropUnitsLabel">
+                    <property name="text">
+                     <string>In the picture's pixels (640 across) and lines (480 for NTSC games, 576 for PAL games).</string>
+                    </property>
+                    <property name="wordWrap">
+                     <bool>true</bool>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <layout class="QGridLayout" name="gameCropGridLayout">
+                    <item row="0" column="0">
+                     <widget class="QLabel" name="gameCropHeaderLeftLabel">
+                      <property name="text">
+                       <string>Left</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="1" column="0">
+                   <widget class="QSpinBox" name="gameCropLeftSpinBox">
+                    <property name="maximum">
+                     <number>300</number>
+                    </property>
+                   </widget>
+                    </item>
+                    <item row="0" column="1">
+                     <widget class="QLabel" name="gameCropHeaderRightLabel">
+                      <property name="text">
+                       <string>Right</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="1" column="1">
+                   <widget class="QSpinBox" name="gameCropRightSpinBox">
+                    <property name="maximum">
+                     <number>300</number>
+                    </property>
+                   </widget>
+                    </item>
+                    <item row="0" column="2">
+                     <widget class="QLabel" name="gameCropHeaderTopLabel">
+                      <property name="text">
+                       <string>Top</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="1" column="2">
+                   <widget class="QSpinBox" name="gameCropTopSpinBox">
+                    <property name="maximum">
+                     <number>200</number>
+                    </property>
+                   </widget>
+                    </item>
+                    <item row="0" column="3">
+                     <widget class="QLabel" name="gameCropHeaderBottomLabel">
+                      <property name="text">
+                       <string>Bottom</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item row="1" column="3">
+                   <widget class="QSpinBox" name="gameCropBottomSpinBox">
+                    <property name="maximum">
+                     <number>200</number>
+                    </property>
+                   </widget>
+                    </item>
+                   </layout>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="gameCropSharedLabel">
+                    <property name="text">
+                     <string/>
+                    </property>
+                    <property name="wordWrap">
+                     <bool>true</bool>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item>
+                <spacer name="gameCropSpacer">
+                 <property name="orientation">
+                  <enum>Qt::Orientation::Vertical</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>20</width>
+                   <height>40</height>
+                  </size>
+                 </property>
+                </spacer>
                </item>
               </layout>
              </widget>

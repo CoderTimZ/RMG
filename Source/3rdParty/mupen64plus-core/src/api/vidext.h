@@ -34,5 +34,7 @@ extern m64p_error OverrideVideoFunctions(m64p_video_extension_functions *VideoFu
 /* these functions are only used by the core */
 extern int VidExt_InFullscreenMode(void);
 extern int VidExt_VideoRunning(void);
+/* sets the crop VidExt_GetCrop gives the video plugin, or none for NULL (frontend.c) */
+extern void VidExt_SetCrop(const m64p_video_crop* Crop);
 
 #endif /* API_VIDEXT_H */

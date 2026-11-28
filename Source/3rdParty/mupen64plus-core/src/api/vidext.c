@@ -907,3 +907,23 @@ EXPORT m64p_error CALL VidExt_VK_GetInstanceExtensions(const char** Extensions[]
     return M64ERR_UNSUPPORTED;
 #endif
 }
+
+/* the crop the frontend wants the video plugin to apply (M64CMD_SET_VIDEO_CROP) */
+static m64p_video_crop l_VideoCrop = {0, 0, 0, 0};
+
+void VidExt_SetCrop(const m64p_video_crop* Crop)
+{
+    if (Crop == NULL)
+        memset(&l_VideoCrop, 0, sizeof(l_VideoCrop));
+    else
+        l_VideoCrop = *Crop;
+}
+
+EXPORT m64p_error CALL VidExt_GetCrop(m64p_video_crop* Crop)
+{
+    if (Crop == NULL)
+        return M64ERR_INPUT_ASSERT;
+
+    *Crop = l_VideoCrop;
+    return M64ERR_SUCCESS;
+}
